@@ -8,6 +8,17 @@
 
 namespace core::platform {
 
+// 窗口效果（磨砂设计文档 §3.1）。Phase B 落地 Transparent（透明帧缓冲 +
+// clearColor alpha 半透）；Acrylic/Mica 的 DWM backdrop 应用在 Phase C
+//（applyWindowEffect），枚举值先占位以稳定 WindowCreateRequest ABI。
+enum class WindowEffect {
+    None,        // 实色窗口（默认，行为与历史版本逐像素一致）
+    Transparent, // 透明帧缓冲，clearColor alpha < 1 时整体半透
+    Acrylic,     // DWM SYSTEMBACKDROP TRANSIENTWINDOW（Phase C）
+    Mica,        // DWM SYSTEMBACKDROP MAINWINDOW（Phase C）
+    MicaAlt      // DWM SYSTEMBACKDROP TABBEDWINDOW（Phase C）
+};
+
 // 标题栏外观。Phase A 只做深浅开关；customColor 预留自定义标题栏底色
 //（Windows DWMWA_CAPTION_COLOR），默认不启用——留 API 不默认用，backdrop /
 // 材质贯通标题栏时应让系统自绘（Phase C 起见）。

@@ -35,6 +35,8 @@ int initialWindowHeight();
 int initialWindowX();
 int initialWindowY();
 bool initialWindowPositionSet();
+/** @brief 窗口效果启动快照（DslAppConfig::windowEffect）。 */
+core::platform::WindowEffect windowEffect();
 int minimumWindowWidth();
 int minimumWindowHeight();
 int maximumWindowWidth();
@@ -63,6 +65,17 @@ void requestUpdate();
 void setTitleBarAppearance(const core::platform::TitleBarAppearance& appearance);
 /** @brief 当前生效的标题栏外观：运行时覆盖优先，否则取 dslAppConfig 启动快照。 */
 core::platform::TitleBarAppearance currentTitleBarAppearance();
+/**
+ * @brief 运行时覆盖 clearColor（主窗口 + 全部存活子窗口），下一帧生效。
+ *
+ * 优先于 DslAppConfig / DslWindowConfig 的启动快照；此后新开的子窗口同样
+ * 跟随。传 alpha=1 即回到不透明视觉。内部触发 requestFullPaint，可在任意
+ * 回调里调用（主线程）。根治 DevDesk KNOWN_LIMITATIONS UI-2（主题切换底色
+ * 不跟随，需重启）。
+ */
+void setClearColor(const eui::Color& color);
+/** @brief 当前生效的 clearColor：运行时覆盖优先，否则取 dslAppConfig 启动快照。 */
+eui::Color currentClearColor();
 bool initialize(eui::window::Handle window);
 bool update(eui::window::Handle window, float deltaSeconds, int windowWidth, int windowHeight, float dpiScale, float pointerScale);
 bool update(eui::window::Handle window, float deltaSeconds, int windowWidth, int windowHeight, float dpiScale, float pointerScale, bool updateRequested);

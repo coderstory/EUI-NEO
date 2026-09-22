@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <limits>
 #if defined(EUI_WINDOW_BACKEND_SDL2)
@@ -355,6 +356,9 @@ Handle createWindow(const WindowCreateRequest& request) {
     if (request.maximized) {
         flags |= SDL_WINDOW_MAXIMIZED;
     }
+    // 透明帧缓冲（磨砂设计 Phase B）：SDL2 无逐像素透明窗口 flag
+    //（SDL_WINDOW_TRANSPARENT 是 SDL3 的；SDL2 仅整窗 SDL_SetWindowOpacity，
+    // 语义不同）——设计允许降级，SDL2 后端对 windowEffect 按 None 处理。
     flags |= request.renderApi == RenderApi::Vulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL;
 
     SDL_Window* window = SDL_CreateWindow(
@@ -572,6 +576,11 @@ Handle createWindow(const WindowCreateRequest& request) {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     } else {
         configureOpenGLWindowHints();
+        // 透明帧缓冲（磨砂设计 Phase B）：DWM 尊重重定向表面 alpha 的开关。
+        // Vulkan 侧无对应能力（compositeAlpha 普遍 OPAQUE），直接不设。
+        // hint 会跨 glfwCreateWindow 残留，两态都显式设置。
+        glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER,
+                       request.windowEffect != platform::WindowEffect::None ? GLFW_TRUE : GLFW_FALSE);
         shareContext = static_cast<GLFWwindow*>(request.parent);
     }
     glfwWindowHint(GLFW_RESIZABLE, request.resizable ? GLFW_TRUE : GLFW_FALSE);
@@ -587,6 +596,14 @@ Handle createWindow(const WindowCreateRequest& request) {
         shareContext);
     if (window == nullptr) {
         return nullptr;
+    }
+    // 透明 hint 回查（设计 §3.1.2）：桌面合成被禁用/老平台时 GLFW 静默降级为
+    // 不透明。渲染侧（GL 后端）按同一属性自检走 straight blit，故此处只诊断。
+    if (request.windowEffect != platform::WindowEffect::None &&
+        glfwGetWindowAttrib(window, GLFW_TRANSPARENT_FRAMEBUFFER) != GLFW_TRUE) {
+        std::fprintf(stderr,
+                     "[eui] window: transparent framebuffer unavailable, "
+                     "windowEffect degrades to None\n");
     }
 
     const int minimumWidth = request.minWidth > 0 ? request.minWidth : GLFW_DONT_CARE;

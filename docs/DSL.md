@@ -91,7 +91,7 @@ static const DslAppConfig config = DslAppConfig{}
     });
 ```
 
-`minWindowSize` 和 `maxWindowSize` 中的 `0` 表示对应方向不限制；窗口尺寸约束由 GLFW/SDL2 后端执行。`centerWindow()` 会清除显式位置并恢复居中。`highDpi` 在 SDL2 中控制 `SDL_WINDOW_ALLOW_HIGHDPI`；GLFW 的 DPI 感知由其初始化阶段按平台设置，是进程级行为，不能安全地按单个窗口关闭。标题栏外观属于 `DslAppConfig`（见下）；全屏、透明窗口和 VSync 不属于 `DslAppConfig`，它们会改变平台窗口或渲染后端生命周期，应通过专用平台/渲染配置处理。
+`minWindowSize` 和 `maxWindowSize` 中的 `0` 表示对应方向不限制；窗口尺寸约束由 GLFW/SDL2 后端执行。`centerWindow()` 会清除显式位置并恢复居中。`highDpi` 在 SDL2 中控制 `SDL_WINDOW_ALLOW_HIGHDPI`；GLFW 的 DPI 感知由其初始化阶段按平台设置，是进程级行为，不能安全地按单个窗口关闭。标题栏外观与窗口效果（透明半透）属于 `DslAppConfig`（见下）；全屏和 VSync 不属于 `DslAppConfig`，它们会改变平台窗口或渲染后端生命周期，应通过专用平台/渲染配置处理。
 
 Debug 配置只控制诊断输出，不参与业务状态。`showDebugStatsInTitle` 控制窗口标题中的 FPS、CPU/GPU 和渲染统计；`debugTitleInterval` 控制标题统计刷新间隔（秒）。`showDebugOverlay` 与 `onDebugOverlay` 用于注入布局边界、性能标记等调试框，回调在每次页面 compose 后执行；未设置回调时不会绘制任何额外内容。Debug 构建默认开启标题统计和覆盖层开关，Release 构建默认关闭。
 
@@ -120,6 +120,19 @@ Debug 配置只控制诊断输出，不参与业务状态。`showDebugStatsInTit
 `.darkTitleBar(true)` 让窗口标题栏（非客户区）在启动时进入深色模式，浅色界面配浅色标题栏、深色界面配深色标题栏。仅 Windows（DWMWA_USE_IMMERSIVE_DARK_MODE，Win11 22000+）生效，其他平台或老系统静默忽略。默认 `false`，行为与现状一致。
 
 运行时切换主题时用 `app::setTitleBarAppearance(core::platform::TitleBarAppearance{dark})`：即时生效、无需重启，覆盖主窗口与全部存活子窗口（此后新开的子窗口同样跟随），并优先于 `.darkTitleBar(...)` 的启动快照。`app::currentTitleBarAppearance()` 返回当前生效值。`TitleBarAppearance` 还预留了 `customColor`/`colorAbgr`（Windows 自定义标题栏底色，COLORREF），默认不启用——系统材质贯通标题栏时应让 DWM 自绘。示例见 `examples/window_effect.cpp`。
+
+### 窗口效果（透明半透）
+
+`.windowEffect(core::platform::WindowEffect::Transparent)` 让主窗口与子窗口以透明帧缓冲创建（GLFW `GLFW_TRANSPARENT_FRAMEBUFFER`；SDL2 无逐像素透明 flag、Vulkan 在 Windows 上 compositeAlpha 普遍只报 OPAQUE，两者降级 `None`），此时 `clearColor` 的 alpha < 1 即整体半透、可透出桌面与下层窗口。默认 `None`（实色，行为与历史版本逐像素一致）。
+
+要点：
+
+- 透明 hint 是创建期属性，不能运行时关闭；「半透 ↔ 不透明」的运行时切换通过把 clearColor alpha 拉回 1 实现视觉等价，不重建窗口。
+- 半透像素的合成正确性由 GL 后端自动保证：透明窗口的 render cache blit 走 premultiply（DWM 按 premultiplied alpha 合成窗口表面，straight 拷贝会整体过亮/发灰）；alpha=1 时该变换恒等，不透明窗口路径不变。
+- Vulkan 后端（Windows compositeAlpha 普遍 OPAQUE）与 SDL2 后端（无逐像素透明 flag）降级为 `None`（标题栏联动不受影响）。
+- 桌面合成被禁用等导致透明帧缓冲不可用时，GLFW 静默降级为不透明窗口（stderr 诊断一行），渲染侧按同一属性自动回退 straight blit。
+
+运行时改底色/不透明度用 `app::setClearColor(color)`：下一帧生效，覆盖主窗口与全部存活子窗口（此后新开的子窗口同样跟随），优先于 `DslAppConfig::clearColor` 与 `DslWindowConfig::clearColor` 的启动快照；`app::currentClearColor()` 返回当前生效值。这也是主题切换底色即时跟随的正规通道（不再需要重启）。Acrylic/Mica 的 DWM backdrop 应用属后续 Phase，`WindowEffect` 枚举已预留 `Acrylic`/`Mica`/`MicaAlt` 值。示例见 `examples/window_effect.cpp`。
 
 
 不设置 `.textFont(...)` 时使用 `core/render/text.cpp` 里的全局默认文本字体；不设置 `.iconFont(...)` 时使用全局默认图标字体。默认字体优先从可执行文件旁的 `assets/`、工作目录 `assets/`、上级运行目录 `assets/` 查找；找不到内置字体资源时会回退到平台系统字体，避免单 exe 漏带 assets 后普通文本整段不可见。

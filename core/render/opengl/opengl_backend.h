@@ -116,6 +116,12 @@ private:
                                                         const std::vector<core::Rect>& dirtyRects);
     void recordRenderCacheBlitHistory(std::uint64_t generation, bool fullSync, const std::vector<core::Rect>& rects);
     void invalidateRenderCacheSync();
+    // 透明窗口（GLFW_TRANSPARENT_FRAMEBUFFER）的
+    // cache→默认帧缓冲 blit 需要 premultiply（spike 实证 DWM 按 premultiplied
+    // 合成窗口表面 alpha，straight 拷贝会过亮）。懒查询 + 懒建着色器资源。
+    bool outputUsesTransparentFramebuffer();
+    bool ensurePremultiplyBlitResources();
+    void blitRenderCachePremultiplied(const std::vector<core::Rect>& blitRects, int width, int height);
 
     core::window::Handle window_ = nullptr;
     RenderBackend* shareContext_ = nullptr;
@@ -197,6 +203,12 @@ private:
     int backdropCaptureHeight_ = 0;
     int backdropTextureWidth_ = 0;
     int backdropTextureHeight_ = 0;
+    int outputTransparentState_ = -1; // -1 未查询，0 不透明，1 透明
+    unsigned int premultiplyProgram_ = 0;
+    unsigned int premultiplyVao_ = 0;
+    unsigned int premultiplyVbo_ = 0;
+    int premultiplyUvScaleLocation_ = -1;
+    int premultiplyTextureLocation_ = -1;
 };
 
 } // namespace core::render::opengl
