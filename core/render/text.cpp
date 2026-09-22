@@ -638,8 +638,15 @@ bool loadFontFace(const std::string& path, float fontSize, FontFace& face) {
     }
 
     const bool emojiFont = isEmojiFontPath(path);
+    // CSS font-size semantics: fontSize is the em size. Scalable outline fonts
+    // are sized directly (FT_Set_Char_Size at fontSize -> y_ppem == fontSize);
+    // the upem/(ascender-descender) compensation is only kept for fixed-size
+    // strikes, where it converts the requested em size into a comparable
+    // strike ppem. Scaling every font by hhea metrics shrank Windows fonts
+    // (Segoe UI factor ~0.75) and broke em-size expectations.
     float pixelHeightScale = 1.0f;
-    if (loadedFace->units_per_EM > 0 && loadedFace->ascender != loadedFace->descender) {
+    if ((emojiFont || FT_HAS_COLOR(loadedFace)) && loadedFace->num_fixed_sizes > 0 &&
+        loadedFace->units_per_EM > 0 && loadedFace->ascender != loadedFace->descender) {
         const float designHeight = static_cast<float>(loadedFace->ascender - loadedFace->descender);
         pixelHeightScale = static_cast<float>(loadedFace->units_per_EM) / designHeight;
     }

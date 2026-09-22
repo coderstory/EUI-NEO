@@ -365,6 +365,8 @@ Text 支持：
 
 `.fontWeight(int)` 取值范围 100–900，会按权重选择平台 UI 字体的对应字重文件：macOS 上的 SFNS-Bold / SFNS-Light、Windows 上的 segoeuib / segoeuil、Linux 上的 NotoSans-Bold / NotoSans-Light。系统在重量文件缺失时会优雅降级到 Regular / 默认字体；可以用 `core::TextPrimitive::resolveSystemUiFontPathForWeight(N)` 在运行时查询实际选中的字体文件路径。默认字重 400 不变，向后兼容现有 UI 代码。
 
+`.fontSize(float)` 自 v0.7.0 起遵循 CSS `font-size` 语义：数值就是字体的 em 尺寸（1em = 字体的 units_per_EM），与字体自身 hhea ascender/descender 度量无关。v0.7.0 之前所有 scalable 字体栅格化时会按 upem/(ascender−descender) 缩放，导致 hhea 度量较大的字体（Windows Segoe UI 约 0.75 倍、微软雅黑约 0.76 倍）实际渲染比标称字号小约 25%；修复后 15px 就是 15px em。emoji / 彩色 bitmap 字体的 strike 匹配逻辑不受影响。**迁移提示**：从 v0.6.x 升级的应用中，此前依赖这些字体"整体偏小"渲染效果的布局（固定行高、卡片高度、像素级对齐）在升级后文字会放大约 25%–35%，需要复核相关数值；如有全局字号缩放等临时止血配置，应调回 100% 后重新验收。可运行 `examples/font_em_size_demo`（`font_em_size_demo` app）对比同一 fontSize 在不同系统字体下的视觉尺寸一致性。
+
 底层文本使用 FreeType 渲染 glyph，并通过字体栈 fallback 选择覆盖字符的字体。`fontFamily("monospace")` 会选择跨平台等宽字体，`fontFamily("Emoji")` 会选择平台 emoji 字体；如果指定字体或内置 assets 字体加载失败，文本栈会继续尝试默认 UI 字体和系统字体兜底。需要精确光标位置或命中测试时，使用 `core::TextPrimitive::measureTextMetrics(...)` 获取 caret stops；返回的 `byteIndices` 是 UTF-8 byte offset，`caretX` 是对应的逻辑 x，和实际渲染使用同一套 fallback、emoji 缩放和 glyph advance。
 
 Text 的 transform 作用在生成后的 glyph 顶点上，适合做滚轮、轻量缩放和旋转动效；默认命中测试仍按未 transform 的布局 frame 计算，需要跟随视觉变换时开启 `.transformedHitTest()`。
