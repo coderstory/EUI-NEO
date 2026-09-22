@@ -363,6 +363,8 @@ Text 支持：
 
 `.icon(...)` 会自动使用图标字体；图标字体默认来自 `core/render/text.cpp`，也可以通过配置里的 `.iconFont(...)` 按 app 覆盖。找不到内置图标字体资源时会尝试平台 symbol/icon 字体兜底；但 FontAwesome 图标使用 FontAwesome 自己的 codepoint，系统字体不一定有兼容 glyph，发布包仍建议携带默认 `assets/` 或显式配置 `.iconFont(...)`。
 
+`.fontWeight(int)` 取值范围 100–900，会按权重选择平台 UI 字体的对应字重文件：macOS 上的 SFNS-Bold / SFNS-Light、Windows 上的 segoeuib / segoeuil、Linux 上的 NotoSans-Bold / NotoSans-Light。系统在重量文件缺失时会优雅降级到 Regular / 默认字体；可以用 `core::TextPrimitive::resolveSystemUiFontPathForWeight(N)` 在运行时查询实际选中的字体文件路径。默认字重 400 不变，向后兼容现有 UI 代码。
+
 底层文本使用 FreeType 渲染 glyph，并通过字体栈 fallback 选择覆盖字符的字体。`fontFamily("monospace")` 会选择跨平台等宽字体，`fontFamily("Emoji")` 会选择平台 emoji 字体；如果指定字体或内置 assets 字体加载失败，文本栈会继续尝试默认 UI 字体和系统字体兜底。需要精确光标位置或命中测试时，使用 `core::TextPrimitive::measureTextMetrics(...)` 获取 caret stops；返回的 `byteIndices` 是 UTF-8 byte offset，`caretX` 是对应的逻辑 x，和实际渲染使用同一套 fallback、emoji 缩放和 glyph advance。
 
 Text 的 transform 作用在生成后的 glyph 顶点上，适合做滚轮、轻量缩放和旋转动效；默认命中测试仍按未 transform 的布局 frame 计算，需要跟随视觉变换时开启 `.transformedHitTest()`。

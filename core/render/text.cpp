@@ -298,14 +298,64 @@ std::string& defaultIconFontFileOverride() {
 
 std::string resolveFontFilePath(const std::string& path);
 
+std::string resolveSystemUiFontPathForWeightImpl(int fontWeight);
+
 std::string resolveSystemUiFontPath() {
+    return resolveSystemUiFontPathForWeightImpl(400);
+}
+
+// Pick a platform-specific UI font variant that matches the requested weight.
+// Falls back to the default UI font path when no weight-specific file exists
+// (e.g. older systems with a single bundled font). This is what makes
+// `ui.text(...).fontWeight(N)` actually switch glyph faces at runtime —
+// without it, weight was accepted but the same default face was always used.
+std::string resolveSystemUiFontPathForWeightImpl(int fontWeight) {
 #ifdef _WIN32
+    // Windows ships explicit per-weight Segoe UI files since Win 7.
+    // Order: heavy → light, fall back to regular.
+    if (fontWeight >= 800) {
+        if (const std::string path = firstExistingPath({"C:/Windows/Fonts/segoeuiz.ttf"}); !path.empty()) {
+            return path;
+        }
+    }
+    if (fontWeight >= 600) {
+        if (const std::string path = firstExistingPath({"C:/Windows/Fonts/segoeuib.ttf"}); !path.empty()) {
+            return path;
+        }
+    }
+    if (fontWeight < 400) {
+        if (const std::string path = firstExistingPath({"C:/Windows/Fonts/segoeuil.ttf"}); !path.empty()) {
+            return path;
+        }
+    }
     return firstExistingPath({
         "C:/Windows/Fonts/segoeui.ttf",
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/arial.ttf"
     });
 #elif defined(__APPLE__)
+    // macOS ships SF Pro (SFNS*) as explicit weight files plus a variable font.
+    if (fontWeight >= 800) {
+        if (const std::string path = firstExistingPath({"/System/Library/Fonts/SFNS-Heavy.ttf",
+                                                       "/System/Library/Fonts/SFNSText-Heavy.ttf",
+                                                       "/System/Library/Fonts/SFNS-Black.ttf"}); !path.empty()) {
+            return path;
+        }
+    }
+    if (fontWeight >= 600) {
+        if (const std::string path = firstExistingPath({"/System/Library/Fonts/SFNS-Bold.ttf",
+                                                       "/System/Library/Fonts/SFNSText-Bold.ttf",
+                                                       "/System/Library/Fonts/SFNS-Semibold.ttf"}); !path.empty()) {
+            return path;
+        }
+    }
+    if (fontWeight < 400) {
+        if (const std::string path = firstExistingPath({"/System/Library/Fonts/SFNS-Light.ttf",
+                                                       "/System/Library/Fonts/SFNSText-Light.ttf",
+                                                       "/System/Library/Fonts/SFNS-Ultralight.ttf"}); !path.empty()) {
+            return path;
+        }
+    }
     return firstExistingPath({
         "/System/Library/Fonts/SFNS.ttf",
         "/System/Library/Fonts/Helvetica.ttc",
@@ -313,6 +363,39 @@ std::string resolveSystemUiFontPath() {
         "/System/Library/Fonts/Supplemental/Arial.ttf"
     });
 #else
+    // Linux: explicit Noto Sans weight files when bundled, otherwise the
+    // variable font (Fedora 38+) or single Regular file (Debian/Ubuntu).
+    if (fontWeight >= 800) {
+        if (const std::string path = firstExistingPath({
+                "/usr/share/fonts/truetype/noto/NotoSans-ExtraBold.ttf",
+                "/usr/share/fonts/noto/NotoSans-ExtraBold.ttf",
+                "/usr/share/fonts/google-noto/NotoSans-ExtraBold.ttf",
+                "/usr/share/fonts/google-noto-sans/NotoSans-ExtraBold.ttf",
+                "/usr/share/fonts/google-noto-sans-fonts/NotoSans-ExtraBold.ttf"}); !path.empty()) {
+            return path;
+        }
+    }
+    if (fontWeight >= 600) {
+        if (const std::string path = firstExistingPath({
+                "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+                "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+                "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
+                "/usr/share/fonts/google-noto-sans/NotoSans-Bold.ttf",
+                "/usr/share/fonts/google-noto-sans-fonts/NotoSans-Bold.ttf",
+                "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf"}); !path.empty()) {
+            return path;
+        }
+    }
+    if (fontWeight < 400) {
+        if (const std::string path = firstExistingPath({
+                "/usr/share/fonts/truetype/noto/NotoSans-Light.ttf",
+                "/usr/share/fonts/noto/NotoSans-Light.ttf",
+                "/usr/share/fonts/google-noto/NotoSans-Light.ttf",
+                "/usr/share/fonts/google-noto-sans/NotoSans-Light.ttf",
+                "/usr/share/fonts/google-noto-sans-fonts/NotoSans-Light.ttf"}); !path.empty()) {
+            return path;
+        }
+    }
     return firstExistingPath({
         // Debian / Ubuntu layout
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
@@ -617,12 +700,15 @@ bool loadFontFace(const std::string& path, float fontSize, FontFace& face) {
     return true;
 }
 
-std::string fontStackCacheKey(const std::string& fontPath, float fontSize) {
-    return fontPath + "#" + std::to_string(static_cast<int>(std::round(fontSize * 64.0f)));
+std::string fontStackCacheKey(const std::string& fontPath, float fontSize, int fontWeight) {
+    // fontWeight is included so that two text nodes pointing at the same path
+    // (e.g. empty fontFamily resolved to a different weight file) still get
+    // separate atlas / face caches when a future variant font selection kicks in.
+    return fontPath + "#w" + std::to_string(fontWeight) + "#" + std::to_string(static_cast<int>(std::round(fontSize * 64.0f)));
 }
 
-std::shared_ptr<FontInfoHolder> loadSharedFontStack(const std::string& fontPath, float fontSize) {
-    const std::string cacheKey = fontStackCacheKey(fontPath, fontSize);
+std::shared_ptr<FontInfoHolder> loadSharedFontStack(const std::string& fontPath, float fontSize, int fontWeight) {
+    const std::string cacheKey = fontStackCacheKey(fontPath, fontSize, fontWeight);
     FontStackCache& cache = sharedFontStackCache();
     const auto existing = cache.entries.find(cacheKey);
     if (existing != cache.entries.end()) {
@@ -671,6 +757,10 @@ std::shared_ptr<FontInfoHolder> loadSharedFontStack(const std::string& fontPath,
     addLazyFallback(resolveSystemUiFontPath());
     addLazyFallback(resolveSystemIconFontPath());
     addLazyFallback(resolveSystemEmojiFontPath());
+    // Also register weight-specific fallbacks so glyphs that aren't on the
+    // primary weight face (e.g. a CJK glyph missing from SFNS-Bold) still
+    // resolve through the regular or light face of the same family.
+    addLazyFallback(resolveSystemUiFontPathForWeightImpl(fontWeight == 700 ? 400 : 700));
 
 #ifdef _WIN32
     addLazyFallback("C:/Windows/Fonts/seguiemj.ttf");
@@ -1347,7 +1437,7 @@ TextPrimitive::TextMetrics TextPrimitive::Impl::measureTextMetrics(const std::st
 
     const float size = std::max(1.0f, fontSize);
     const std::string fontPath = resolveFontPath(fontFamily, fontWeight);
-    auto holder = loadSharedFontStack(fontPath, size);
+    auto holder = loadSharedFontStack(fontPath, size, fontWeight);
     if (!holder || holder->faces.empty()) {
         return empty;
     }
@@ -1477,7 +1567,7 @@ void TextPrimitive::Impl::render(int windowWidth, int windowHeight) {
 
 bool TextPrimitive::Impl::loadFont() {
     const std::string fontPath = resolveFontPath(style_.fontFamily, style_.fontWeight);
-    auto holder = loadSharedFontStack(fontPath, style_.fontSize);
+    auto holder = loadSharedFontStack(fontPath, style_.fontSize, style_.fontWeight);
     if (!holder || holder->faces.empty()) {
         return false;
     }
@@ -1884,8 +1974,10 @@ std::string TextPrimitive::Impl::resolveFontPath(const std::string& fontFamily, 
     if (fontFamily == "SimHei") {
         return "C:/Windows/Fonts/simhei.ttf";
     }
-    if (fontWeight >= 600) {
-        return resolveDefaultUiFontPath();
+    // Pick a weight-specific system UI font when available; fall back to the
+    // bundled default font only when no matching weight file exists.
+    if (const std::string path = resolveSystemUiFontPathForWeightImpl(fontWeight); !path.empty()) {
+        return path;
     }
     return resolveDefaultUiFontPath();
 #elif defined(__APPLE__)
@@ -1901,8 +1993,8 @@ std::string TextPrimitive::Impl::resolveFontPath(const std::string& fontFamily, 
         }
         return resolveDefaultUiFontPath();
     }
-    if (fontWeight >= 600) {
-        return resolveDefaultUiFontPath();
+    if (const std::string path = resolveSystemUiFontPathForWeightImpl(fontWeight); !path.empty()) {
+        return path;
     }
     return resolveDefaultUiFontPath();
 #else
@@ -1974,5 +2066,12 @@ void TextPrimitive::setDefaultFontFiles(const std::string& textFontFile, const s
     Impl::setDefaultFontFiles(textFontFile, iconFontFile);
 }
 void TextPrimitive::render(int windowWidth, int windowHeight) { impl_->render(windowWidth, windowHeight); }
+
+std::string TextPrimitive::resolveFontPath(const std::string& fontFamily, int fontWeight) {
+    return Impl::resolveFontPath(fontFamily, fontWeight);
+}
+std::string TextPrimitive::resolveSystemUiFontPathForWeight(int fontWeight) {
+    return resolveSystemUiFontPathForWeightImpl(fontWeight);
+}
 
 } // namespace core
