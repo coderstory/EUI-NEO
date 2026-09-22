@@ -28,6 +28,22 @@ public:
         return request_;
     }
 
+    /**
+     * @brief 运行时更新本子窗口 clearColor（app::setClearColor 广播目标）。
+     *
+     * clearColor 参与 clear 全量重绘，值变化时触发 requestFullPaint；
+     * 未初始化（request_ 为空快照）时仅记录值。
+     */
+    void setClearColor(const eui::Color& color) {
+        const bool changed = color.r != request_.clearColor.r || color.g != request_.clearColor.g ||
+                             color.b != request_.clearColor.b || color.a != request_.clearColor.a;
+        if (!changed) {
+            return;
+        }
+        request_.clearColor = color;
+        requestFullPaint();
+    }
+
     bool isAnimating() const {
         return runtime_.isAnimating();
     }

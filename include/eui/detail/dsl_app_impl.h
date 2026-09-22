@@ -47,6 +47,13 @@ inline std::optional<core::platform::TitleBarAppearance>& titleBarAppearanceOver
     return override_;
 }
 
+// clearColor 的运行时覆盖（std::nullopt = 未覆盖，走各窗口启动快照）。
+// 主窗口在 app::render 里每帧读取；子窗口由主循环检测变更后广播。
+inline std::optional<eui::Color>& clearColorOverride() {
+    static std::optional<eui::Color> override_;
+    return override_;
+}
+
 struct DslAppState {
     bool composed = false;
     bool iconApplied = false;
@@ -212,6 +219,10 @@ bool initialWindowPositionSet() {
     return dslAppConfig().windowPositionSetValue;
 }
 
+core::platform::WindowEffect windowEffect() {
+    return dslAppConfig().windowEffectValue;
+}
+
 int minimumWindowWidth() {
     return dslAppConfig().minWindowWidthValue;
 }
@@ -292,6 +303,20 @@ core::platform::TitleBarAppearance currentTitleBarAppearance() {
     core::platform::TitleBarAppearance appearance;
     appearance.dark = dslAppConfig().darkTitleBarValue;
     return appearance;
+}
+
+void setClearColor(const eui::Color& color) {
+    detail::clearColorOverride() = color;
+    // 主窗口底色全量重绘（clearColor 参与 clear，脏区推导覆盖不到），
+    // 并唤醒可能 glfwWaitEvents 中的主循环；子窗口由主循环广播。
+    detail::requestFullPaint();
+}
+
+eui::Color currentClearColor() {
+    if (const std::optional<eui::Color>& override_ = detail::clearColorOverride()) {
+        return *override_;
+    }
+    return dslAppConfig().clearColorValue;
 }
 
 namespace detail {
@@ -386,9 +411,9 @@ void render(int windowWidth, int windowHeight, float dpiScale) {
         return;
     }
 
-    const DslAppConfig& config = dslAppConfig();
     const float effectiveScale = dpiScale * uiScale();
-    detail::dslRuntime().render(windowWidth, windowHeight, effectiveScale, config.clearColorValue);
+    // clearColor 运行时覆盖优先（app::setClearColor，磨砂 Phase B）
+    detail::dslRuntime().render(windowWidth, windowHeight, effectiveScale, currentClearColor());
 }
 
 void releaseGraphicsResources() {

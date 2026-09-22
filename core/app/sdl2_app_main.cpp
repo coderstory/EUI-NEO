@@ -441,6 +441,7 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     windowRequest.title = request.title.c_str();
     windowRequest.parent = parentWindow;
     windowRequest.renderApi = core::render::windowRenderApi();
+    windowRequest.windowEffect = app::windowEffect();
     SDL_Window* window = static_cast<SDL_Window*>(core::window::createWindow(windowRequest));
     if (window == nullptr) {
         return {};
@@ -462,6 +463,10 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
         managed->renderBackend.reset();
         core::window::destroyWindow(window);
         return {};
+    }
+    // clearColor 运行时覆盖（app::setClearColor）对后续新开子窗口同样生效
+    if (const std::optional<eui::Color>& override_ = app::detail::clearColorOverride()) {
+        managed->content.setClearColor(*override_);
     }
     if (request.modal) {
         SDL_SetWindowModalFor(window, parentWindow);
@@ -620,11 +625,15 @@ int eui_app_run() {
     windowRequest.maximized = app::windowMaximized();
     windowRequest.title = app::windowTitle();
     windowRequest.renderApi = core::render::windowRenderApi();
+    windowRequest.windowEffect = app::windowEffect();
     SDL_Window* window = static_cast<SDL_Window*>(core::window::createWindow(windowRequest));
     if (window == nullptr) {
         SDL_Quit();
         return -1;
     }
+    // clearColor 联动基线（app::setClearColor 变更后广播到子窗口；主窗口在
+    // app::render 里直接读覆盖值）
+    eui::Color appliedClearColor = app::currentClearColor();
 
     auto renderBackend = core::render::createRenderBackend(window);
     if (!renderBackend) {
@@ -712,6 +721,16 @@ int eui_app_run() {
             }
         }
         pruneClosedWindows(childWindows);
+        // clearColor 联动（磨砂 Phase B）：app::setClearColor 的变更广播到全部
+        // 存活子窗口（各自 requestFullPaint）；主窗口已由 setClearColor 触发全量重绘。
+        const eui::Color effectiveClearColor = app::currentClearColor();
+        if (effectiveClearColor.r != appliedClearColor.r || effectiveClearColor.g != appliedClearColor.g ||
+            effectiveClearColor.b != appliedClearColor.b || effectiveClearColor.a != appliedClearColor.a) {
+            appliedClearColor = effectiveClearColor;
+            childWindows.updateAll([&effectiveClearColor](ManagedWindow& managed) {
+                managed.content.setClearColor(effectiveClearColor);
+            });
+        }
         if (state.hideToTrayRequested && !childWindows.empty()) {
             state.hideToTrayRequested = false;
         }

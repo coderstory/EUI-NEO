@@ -300,6 +300,10 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     managed->state.paintRequested = true;
     // 新子窗口跟随当前标题栏外观（运行时联动，Phase A）
     applyTitleBarAppearanceToWindow(childWindow);
+    // clearColor 运行时覆盖（app::setClearColor）对后续新开子窗口同样生效
+    if (const std::optional<eui::Color>& override_ = app::detail::clearColorOverride()) {
+        managed->content.setClearColor(*override_);
+    }
     if (managed->content.request().modal) {
         glfwFocusWindow(childWindow);
     }
@@ -451,6 +455,7 @@ int eui_app_run() {
     windowRequest.maximized = app::windowMaximized();
     windowRequest.title = app::windowTitle();
     windowRequest.renderApi = core::render::windowRenderApi();
+    windowRequest.windowEffect = app::windowEffect();
     GLFWwindow* window = static_cast<GLFWwindow*>(core::window::createWindow(windowRequest));
     if (!window) {
         glfwTerminate();
@@ -469,6 +474,10 @@ int eui_app_run() {
     // 标题栏外观启动快照（DslAppConfig::darkTitleBar；之后变更走下方帧内联动）
     applyTitleBarAppearanceToWindow(window);
     core::platform::TitleBarAppearance appliedTitleBar = app::currentTitleBarAppearance();
+    // clearColor 联动基线（app::setClearColor 变更后广播到子窗口；主窗口在
+    // app::render 里直接读覆盖值）。基线取当前生效值：未覆盖时不会误伤
+    // 子窗口自己的 DslWindowConfig clearColor。
+    eui::Color appliedClearColor = app::currentClearColor();
 
     const auto cleanupMainWindow = [&] {
         core::releaseInputQueue(window);
@@ -572,6 +581,17 @@ int eui_app_run() {
             applyTitleBarAppearanceToWindow(window);
             childWindows.updateAll([](ManagedWindow& managed) {
                 applyTitleBarAppearanceToWindow(managed.window);
+            });
+        }
+
+        // clearColor 联动（磨砂 Phase B）：app::setClearColor 的变更广播到全部
+        // 存活子窗口（各自 requestFullPaint）；主窗口已由 setClearColor 触发全量重绘。
+        const eui::Color effectiveClearColor = app::currentClearColor();
+        if (effectiveClearColor.r != appliedClearColor.r || effectiveClearColor.g != appliedClearColor.g ||
+            effectiveClearColor.b != appliedClearColor.b || effectiveClearColor.a != appliedClearColor.a) {
+            appliedClearColor = effectiveClearColor;
+            childWindows.updateAll([&managedClearColor = appliedClearColor](ManagedWindow& managed) {
+                managed.content.setClearColor(managedClearColor);
             });
         }
 

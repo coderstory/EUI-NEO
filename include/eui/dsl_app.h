@@ -30,6 +30,7 @@ struct DslAppConfig {
     bool alwaysOnTopValue = false;
     bool maximizedValue = false;
     bool darkTitleBarValue = false;
+    core::platform::WindowEffect windowEffectValue = core::platform::WindowEffect::None;
     float uiScaleValue = 1.0f;
 #if defined(EUI_DEBUG_BUILD)
     bool showDebugStatsInTitleValue = true;
@@ -97,6 +98,20 @@ struct DslAppConfig {
      * 覆盖本启动快照并作用于主窗口 + 全部存活子窗口）。
      */
     DslAppConfig& darkTitleBar(bool value = true) { darkTitleBarValue = value; return *this; }
+    /**
+     * @brief 窗口效果（启动快照，磨砂设计 Phase B）。
+     *
+     * 非 None 时主窗口以透明帧缓冲创建（GLFW_TRANSPARENT_FRAMEBUFFER /
+     * SDL_WINDOW_TRANSPARENT），clearColor 的 alpha < 1 即整体半透；Acrylic/
+     * Mica 的 DWM backdrop 应用在 Phase C。透明 hint 是创建期属性不可关闭，
+     * 运行时「任何档 ↔ 关」通过把 clearColor alpha 拉回 1 视觉等价实现，
+     * 不重建窗口。Vulkan 后端在 Windows 上降级为 None。半透像素的
+     * premultiplied 合成修正由 GL 后端自动完成（对 alpha=1 恒等）。
+     */
+    DslAppConfig& windowEffect(core::platform::WindowEffect value) {
+        windowEffectValue = value;
+        return *this;
+    }
     DslAppConfig& uiScale(float value) {
         uiScaleValue = value > 0.0f ? value : 1.0f;
         return *this;
