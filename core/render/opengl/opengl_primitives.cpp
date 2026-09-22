@@ -935,6 +935,19 @@ void OpenGLRenderBackend::releasePrimitiveResources() {
     flushRoundedRectBatch();
     releaseResources(primitiveResources());
     releaseResources(roundedRectBatchResources());
+    // premultiply blit 着色器（透明窗口专用，磨砂 Phase B）
+    if (premultiplyProgram_ != 0) {
+        glDeleteProgram(premultiplyProgram_);
+        premultiplyProgram_ = 0;
+    }
+    if (premultiplyVao_ != 0) {
+        glDeleteVertexArrays(1, &premultiplyVao_);
+        premultiplyVao_ = 0;
+    }
+    if (premultiplyVbo_ != 0) {
+        glDeleteBuffers(1, &premultiplyVbo_);
+        premultiplyVbo_ = 0;
+    }
     resetStateCache();
 }
 

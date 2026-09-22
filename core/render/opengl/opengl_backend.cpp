@@ -417,21 +417,147 @@ void OpenGLRenderBackend::blitRenderCache(int width,
     stats.blitPixels += renderRectAreaPixels(blitRects);
 
     setScissor(false, {}, height);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, cacheFramebuffer_);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    for (const core::Rect& rect : blitRects) {
-        const GLint left = static_cast<GLint>(rect.x);
-        const GLint right = static_cast<GLint>(rect.x + rect.width);
-        const GLint top = static_cast<GLint>(rect.y);
-        const GLint bottom = static_cast<GLint>(rect.y + rect.height);
-        glBlitFramebuffer(left, height - bottom, right, height - top,
-                          left, height - bottom, right, height - top,
-                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    if (outputUsesTransparentFramebuffer() && ensurePremultiplyBlitResources()) {
+        blitRenderCachePremultiplied(blitRects, width, height);
+    } else {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, cacheFramebuffer_);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        for (const core::Rect& rect : blitRects) {
+            const GLint left = static_cast<GLint>(rect.x);
+            const GLint right = static_cast<GLint>(rect.x + rect.width);
+            const GLint top = static_cast<GLint>(rect.y);
+            const GLint bottom = static_cast<GLint>(rect.y + rect.height);
+            glBlitFramebuffer(left, height - bottom, right, height - top,
+                              left, height - bottom, right, height - top,
+                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     if (currentBackbuffer_ < backbufferCacheGenerations_.size()) {
         backbufferCacheGenerations_[currentBackbuffer_] = renderCacheGeneration_;
     }
+}
+
+bool OpenGLRenderBackend::outputUsesTransparentFramebuffer() {
+    if (outputTransparentState_ >= 0) {
+        return outputTransparentState_ != 0;
+    }
+    if (window_ == nullptr) {
+        outputTransparentState_ = 0;
+        return false;
+    }
+#if defined(EUI_WINDOW_BACKEND_SDL2)
+    outputTransparentState_ =
+        (SDL_GetWindowFlags(static_cast<SDL_Window*>(window_)) & SDL_WINDOW_TRANSPARENT) != 0 ? 1 : 0;
+#else
+    outputTransparentState_ =
+        glfwGetWindowAttrib(static_cast<GLFWwindow*>(window_), GLFW_TRANSPARENT_FRAMEBUFFER) == GLFW_TRUE ? 1 : 0;
+#endif
+    return outputTransparentState_ != 0;
+}
+
+bool OpenGLRenderBackend::ensurePremultiplyBlitResources() {
+    if (premultiplyProgram_ != 0) {
+        return true;
+    }
+    const char* vertexSource =
+        "#version 330 core\n"
+        "layout(location=0) in vec2 aPos;\n"
+        "layout(location=1) in vec2 aUv;\n"
+        "out vec2 vUv;\n"
+        "void main(){ vUv = aUv; gl_Position = vec4(aPos, 0.0, 1.0); }\n";
+    const char* fragmentSource =
+        "#version 330 core\n"
+        "in vec2 vUv;\n"
+        "out vec4 fragColor;\n"
+        "uniform sampler2D uTex;\n"
+        "uniform vec2 uUvScale;\n" // cache 内容只占容量纹理左下角 (w/capW, h/capH)
+        "void main(){\n"
+        "    vec4 c = texture(uTex, vUv * uUvScale);\n"
+        "    fragColor = vec4(c.rgb * c.a, c.a);\n" // straight -> premultiplied
+        "}\n";
+    const auto compile = [](GLenum type, const char* source) {
+        const GLuint shader = glCreateShader(type);
+        glShaderSource(shader, 1, &source, nullptr);
+        glCompileShader(shader);
+        GLint ok = 0;
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+        if (!ok) {
+            glDeleteShader(shader);
+            return 0u;
+        }
+        return shader;
+    };
+    const GLuint vs = compile(GL_VERTEX_SHADER, vertexSource);
+    const GLuint fs = compile(GL_FRAGMENT_SHADER, fragmentSource);
+    if (vs == 0 || fs == 0) {
+        if (vs != 0) glDeleteShader(vs);
+        if (fs != 0) glDeleteShader(fs);
+        return false;
+    }
+    premultiplyProgram_ = glCreateProgram();
+    glAttachShader(premultiplyProgram_, vs);
+    glAttachShader(premultiplyProgram_, fs);
+    glLinkProgram(premultiplyProgram_);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    GLint linked = 0;
+    glGetProgramiv(premultiplyProgram_, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        glDeleteProgram(premultiplyProgram_);
+        premultiplyProgram_ = 0;
+        return false;
+    }
+    premultiplyUvScaleLocation_ = glGetUniformLocation(premultiplyProgram_, "uUvScale");
+    premultiplyTextureLocation_ = glGetUniformLocation(premultiplyProgram_, "uTex");
+
+    // 全屏 quad（clip 坐标 + [0,1] UV，UV 由 uUvScale 收缩到 cache 有效区）
+    const float vertices[] = {
+        -1.0f, -1.0f, 0.0f, 0.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 1.0f,
+    };
+    glGenVertexArrays(1, &premultiplyVao_);
+    glGenBuffers(1, &premultiplyVbo_);
+    glBindVertexArray(premultiplyVao_);
+    glBindBuffer(GL_ARRAY_BUFFER, premultiplyVbo_);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 16, static_cast<const void*>(nullptr));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 16, reinterpret_cast<const void*>(8));
+    glBindVertexArray(0);
+    resetStateCache();
+    return true;
+}
+
+void OpenGLRenderBackend::blitRenderCachePremultiplied(const std::vector<core::Rect>& blitRects,
+                                                       int width,
+                                                       int height) {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, width, height);
+    setBlendEnabled(false);
+    useProgram(premultiplyProgram_);
+    if (premultiplyTextureLocation_ >= 0) {
+        glUniform1i(premultiplyTextureLocation_, 0);
+    }
+    if (premultiplyUvScaleLocation_ >= 0) {
+        glUniform2f(premultiplyUvScaleLocation_,
+                    cacheCapacityWidth_ > 0 ? static_cast<float>(width) / static_cast<float>(cacheCapacityWidth_) : 1.0f,
+                    cacheCapacityHeight_ > 0 ? static_cast<float>(height) / static_cast<float>(cacheCapacityHeight_) : 1.0f);
+    }
+    activeTextureUnit(0);
+    bindTexture2D(cacheTexture_);
+    bindVertexArray(premultiplyVao_);
+    for (const core::Rect& rect : blitRects) {
+        // 脏区矩形裁剪 + 全屏 quad：被裁剪片元提前剔除，每矩形一次 draw，
+        // 与 straight 路径的 per-rect glBlitFramebuffer 循环同构。
+        setScissor(true, rect, height);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+    setScissor(false, {}, height);
+    bindVertexArray(0);
 }
 
 std::vector<core::Rect> OpenGLRenderBackend::resolveRenderCacheBlitRects(int width,
