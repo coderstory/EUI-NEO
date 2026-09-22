@@ -1,7 +1,16 @@
 #pragma once
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#if defined(_WIN32)
+/* UTF-8 → UTF-16（malloc 分配，调用方 free；失败返回 NULL）。
+ * Win32 托盘菜单走 W 系 API，中文等非 ASCII 文本须经此转换（GBK 代码页下
+ * ANSI 版会乱码）。tray.h 的 Win32 patch 与单元测试共用。 */
+wchar_t* eui_tray_utf8_to_utf16(const char* utf8);
 #endif
 
 /* 托盘菜单单项。text 为 NULL 表示分隔线；cb 非空时点击该项会以 user 调用。 */

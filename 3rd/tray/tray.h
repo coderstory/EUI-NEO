@@ -208,6 +208,15 @@ static void tray_exit() { objc_msgSend(app, sel_registerName("terminate:"), app)
 
 #include <shellapi.h>
 
+#include <stdlib.h>
+
+/* EUI-NEO local patch (upstream: zserge/tray): upstream feeds UTF-8 menu
+   text straight into the ANSI menu APIs, which garble it on Windows systems
+   whose ANSI code page is not UTF-8 (e.g. GBK on zh-CN Windows). Convert to
+   UTF-16 and call the wide APIs instead. eui_tray_utf8_to_utf16() is defined
+   in core/platform/tray_bridge.c (non-static so unit tests can reach it). */
+wchar_t *eui_tray_utf8_to_utf16(const char *utf8);
+
 #define WM_TRAY_CALLBACK_MESSAGE (WM_USER + 1)
 #define WC_TRAY_CLASS_NAME "TRAY"
 #define ID_TRAY_FIRST 1000
@@ -262,9 +271,9 @@ static HMENU _tray_menu(struct tray_menu *m, UINT *id) {
     if (strcmp(m->text, "-") == 0) {
       InsertMenu(hmenu, *id, MF_SEPARATOR, TRUE, "");
     } else {
-      MENUITEMINFO item;
+      MENUITEMINFOW item;
       memset(&item, 0, sizeof(item));
-      item.cbSize = sizeof(MENUITEMINFO);
+      item.cbSize = sizeof(MENUITEMINFOW);
       item.fMask = MIIM_ID | MIIM_TYPE | MIIM_STATE | MIIM_DATA;
       item.fType = 0;
       item.fState = 0;
@@ -279,10 +288,13 @@ static HMENU _tray_menu(struct tray_menu *m, UINT *id) {
         item.fState |= MFS_CHECKED;
       }
       item.wID = *id;
-      item.dwTypeData = m->text;
+      /* EUI-NEO patch: UTF-8 -> UTF-16, wide menu API (see note above). */
+      wchar_t *text = eui_tray_utf8_to_utf16(m->text);
+      item.dwTypeData = text != NULL ? text : L"";
       item.dwItemData = (ULONG_PTR)m;
 
-      InsertMenuItem(hmenu, *id, TRUE, &item);
+      InsertMenuItemW(hmenu, *id, TRUE, &item);
+      free(text);
     }
   }
   return hmenu;
@@ -337,7 +349,10 @@ static void tray_update(struct tray *tray) {
   hmenu = _tray_menu(tray->menu, &id);
   SendMessage(hwnd, WM_INITMENUPOPUP, (WPARAM)hmenu, 0);
   HICON icon;
-  ExtractIconEx(tray->icon, 0, NULL, &icon, 1);
+  /* EUI-NEO patch: icon path is UTF-8 too; use the wide API. */
+  wchar_t *icon_path = eui_tray_utf8_to_utf16(tray->icon);
+  ExtractIconExW(icon_path != NULL ? icon_path : L"", 0, NULL, &icon, 1);
+  free(icon_path);
   if (nid.hIcon) {
     DestroyIcon(nid.hIcon);
   }

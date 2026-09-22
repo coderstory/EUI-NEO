@@ -154,6 +154,27 @@ static void testSetTrayMenuSmoke() {
     assert(!core::platform::isTrayInitialized());
 }
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+static void testUtf8ToUtf16RoundTrip() {
+    // Win32 托盘菜单文本 UTF-8 -> UTF-16 -> UTF-8 往返无损（GBK 代码页下的乱码防护）
+    const char* cases[] = {"快速笔记", "退出 DevDesk", "Show", "混合 emoji \xF0\x9F\x8E\x89"};
+    for (const char* s : cases) {
+        wchar_t* w = eui_tray_utf8_to_utf16(s);
+        assert(w != nullptr);
+        char back[128];
+        int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, back, sizeof(back), nullptr, nullptr);
+        assert(n > 0 && std::string(back) == s);
+        free(w);
+    }
+    assert(eui_tray_utf8_to_utf16(nullptr) == nullptr);
+}
+#endif
+
 int main() {
     testExpandEmptyFallsBackToDefaults();
     testExpandCustomKeepsDefaults();
@@ -162,5 +183,8 @@ int main() {
     testTrayMenuItemDefaults();
     testDslTrayMenuRegistration();
     testSetTrayMenuSmoke();
+#ifdef _WIN32
+    testUtf8ToUtf16RoundTrip();
+#endif
     return 0;
 }
