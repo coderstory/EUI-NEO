@@ -136,6 +136,38 @@ Debug 配置只控制诊断输出，不参与业务状态。`showDebugStatsInTit
 
 运行时切 DWM backdrop 材质用 `app::setWindowEffect(effect)`（磨砂 Phase C）：`Acrylic`（TRANSIENTWINDOW 实时模糊）/ `Mica`（MAINWINDOW 壁纸采样）/ `MicaAlt`（TABBEDWINDOW）/ `None`·`Transparent`（显式关 backdrop，回到纯 clearColor alpha 半透），下一帧应用到主窗口与全部存活子窗口，优先于 `.windowEffect(...)` 启动快照。仅 Windows 11 22H2（22621）+ 的 GLFW 后端生效；`DWMSBT_AUTO` 不可靠（spike 实测无效），档位一律显式。backdrop 材质画在窗口整个 bounds 后面（含标题栏），窗口内容需带 alpha（透明 hint + clearColor alpha < 1）才能露出；「关」档把 clearColor alpha 拉回 1 即完全遮住材质。`app::activeWindowEffect()` 返回实际生效值（能力降级后的真值，主循环每次应用后回写）：请求 `Acrylic`/`Mica` 而系统不支持时，按透明帧缓冲是否实际开启降级为 `Transparent`/`None`——设置页用它回查降级并提示用户。示例见 `examples/window_effect.cpp`。
 
+### 子窗口配置（无边框 / 置顶 / 穿透 / 任务栏隐藏）
+
+`app::openWindow` 的 `DslWindowConfig` 支持完整窗口形态（桌宠设计 §2.6 G1-G5；此前子窗口必然带标题栏/不置顶/可缩放，且有 160×120 最小尺寸下限）：
+
+```cpp
+app::openWindow(app::DslWindowConfig{}
+    .title("Pet").pageId("pet")
+    .windowSize(128, 128)               // 小窗下限已放开（只防 0/负数）
+    .windowPosition(x, y)               // 初始位置（GLFW 左上原点，两平台一致）
+    .decorated(false)                   // 无边框
+    .alwaysOnTop(true)                  // 置顶（失焦仍保持）
+    .resizable(false)
+    .focusOnShow(false)                 // 显示时不抢前台焦点（SDL2 后端忽略）
+    .clickThrough(true)                 // 创建期整窗鼠标穿透（仅无边框生效）
+    .hideFromTaskbar(true)              // 不进任务栏/Alt+Tab（Windows；macOS/Linux 静默降级）
+    .ignoreClearColorOverride()         // 不跟随 app::setClearColor 全局广播（自管背景的窗口）
+    .clearColor({0, 0, 0, 0})           // 全透底（需 windowEffect 非 None 开透明 hint）
+    .onWindowCreated([](core::window::Handle h) { /* 保存句柄 */ }),
+    composeFn);
+```
+
+配套的运行时窗口操作（`core/window/window_backend.h`，拖拽移动/穿透切换/位置钳制）：
+
+- `core::window::setWindowPos / getWindowPos`——运行时移动/读取窗口位置；
+- `core::window::setWindowMousePassthrough(window, bool)`——运行时切换整窗鼠标穿透（挂机模式）；
+- `core::window::getPrimaryMonitorWorkArea(x, y, w, h)`——主显示器工作区，供持久化位置钳制回屏幕内。
+
+任务栏隐藏的平台层接口是 `core::platform::applyWindowStyleFlags(handle, WindowStyleFlags{toolWindow, noActivate})`（Windows `WS_EX_TOOLWINDOW`/`WS_EX_NOACTIVATE`；macOS/Linux stub 返回 false）。`.hideFromTaskbar(true)` 内部即调它。
+
+`ignoreClearColorOverride()` 面向自管背景色的覆盖窗口（如桌宠 sprite 窗）：`app::setClearColor` 的全局广播（主题切换/窗口效果切档）不会冲掉它自己的 `clearColor`，默认 false = 跟随广播（既有行为不变）。示例见 `examples/pet_window.cpp`。
+
+
 
 不设置 `.textFont(...)` 时使用 `core/render/text.cpp` 里的全局默认文本字体；不设置 `.iconFont(...)` 时使用全局默认图标字体。默认字体优先从可执行文件旁的 `assets/`、工作目录 `assets/`、上级运行目录 `assets/` 查找；找不到内置字体资源时会回退到平台系统字体，避免单 exe 漏带 assets 后普通文本整段不可见。
 

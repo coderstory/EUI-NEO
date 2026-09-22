@@ -261,6 +261,13 @@ else()
     list(APPEND CORE_SOURCES core/platform/window_effect_stub.cpp)
 endif()
 
+# 窗口样式属性（桌宠设计 §2.6 G5：任务栏隐藏等）。macOS/Linux 走 stub
+if(WIN32)
+    list(APPEND CORE_SOURCES core/platform/window_style_win.cpp)
+else()
+    list(APPEND CORE_SOURCES core/platform/window_style_stub.cpp)
+endif()
+
 # -----------------------------------------------------------------------------
 # Core library target
 # -----------------------------------------------------------------------------

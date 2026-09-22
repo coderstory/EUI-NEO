@@ -21,6 +21,29 @@ struct DslWindowRequest {
     int width = 640;
     int height = 420;
     bool modal = false;
+    // ---- 子窗口配置透传（桌宠设计 §2.6 G1/G2）----
+    // 全部落到 WindowCreateRequest（后端已支持；此前子窗口必然带标题栏/
+    // 不置顶/可缩放，是纯接线缺口）。默认值与 WindowCreateRequest 一致，
+    // 既有调用零改动兼容。
+    int x = 0;
+    int y = 0;
+    bool positionSet = false;
+    bool decorated = true;
+    bool alwaysOnTop = false;
+    bool resizable = true;
+    // 显示时不抢前台焦点（GLFW_FOCUS_ON_SHOW；SDL2 后端忽略）
+    bool focusOnShow = true;
+    // 创建期整窗鼠标穿透（GLFW_MOUSE_PASSTHROUGH，仅无边框窗口生效；
+    // 运行时切换走 core::window::setWindowMousePassthrough）
+    bool mousePassthrough = false;
+    // 任务栏/Alt+Tab 隐藏（Windows WS_EX_TOOLWINDOW；其他平台静默降级）
+    bool hideFromTaskbar = false;
+    // 是否跟随 app::setClearColor 的全局广播（桌宠这类自管背景色的
+    // 覆盖窗口——如 clearColor alpha=0 的 sprite 窗——应设 false）
+    bool followClearColorOverride = true;
+    // 子窗口创建成功后回调（core::window::Handle，可用来做运行时
+    // setWindowPos / setWindowMousePassthrough 等）
+    std::function<void(core::window::Handle)> onWindowCreated;
     std::function<void(const eui::KeyEvent&)> onKeyEvent;
     DslWindowCompose compose;
 };
@@ -55,6 +78,13 @@ const std::vector<core::platform::TrayMenuItem>& trayMenuItems();
 /** @brief 是否在内置 Show/Exit 之外保留默认项（见 DslAppConfig::trayMenu）。 */
 bool trayKeepDefaultMenuItems();
 void requestUpdate();
+/**
+ * @brief 请求退出应用：下一帧主循环退出（等同托盘 Exit，走同一清理路径）。
+ *
+ * 可在任意窗口（含子窗口）的回调里调用（主线程）；用于子窗口自带的
+ * 「退出」菜单等没有主窗口句柄的场景。
+ */
+void requestExit();
 /**
  * @brief 运行时切换标题栏（非客户区）外观，即时生效，无需重启。
  *
@@ -112,6 +142,8 @@ namespace detail {
 void requestFullPaint();
 /** @brief 主循环回写实际生效的窗口效果（glfw_app_main 专用）。 */
 void setActiveWindowEffect(core::platform::WindowEffect effect);
+/** @brief 取走 requestExit 的退出请求（主循环每帧轮询，true 只返回一次）。 */
+bool consumeExitRequest();
 }
 
 } // namespace app
