@@ -277,6 +277,10 @@ bool initialize(core::window::Handle window) {
     const DslAppConfig& config = dslAppConfig();
     core::TextPrimitive::setDefaultFontFiles(config.textFontFileValue, config.iconFontFileValue);
     detail::dslRuntime().setKeyEventHandler(config.keyEventHandler);
+    // 打开文件请求（Finder 双击 / 打开方式）：安装原生事件源并注册回调。
+    // 主循环每帧调用 core::platform::pollOpenFiles() 派发。
+    core::platform::installOpenFileHandler();
+    core::platform::setOpenFileHandler(config.openFileHandler);
 
     detail::DslAppState& state = detail::dslAppState();
     if (!state.iconApplied) {

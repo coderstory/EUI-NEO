@@ -1,5 +1,6 @@
 #include "core/platform/platform.h"
 
+#include "core/platform/open_file_bridge.h"
 #include "core/platform/tray_bridge.h"
 #include "core/window/window_backend.h"
 
@@ -744,6 +745,44 @@ void shutdownTray() {
         eui_tray_shutdown();
     }
     state = {};
+}
+
+namespace {
+
+// Single application level open-file handler. Kept in a function local static so
+// that registration order inside app::initialize() does not matter.
+OpenFileHandler& openFileHandlerSlot() {
+    static OpenFileHandler handler;
+    return handler;
+}
+
+void openFileCallbackTrampoline(const char* path, void* userdata) {
+    (void)userdata;
+    if (path == nullptr) {
+        return;
+    }
+    OpenFileHandler& handler = openFileHandlerSlot();
+    if (handler) {
+        handler(std::string(path));
+    }
+}
+
+} // namespace
+
+void installOpenFileHandler() {
+    (void)eui_open_file_install_handler();
+}
+
+void setOpenFileHandler(OpenFileHandler handler) {
+    openFileHandlerSlot() = std::move(handler);
+    // Detach the C callback when no handler is registered so that pending paths
+    // are simply drained instead of piling up.
+    const bool attached = static_cast<bool>(openFileHandlerSlot());
+    eui_platform_set_open_file_callback(attached ? &openFileCallbackTrampoline : nullptr, nullptr);
+}
+
+int pollOpenFiles() {
+    return eui_open_file_dispatch_pending();
 }
 
 void setImeCursorRect(window::Handle window, float x, float y, float width, float height) {

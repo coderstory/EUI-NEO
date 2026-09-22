@@ -47,6 +47,7 @@ struct DslAppConfig {
     std::string trayIconPathValue;
     std::function<void(const eui::KeyEvent&)> keyEventHandler;
     std::function<void()> shutdownHandler;
+    std::function<void(const std::string&)> openFileHandler;
 
     DslAppConfig& title(std::string value) { titleValue = std::move(value); return *this; }
     DslAppConfig& pageId(std::string value) { pageIdValue = std::move(value); return *this; }
@@ -127,6 +128,16 @@ struct DslAppConfig {
     }
     DslAppConfig& onKeyEvent(std::function<void(const eui::KeyEvent&)> handler) {
         keyEventHandler = std::move(handler);
+        return *this;
+    }
+    /**
+     * @brief 打开文件回调：Finder 双击 / 右键「打开方式」/ 拖到 Dock 图标 / 系统打开请求。
+     *
+     * 回调在主线程、每帧的输入处理之前触发（早于 compose），可以安全地切换页面或加载数据。
+     * macOS 走 kAEOpenDocuments Apple Event；其他平台目前不会触发（队列 API 仍可用）。
+     */
+    DslAppConfig& onOpenFile(std::function<void(const std::string& path)> handler) {
+        openFileHandler = std::move(handler);
         return *this;
     }
     /** @brief UI/渲染线程退出回调，在主窗口 GPU 设备销毁前释放应用资源引用。 */

@@ -406,6 +406,9 @@ GLFWwindow* findModalChildWindow(app::DslWindowManager<ManagedWindow>& windows) 
 int eui_app_run() {
     core::platform::repairCurrentWorkingDirectory();
     core::render::initializeRenderBackendLoader();
+    // 必须在 glfwInit() 之前：glfwInit() 内部会跑一次 NSApp 启动循环，
+    // 启动期的「Finder 双击打开」事件在那里就可能到达，晚装会丢事件。
+    core::platform::installOpenFileHandler();
     if (!glfwInit()) {
         return -1;
     }
@@ -499,6 +502,9 @@ int eui_app_run() {
     while (!glfwWindowShouldClose(window)) {
         renderBackend->makeCurrent();
         windowState.pollTray(false);
+        // 「打开文件」请求（macOS kAEOpenDocuments Apple Event）在事件泵里入队，
+        // 这里在帧开始前派发，回调方可以安全地切换页面 / 加载数据。
+        core::platform::pollOpenFiles();
         if (windowState.consumeTrayExitRequested()) {
             windowState.forceClose = true;
             glfwSetWindowShouldClose(window, GLFW_TRUE);

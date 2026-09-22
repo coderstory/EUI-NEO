@@ -107,6 +107,7 @@ if(APPLE)
     set_source_files_properties(core/platform/native_bridge.c PROPERTIES LANGUAGE OBJC)
     set_source_files_properties(core/platform/tray_bridge.c PROPERTIES LANGUAGE OBJC)
     set_source_files_properties(core/platform/ime_bridge.c PROPERTIES LANGUAGE OBJC)
+    set_source_files_properties(core/platform/open_file_bridge.c PROPERTIES LANGUAGE OBJC)
 endif()
 
 function(eui_apply_compile_options target_name)
@@ -230,6 +231,7 @@ set(CORE_SOURCES
     core/render/stb_image_impl.cpp
     core/render/text.cpp
     core/platform/tray_bridge.c
+    core/platform/open_file_bridge.c
     core/window/window_backend.cpp
     core/window/window_input_backend.cpp
 )

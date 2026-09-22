@@ -586,6 +586,9 @@ bool updateManagedWindow(ManagedWindow& managed, float deltaSeconds, bool update
 
 int eui_app_run() {
     core::platform::repairCurrentWorkingDirectory();
+    // 必须在 SDL_Init() 之前：macOS 上启动期的「Finder 双击打开」事件
+    // 可能早于事件循环到达，晚装会丢事件（其他平台为空操作）。
+    core::platform::installOpenFileHandler();
     SDL_SetMainReady();
 #if defined(__linux__) && !defined(__ANDROID__)
     SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland,x11");
@@ -654,6 +657,9 @@ int eui_app_run() {
     app::DslWindowManager<ManagedWindow> childWindows;
     while (state.running) {
         state.pollTray(false);
+        // 「打开文件」请求（macOS kAEOpenDocuments Apple Event）在事件泵里入队，
+        // 这里在帧开始前派发。
+        core::platform::pollOpenFiles();
         if (state.consumeTrayExitRequested()) {
             break;
         }
