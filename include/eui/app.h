@@ -3,6 +3,7 @@
 #include "eui/dsl.h"
 #include "eui/types.h"
 #include "eui/window.h"
+#include "core/platform/window_effect.h"
 
 #include <functional>
 #include <string>
@@ -47,6 +48,16 @@ bool trayEnabled();
 const char* trayTitle();
 const char* trayIconPath();
 void requestUpdate();
+/**
+ * @brief 运行时切换标题栏（非客户区）外观，即时生效，无需重启。
+ *
+ * 覆盖主窗口 + 全部存活子窗口，此后新开的子窗口同样跟随；优先于
+ * DslAppConfig::darkTitleBar 的启动快照。仅 Windows 生效（其他平台静默
+ * 忽略）。可在任意回调里调用（主线程），实际应用发生在下一帧主循环。
+ */
+void setTitleBarAppearance(const core::platform::TitleBarAppearance& appearance);
+/** @brief 当前生效的标题栏外观：运行时覆盖优先，否则取 dslAppConfig 启动快照。 */
+core::platform::TitleBarAppearance currentTitleBarAppearance();
 bool initialize(eui::window::Handle window);
 bool update(eui::window::Handle window, float deltaSeconds, int windowWidth, int windowHeight, float dpiScale, float pointerScale);
 bool update(eui::window::Handle window, float deltaSeconds, int windowWidth, int windowHeight, float dpiScale, float pointerScale, bool updateRequested);

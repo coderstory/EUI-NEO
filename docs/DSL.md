@@ -91,7 +91,7 @@ static const DslAppConfig config = DslAppConfig{}
     });
 ```
 
-`minWindowSize` 和 `maxWindowSize` 中的 `0` 表示对应方向不限制；窗口尺寸约束由 GLFW/SDL2 后端执行。`centerWindow()` 会清除显式位置并恢复居中。`highDpi` 在 SDL2 中控制 `SDL_WINDOW_ALLOW_HIGHDPI`；GLFW 的 DPI 感知由其初始化阶段按平台设置，是进程级行为，不能安全地按单个窗口关闭。全屏、透明窗口和 VSync 不属于 `DslAppConfig`，它们会改变平台窗口或渲染后端生命周期，应通过专用平台/渲染配置处理。
+`minWindowSize` 和 `maxWindowSize` 中的 `0` 表示对应方向不限制；窗口尺寸约束由 GLFW/SDL2 后端执行。`centerWindow()` 会清除显式位置并恢复居中。`highDpi` 在 SDL2 中控制 `SDL_WINDOW_ALLOW_HIGHDPI`；GLFW 的 DPI 感知由其初始化阶段按平台设置，是进程级行为，不能安全地按单个窗口关闭。标题栏外观属于 `DslAppConfig`（见下）；全屏、透明窗口和 VSync 不属于 `DslAppConfig`，它们会改变平台窗口或渲染后端生命周期，应通过专用平台/渲染配置处理。
 
 Debug 配置只控制诊断输出，不参与业务状态。`showDebugStatsInTitle` 控制窗口标题中的 FPS、CPU/GPU 和渲染统计；`debugTitleInterval` 控制标题统计刷新间隔（秒）。`showDebugOverlay` 与 `onDebugOverlay` 用于注入布局边界、性能标记等调试框，回调在每次页面 compose 后执行；未设置回调时不会绘制任何额外内容。Debug 构建默认开启标题统计和覆盖层开关，Release 构建默认关闭。
 
@@ -102,6 +102,13 @@ Debug 配置只控制诊断输出，不参与业务状态。`showDebugStatsInTit
 必须容忍资源尚未创建，不应抛异常。参见 [外部 GPU 图像的生命周期](动态纹理.md)。
 
 托盘后台运行默认关闭。需要托盘的页面可以在 `DslAppConfig` 中显式调用 `.tray(true)`，例如串口工具。启用托盘后，关闭或最小化窗口会隐藏到托盘并释放图形资源；托盘 `Show` 会重新显示窗口，`Exit` 才真正退出。
+
+### 标题栏外观（深浅主题联动）
+
+`.darkTitleBar(true)` 让窗口标题栏（非客户区）在启动时进入深色模式，浅色界面配浅色标题栏、深色界面配深色标题栏。仅 Windows（DWMWA_USE_IMMERSIVE_DARK_MODE，Win11 22000+）生效，其他平台或老系统静默忽略。默认 `false`，行为与现状一致。
+
+运行时切换主题时用 `app::setTitleBarAppearance(core::platform::TitleBarAppearance{dark})`：即时生效、无需重启，覆盖主窗口与全部存活子窗口（此后新开的子窗口同样跟随），并优先于 `.darkTitleBar(...)` 的启动快照。`app::currentTitleBarAppearance()` 返回当前生效值。`TitleBarAppearance` 还预留了 `customColor`/`colorAbgr`（Windows 自定义标题栏底色，COLORREF），默认不启用——系统材质贯通标题栏时应让 DWM 自绘。示例见 `examples/window_effect.cpp`。
+
 
 不设置 `.textFont(...)` 时使用 `core/render/text.cpp` 里的全局默认文本字体；不设置 `.iconFont(...)` 时使用全局默认图标字体。默认字体优先从可执行文件旁的 `assets/`、工作目录 `assets/`、上级运行目录 `assets/` 查找；找不到内置字体资源时会回退到平台系统字体，避免单 exe 漏带 assets 后普通文本整段不可见。
 

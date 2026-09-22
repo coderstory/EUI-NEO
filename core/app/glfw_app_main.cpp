@@ -24,6 +24,7 @@
 #include "core/app/main_window_runtime.h"
 #include "core/input/input_state.h"
 #include "core/platform/platform.h"
+#include "core/platform/window_effect.h"
 #include "core/window/window_backend.h"
 #include "core/render/render_backend.h"
 
@@ -243,6 +244,23 @@ void installWindowCallbacks(GLFWwindow* window, WindowState& windowState) {
     });
 }
 
+// ============ 标题栏外观联动（磨砂设计文档 Phase A）============
+// 非 Windows 平台 nativeWindowHandle 返回 nullptr，
+// core::platform::applyTitleBarAppearance 内部静默降级。
+void* nativeWindowHandle(GLFWwindow* window) {
+#if defined(_WIN32)
+    return glfwGetWin32Window(window);
+#else
+    (void)window;
+    return nullptr;
+#endif
+}
+
+void applyTitleBarAppearanceToWindow(GLFWwindow* window) {
+    core::platform::applyTitleBarAppearance(nativeWindowHandle(window),
+                                            app::currentTitleBarAppearance());
+}
+
 std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& request,
                                                    GLFWwindow* parentWindow,
                                                    core::render::RenderBackend& shareBackend) {
@@ -280,6 +298,8 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     }
 
     managed->state.paintRequested = true;
+    // 新子窗口跟随当前标题栏外观（运行时联动，Phase A）
+    applyTitleBarAppearanceToWindow(childWindow);
     if (managed->content.request().modal) {
         glfwFocusWindow(childWindow);
     }
@@ -446,6 +466,9 @@ int eui_app_run() {
         glfwSetWindowTitle(window, title);
     }
     installWindowCallbacks(window, windowState);
+    // 标题栏外观启动快照（DslAppConfig::darkTitleBar；之后变更走下方帧内联动）
+    applyTitleBarAppearanceToWindow(window);
+    core::platform::TitleBarAppearance appliedTitleBar = app::currentTitleBarAppearance();
 
     const auto cleanupMainWindow = [&] {
         core::releaseInputQueue(window);
@@ -540,6 +563,16 @@ int eui_app_run() {
 
         if (windowState.anyAnimating(anyRenderableManagedWindowAnimating(childWindows))) {
             waitForNextFrame(window, windowState);
+        }
+
+        // 标题栏外观联动：app::setTitleBarAppearance 的变更在下一帧应用到
+        // 主窗口 + 全部存活子窗口（新子窗口在创建时已应用当前值）
+        if (app::currentTitleBarAppearance() != appliedTitleBar) {
+            appliedTitleBar = app::currentTitleBarAppearance();
+            applyTitleBarAppearanceToWindow(window);
+            childWindows.updateAll([](ManagedWindow& managed) {
+                applyTitleBarAppearanceToWindow(managed.window);
+            });
         }
 
         const double currentFrameTime = glfwGetTime();
