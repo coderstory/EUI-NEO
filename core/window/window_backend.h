@@ -34,6 +34,9 @@ void setImeCursorRect(Handle window, float x, float y, float width, float height
 // 运行时移动/读取窗口位置（屏幕坐标，GLFW 语义两平台一致为左上原点）
 void setWindowPos(Handle window, int x, int y);
 void getWindowPos(Handle window, int& x, int& y);
+// 请求关闭窗口（子窗口：主循环下一帧走正常 prune/destroy 路径；
+// 主窗口：等同用户点关闭按钮——托盘模式下走隐藏到托盘语义）
+void requestWindowClose(Handle window);
 // 运行时切换鼠标穿透（整窗点击透到下层；仅无边框窗口有意义）
 void setWindowMousePassthrough(Handle window, bool enabled);
 // 主显示器工作区（不含任务栏/Dock），供应用把持久化位置钳制回屏幕内

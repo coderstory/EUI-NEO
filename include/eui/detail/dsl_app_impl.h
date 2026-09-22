@@ -9,6 +9,7 @@
 #include "core/render/text.h"
 
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <optional>
 #include <vector>
@@ -314,6 +315,24 @@ bool trayKeepDefaultMenuItems() {
 
 void requestUpdate() {
     core::platform::requestUiUpdate();
+}
+
+// requestExit 的退出请求（主循环每帧经 detail::consumeExitRequest 取走）
+inline std::atomic<bool>& exitRequestedFlag() {
+    static std::atomic<bool> flag{false};
+    return flag;
+}
+
+void requestExit() {
+    exitRequestedFlag().store(true, std::memory_order_relaxed);
+    // 唤醒可能 glfwWaitEvents / SDL_WaitEvent 中的主循环
+    core::platform::requestUiUpdate();
+}
+
+namespace detail {
+bool consumeExitRequest() {
+    return exitRequestedFlag().exchange(false, std::memory_order_relaxed);
+}
 }
 
 void setTitleBarAppearance(const core::platform::TitleBarAppearance& appearance) {

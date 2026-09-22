@@ -570,6 +570,18 @@ void setWindowMousePassthrough(Handle window, bool enabled) {
 #endif
 }
 
+void requestWindowClose(Handle window) {
+    // SDL2 无 per-window should-close：走该窗口的 CLOSE 事件（与用户点 X 同路，
+    // 主循环 processManagedEvent 置 closeRequested 后 prune 销毁）
+    if (window != nullptr) {
+        SDL_Event event{};
+        event.type = SDL_WINDOWEVENT;
+        event.window.event = SDL_WINDOWEVENT_CLOSE;
+        event.window.windowID = SDL_GetWindowID(static_cast<SDL_Window*>(window));
+        SDL_PushEvent(&event);
+    }
+}
+
 void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height) {
     x = 0;
     y = 0;
@@ -756,6 +768,15 @@ void setWindowMousePassthrough(Handle window, bool enabled) {
     if (window != nullptr) {
         glfwSetWindowAttrib(static_cast<GLFWwindow*>(window), GLFW_MOUSE_PASSTHROUGH,
                             enabled ? GLFW_TRUE : GLFW_FALSE);
+    }
+}
+
+void requestWindowClose(Handle window) {
+    if (window != nullptr) {
+        // 与用户点标题栏关闭同一语义：子窗口由主循环 pruneClosedWindows 正常
+        // 销毁；主窗口走 close callback（托盘模式 = 隐藏到托盘）
+        glfwSetWindowShouldClose(static_cast<GLFWwindow*>(window), GLFW_TRUE);
+        glfwPostEmptyEvent();
     }
 }
 

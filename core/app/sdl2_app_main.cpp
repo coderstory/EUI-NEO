@@ -696,6 +696,10 @@ int eui_app_run() {
         if (state.consumeTrayExitRequested()) {
             break;
         }
+        // app::requestExit（子窗口「退出」菜单等场景）：与托盘 Exit 同一退出路径
+        if (app::detail::consumeExitRequest()) {
+            break;
+        }
         if (state.consumeTrayShowRequested()) {
             restoreFromTray(window, state);
         }

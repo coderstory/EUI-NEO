@@ -584,6 +584,12 @@ int eui_app_run() {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
             break;
         }
+        // app::requestExit（子窗口「退出」菜单等场景）：与托盘 Exit 同一退出路径
+        if (app::detail::consumeExitRequest()) {
+            windowState.forceClose = true;
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            break;
+        }
         if (windowState.consumeTrayShowRequested()) {
             restoreWindowFromTray(window, windowState);
         }
