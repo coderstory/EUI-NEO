@@ -54,6 +54,20 @@ inline std::optional<eui::Color>& clearColorOverride() {
     return override_;
 }
 
+// 窗口效果的运行时覆盖（std::nullopt = 未覆盖，走 dslAppConfig 启动快照）。
+// 主循环帧内检测变更后应用到主窗口 + 全部存活子窗口。
+inline std::optional<core::platform::WindowEffect>& windowEffectOverride() {
+    static std::optional<core::platform::WindowEffect> override_;
+    return override_;
+}
+
+// 实际生效的窗口效果（glfw_app_main 应用/降级后回写；nullopt = 尚未应用，
+// activeWindowEffect() 此时回退到期望值）。
+inline std::optional<core::platform::WindowEffect>& activeWindowEffectValue() {
+    static std::optional<core::platform::WindowEffect> value;
+    return value;
+}
+
 struct DslAppState {
     bool composed = false;
     bool iconApplied = false;
@@ -319,11 +333,36 @@ eui::Color currentClearColor() {
     return dslAppConfig().clearColorValue;
 }
 
+void setWindowEffect(core::platform::WindowEffect effect) {
+    detail::windowEffectOverride() = effect;
+    // 唤醒可能 glfwWaitEvents 中的主循环，让 backdrop 档位在下一帧应用
+    core::platform::requestUiUpdate();
+}
+
+core::platform::WindowEffect currentWindowEffect() {
+    if (const std::optional<core::platform::WindowEffect>& override_ = detail::windowEffectOverride()) {
+        return *override_;
+    }
+    return dslAppConfig().windowEffectValue;
+}
+
+core::platform::WindowEffect activeWindowEffect() {
+    if (const std::optional<core::platform::WindowEffect>& applied = detail::activeWindowEffectValue()) {
+        return *applied;
+    }
+    // 主循环尚未应用（启动早期）：期望值是最佳已知值
+    return currentWindowEffect();
+}
+
 namespace detail {
 
 void requestFullPaint() {
     dslRuntime().requestFullPaint();
     core::platform::requestUiUpdate();
+}
+
+void setActiveWindowEffect(core::platform::WindowEffect effect) {
+    activeWindowEffectValue() = effect;
 }
 
 } // namespace detail

@@ -261,6 +261,18 @@ void applyTitleBarAppearanceToWindow(GLFWwindow* window) {
                                             app::currentTitleBarAppearance());
 }
 
+// 窗口效果应用 + 降级（磨砂 Phase C）：backdrop 档位交给平台层，失败时按
+// 透明帧缓冲是否实际开启（GLFW 创建期 hint 回查的真值）折到 Transparent/None。
+// 返回该窗口实际生效的效果；主循环用它回写 app::activeWindowEffect()。
+core::platform::WindowEffect applyWindowEffectToWindow(GLFWwindow* window, core::platform::WindowEffect desired) {
+    if (core::platform::applyWindowEffect(nativeWindowHandle(window), desired)) {
+        return desired;
+    }
+    const bool transparentFramebuffer =
+        glfwGetWindowAttrib(window, GLFW_TRANSPARENT_FRAMEBUFFER) == GLFW_TRUE;
+    return core::platform::degradedWindowEffect(desired, transparentFramebuffer);
+}
+
 std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& request,
                                                    GLFWwindow* parentWindow,
                                                    core::render::RenderBackend& shareBackend) {
@@ -270,6 +282,8 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     windowRequest.title = request.title.c_str();
     windowRequest.parent = parentWindow;
     windowRequest.renderApi = core::render::windowRenderApi();
+    // 磨砂 Phase C：子窗口跟主窗口同档——非 None 时带透明帧缓冲 hint 创建
+    windowRequest.windowEffect = app::currentWindowEffect();
     GLFWwindow* childWindow = static_cast<GLFWwindow*>(core::window::createWindow(windowRequest));
     if (!childWindow) {
         return {};
@@ -300,6 +314,8 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     managed->state.paintRequested = true;
     // 新子窗口跟随当前标题栏外观（运行时联动，Phase A）
     applyTitleBarAppearanceToWindow(childWindow);
+    // 新子窗口跟随当前窗口效果（磨砂 Phase C）：创建期透明 hint + backdrop 档位
+    applyWindowEffectToWindow(childWindow, app::currentWindowEffect());
     // clearColor 运行时覆盖（app::setClearColor）对后续新开子窗口同样生效
     if (const std::optional<eui::Color>& override_ = app::detail::clearColorOverride()) {
         managed->content.setClearColor(*override_);
@@ -474,6 +490,10 @@ int eui_app_run() {
     // 标题栏外观启动快照（DslAppConfig::darkTitleBar；之后变更走下方帧内联动）
     applyTitleBarAppearanceToWindow(window);
     core::platform::TitleBarAppearance appliedTitleBar = app::currentTitleBarAppearance();
+    // 窗口效果启动应用（磨砂 Phase C）：透明 hint 已随 WindowCreateRequest 生效，
+    // 这里补 backdrop 档位并回写实际生效值（降级真值，供 app::activeWindowEffect 回查）
+    core::platform::WindowEffect appliedWindowEffectDesired = app::currentWindowEffect();
+    app::detail::setActiveWindowEffect(applyWindowEffectToWindow(window, appliedWindowEffectDesired));
     // clearColor 联动基线（app::setClearColor 变更后广播到子窗口；主窗口在
     // app::render 里直接读覆盖值）。基线取当前生效值：未覆盖时不会误伤
     // 子窗口自己的 DslWindowConfig clearColor。
@@ -593,6 +613,19 @@ int eui_app_run() {
             childWindows.updateAll([&managedClearColor = appliedClearColor](ManagedWindow& managed) {
                 managed.content.setClearColor(managedClearColor);
             });
+        }
+
+        // 窗口效果联动（磨砂 Phase C）：app::setWindowEffect 的变更在下一帧应用到
+        // 主窗口 + 全部存活子窗口（新子窗口在创建时已应用当前值）；实际生效值
+        //（降级后）回写 app::activeWindowEffect()，供设置页回查降级并提示。
+        if (app::currentWindowEffect() != appliedWindowEffectDesired) {
+            appliedWindowEffectDesired = app::currentWindowEffect();
+            const core::platform::WindowEffect effective =
+                applyWindowEffectToWindow(window, appliedWindowEffectDesired);
+            childWindows.updateAll([&appliedWindowEffectDesired](ManagedWindow& managed) {
+                applyWindowEffectToWindow(managed.window, appliedWindowEffectDesired);
+            });
+            app::detail::setActiveWindowEffect(effective);
         }
 
         const double currentFrameTime = glfwGetTime();

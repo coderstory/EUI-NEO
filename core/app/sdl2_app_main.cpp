@@ -634,6 +634,9 @@ int eui_app_run() {
     // clearColor 联动基线（app::setClearColor 变更后广播到子窗口；主窗口在
     // app::render 里直接读覆盖值）
     eui::Color appliedClearColor = app::currentClearColor();
+    // 窗口效果（磨砂 Phase C）：SDL2 后端无逐像素透明 flag，window_backend 已把
+    // windowEffect 按 None 降级——如实回写，activeWindowEffect() 不虚报档位。
+    app::detail::setActiveWindowEffect(core::platform::WindowEffect::None);
 
     auto renderBackend = core::render::createRenderBackend(window);
     if (!renderBackend) {
