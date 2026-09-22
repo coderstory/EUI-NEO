@@ -31,7 +31,12 @@ int main() {
     assert(latest && latest->sequence == 4);
 
     assert(!stream->submit({pixels, 4, 2, 15, core::render::ImagePixelFormat::RGBA8, 5}));
-    assert(!stream->submit({pixels, 4, 2, 16, core::render::ImagePixelFormat::BGRA8, 6}));
+    // BGRA8 与 RGBA8 同为 4 字节/像素：stride 16 对 4x2 是合法帧（ImageFrame::valid
+    // 按 stride>=width*4 && stride%4==0 校验），流接受它——Debug 构建曾把这里
+    // 误断言为拒绝（Release -DNDEBUG 掩盖）。
+    assert(stream->submit({pixels, 4, 2, 16, core::render::ImagePixelFormat::BGRA8, 6}));
+    auto bgraLatest = stream->consumeLatest();
+    assert(bgraLatest && bgraLatest->sequence == 6);
 
     std::vector<std::uint8_t> converted;
     const auto bgra = std::make_shared<const std::vector<std::uint8_t>>(
