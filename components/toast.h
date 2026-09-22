@@ -2,6 +2,7 @@
 
 #include "components/theme.h"
 #include "core/dsl.h"
+#include "core/render/text.h"
 #include "eui/signal.h"
 
 #include <algorithm>
@@ -62,6 +63,12 @@ public:
     ToastBuilder& transition(const core::Transition& value) { transition_ = value; return *this; }
     ToastBuilder& zIndex(int value) { zIndex_ = value; return *this; }
     ToastBuilder& duration(float seconds) { autoDismissSeconds_ = std::max(0.0f, seconds); return *this; }
+    /** @brief 可选单个操作按钮（默认无按钮）：显示在右下角，点击先执行 callback 再关闭 toast。 */
+    ToastBuilder& action(std::string text, std::function<void()> callback) {
+        actionText_ = std::move(text);
+        onAction_ = std::move(callback);
+        return *this;
+    }
     ToastBuilder& onAutoDismiss(std::function<void()> callback) { onAutoDismiss_ = std::move(callback); return *this; }
     ToastBuilder& onDismiss(std::function<void()> callback) { onDismiss_ = std::move(callback); return *this; }
 
@@ -80,6 +87,14 @@ public:
         const float toastOffsetY = visible_ ? 0.0f : 10.0f;
         const std::function<void()> onDismiss = onDismiss_;
         const std::function<void()> onAutoDismiss = onAutoDismiss_ ? onAutoDismiss_ : onDismiss_;
+        const bool hasAction = !actionText_.empty();
+        const float actionFontSize = metrics_.typography.label;
+        const float actionHeight = metrics_.control.compact;
+        const float actionWidth = hasAction
+            ? std::max(56.0f, core::TextPrimitive::measureTextWidth(actionText_, {}, actionFontSize) +
+                              metrics_.spacing.content * 2.0f)
+            : 0.0f;
+        const std::function<void()> onAction = onAction_;
 
         ui_.stack(id_)
             .x(x)
@@ -123,7 +138,8 @@ public:
                 ui_.text(id_ + ".message")
                     .x(textX)
                     .y(metrics_.control.control)
-                    .size(textWidth, std::max(0.0f, height - 50.0f))
+                    .size(textWidth, std::max(0.0f, height - 50.0f -
+                        (hasAction ? actionHeight + metrics_.spacing.content : 0.0f)))
                     .text(message_)
                     .fontSize(metrics_.typography.label)
                     .lineHeight(metrics_.typography.label + metrics_.typography.lineGap)
@@ -156,6 +172,41 @@ public:
                     .verticalAlign(core::VerticalAlign::Top)
                     .build();
 
+                if (hasAction) {
+                    const float actionX = std::max(0.0f, width - actionWidth - metrics_.spacing.content);
+                    const float actionY = std::max(0.0f, height - actionHeight - metrics_.spacing.content);
+                    ui_.rect(id_ + ".action.hit")
+                        .x(actionX)
+                        .y(actionY)
+                        .size(actionWidth, actionHeight)
+                        .states(theme::color(0.0f, 0.0f, 0.0f, 0.0f),
+                                theme::withOpacity(style_.border, 0.36f),
+                                theme::withOpacity(style_.border, 0.56f))
+                        .radius(metrics_.radius.control)
+                        .disabled(!visible_)
+                        .onClick([onAction, onDismiss] {
+                            if (onAction) {
+                                onAction();
+                            }
+                            if (onDismiss) {
+                                onDismiss();
+                            }
+                        })
+                        .build();
+
+                    ui_.text(id_ + ".action")
+                        .x(actionX)
+                        .y(actionY)
+                        .size(actionWidth, actionHeight)
+                        .text(actionText_)
+                        .fontSize(actionFontSize)
+                        .lineHeight(actionFontSize + metrics_.typography.lineGapTight)
+                        .color(style_.accent)
+                        .horizontalAlign(core::HorizontalAlign::Center)
+                        .verticalAlign(core::VerticalAlign::Center)
+                        .build();
+                }
+
                 {
                     auto timer = ui_.stack(id_ + ".timer")
                         .size(0.0f, 0.0f);
@@ -176,6 +227,8 @@ private:
     core::Transition transition_ = core::Transition::make(0.16f, core::Ease::OutCubic);
     std::function<void()> onDismiss_;
     std::function<void()> onAutoDismiss_;
+    std::function<void()> onAction_;
+    std::string actionText_;
     std::string title_ = "Toast";
     std::string message_ = "Short status message for non-blocking feedback.";
     std::string icon_ = core::dsl::utf8(0xF058);
