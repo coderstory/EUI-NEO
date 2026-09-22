@@ -82,7 +82,9 @@ struct AppRunner {
         }
         trayAvailable = core::platform::initializeTray({
             trayTitle(),
-            trayIconPath()
+            trayIconPath(),
+            trayMenuItems(),
+            trayKeepDefaultMenuItems()
         });
         return trayAvailable;
     }

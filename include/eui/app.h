@@ -3,6 +3,7 @@
 #include "eui/dsl.h"
 #include "eui/types.h"
 #include "eui/window.h"
+#include "core/platform/platform.h"
 #include "core/platform/window_effect.h"
 
 #include <functional>
@@ -47,6 +48,10 @@ float uiScale();
 bool trayEnabled();
 const char* trayTitle();
 const char* trayIconPath();
+/** @brief 自定义托盘菜单项（DslAppConfig::trayMenu 注册），可能为空。 */
+const std::vector<core::platform::TrayMenuItem>& trayMenuItems();
+/** @brief 是否在内置 Show/Exit 之外保留默认项（见 DslAppConfig::trayMenu）。 */
+bool trayKeepDefaultMenuItems();
 void requestUpdate();
 /**
  * @brief 运行时切换标题栏（非客户区）外观，即时生效，无需重启。

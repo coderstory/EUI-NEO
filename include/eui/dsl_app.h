@@ -2,6 +2,7 @@
 
 #include "eui/app.h"
 #include "eui/async.h"
+#include "eui/platform.h"
 
 #include <cmath>
 #include <functional>
@@ -46,6 +47,8 @@ struct DslAppConfig {
     bool trayEnabledValue = false;
     std::string trayTitleValue;
     std::string trayIconPathValue;
+    std::vector<core::platform::TrayMenuItem> trayMenuValue;
+    bool trayKeepDefaultMenuValue = true;
     std::function<void(const eui::KeyEvent&)> keyEventHandler;
     std::function<void()> shutdownHandler;
     std::function<void(const std::string&)> openFileHandler;
@@ -133,6 +136,18 @@ struct DslAppConfig {
     }
     DslAppConfig& trayIcon(std::string value) {
         trayIconPathValue = std::move(value);
+        return *this;
+    }
+    /**
+     * @brief 自定义托盘菜单（text 为 "-" 表示分隔线）。
+     *
+     * 默认保留内置 Show/Exit 项；keepDefault=false 时仅显示自定义项
+     * （此时需自行提供退出入口）。空列表等效于不调用（回退默认菜单）。
+     * 菜单回调在主线程触发，可在回调里安全更新 UI 状态并 requestUpdate()。
+     */
+    DslAppConfig& trayMenu(std::vector<core::platform::TrayMenuItem> items, bool keepDefault = true) {
+        trayMenuValue = std::move(items);
+        trayKeepDefaultMenuValue = keepDefault;
         return *this;
     }
     DslAppConfig& onKeyEvent(std::function<void(const eui::KeyEvent&)> handler) {

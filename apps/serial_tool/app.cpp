@@ -1102,7 +1102,15 @@ const DslAppConfig& dslAppConfig() {
         .clearColor(kBackground)
         .windowSize(1440, 1080)
         .fps(90.0)
-        .tray(true);
+        .tray(true)
+        // 自定义托盘菜单示例：默认项 Show/Exit 自动保留在末尾
+        .trayMenu({
+            {"清空日志", [] {
+                 state.logs.clear();
+                 requestUpdate();
+             }},
+            {"-", nullptr},
+        });
     return config;
 }
 

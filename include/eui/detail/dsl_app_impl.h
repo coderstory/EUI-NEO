@@ -267,6 +267,14 @@ const char* trayIconPath() {
     return (config.trayIconPathValue.empty() ? config.iconPathValue : config.trayIconPathValue).c_str();
 }
 
+const std::vector<core::platform::TrayMenuItem>& trayMenuItems() {
+    return dslAppConfig().trayMenuValue;
+}
+
+bool trayKeepDefaultMenuItems() {
+    return dslAppConfig().trayKeepDefaultMenuValue;
+}
+
 void requestUpdate() {
     core::platform::requestUiUpdate();
 }

@@ -57,11 +57,22 @@ std::string shellQuote(const std::string& value) {
 struct TrayState {
     bool initialized = false;
     std::string iconPath;
+    std::vector<TrayMenuItem> menuItems;
+    bool keepDefaultMenuItems = true;
+    /** text 指针指向 menuItems 内的字符串，随 state 存活。 */
+    std::vector<eui_tray_menu_item> bridgeItems;
 };
 
 TrayState& trayState() {
     static TrayState state;
     return state;
+}
+
+static void euiTrayItemCallback(void* user) {
+    TrayMenuItem* item = static_cast<TrayMenuItem*>(user);
+    if (item != nullptr && item->callback) {
+        item->callback();
+    }
 }
 
 std::atomic<bool>& frameRequested() {
@@ -702,6 +713,32 @@ std::vector<std::string> chooseFiles(const FileDialogOptions& options) {
     return std::move(result.paths);
 }
 
+static void applyTrayMenu(TrayState& state) {
+    state.bridgeItems.clear();
+    state.bridgeItems.reserve(state.menuItems.size());
+    for (TrayMenuItem& item : state.menuItems) {
+        eui_tray_menu_item bridge = {};
+        if (!item.isSeparator()) {
+            bridge.text = item.text.c_str();
+            if (item.callback) {
+                bridge.cb = &euiTrayItemCallback;
+                bridge.user = &item;
+            }
+        }
+        state.bridgeItems.push_back(bridge);
+    }
+    eui_tray_set_menu(state.bridgeItems.empty() ? nullptr : state.bridgeItems.data(),
+                      static_cast<int>(state.bridgeItems.size()),
+                      state.keepDefaultMenuItems ? 1 : 0);
+}
+
+void setTrayMenu(const std::vector<TrayMenuItem>& items, bool keepDefault) {
+    TrayState& state = trayState();
+    state.menuItems = items;
+    state.keepDefaultMenuItems = keepDefault;
+    applyTrayMenu(state);
+}
+
 bool initializeTray(const TrayOptions& options) {
     TrayState& state = trayState();
     if (state.initialized) {
@@ -710,6 +747,10 @@ bool initializeTray(const TrayOptions& options) {
 
     const std::filesystem::path resolvedIcon = resolveIconPath(options.iconPath);
     state.iconPath = resolvedIcon.empty() ? options.iconPath : resolvedIcon.string();
+
+    state.menuItems = options.menuItems;
+    state.keepDefaultMenuItems = options.keepDefaultMenuItems;
+    applyTrayMenu(state);
 
     if (!eui_tray_init(state.iconPath.c_str())) {
         state = {};
@@ -744,6 +785,7 @@ void shutdownTray() {
     if (state.initialized) {
         eui_tray_shutdown();
     }
+    eui_tray_set_menu(nullptr, 0, 1);   /* 恢复默认菜单，供下次 init */
     state = {};
 }
 
