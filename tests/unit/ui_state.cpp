@@ -178,6 +178,53 @@ bool componentDefaultsMatchGallery() {
     return true;
 }
 
+bool dropdownPopupOpensUpwardOnDemand() {
+    // openUp：弹层应整体落在字段上方（popup 底边 <= 字段顶边），
+    // 靠近窗口底部的下拉不再被窗口边缘裁掉；默认方向保持向下不变
+    core::dsl::Ui ui;
+    ui.begin("dropdown.up");
+    ui.stack("wrap")
+        .position(120.0f, 500.0f)
+        .size(240.0f, 40.0f)
+        .content([&] {
+            components::dropdown(ui, "dd.up")
+                .size(240.0f, 40.0f)
+                .items({"A", "B", "C", "D"})
+                .open()
+                .openUp()
+                .build();
+            components::dropdown(ui, "dd.down")
+                .size(240.0f, 40.0f)
+                .items({"A", "B", "C", "D"})
+                .open()
+                .build();
+        })
+        .build();
+    ui.end();
+    ui.layout(800.0f, 600.0f);
+
+    const core::dsl::Element* upField = ui.find("dd.up.field");
+    const core::dsl::Element* upPopup = ui.find("dd.up.popup");
+    const core::dsl::Element* downField = ui.find("dd.down.field");
+    const core::dsl::Element* downPopup = ui.find("dd.down.popup");
+    if (upField == nullptr || upPopup == nullptr || downField == nullptr ||
+        downPopup == nullptr) {
+        std::cerr << "dropdown popup elements missing after compose\n";
+        return false;
+    }
+    if (upPopup->frame.y + upPopup->frame.height > upField->frame.y ||
+        upPopup->frame.y < 0.0f) {
+        std::cerr << "openUp popup did not sit above the field\n";
+        return false;
+    }
+    if (downPopup->frame.y <
+        downField->frame.y + downField->frame.height) {
+        std::cerr << "default popup direction changed unexpectedly\n";
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -210,5 +257,6 @@ int main() {
     ok = textWrapContentUsesIntrinsicSize() && ok;
     ok = textSizeMeasurementMatchesLineLayout() && ok;
     ok = componentDefaultsMatchGallery() && ok;
+    ok = dropdownPopupOpensUpwardOnDemand() && ok;
     return ok ? 0 : 1;
 }

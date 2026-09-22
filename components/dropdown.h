@@ -63,6 +63,9 @@ public:
     }
     DropdownBuilder& placeholder(const std::string& value) { placeholder_ = value; return *this; }
     DropdownBuilder& open(bool value = true) { open_ = value; return *this; }
+    // 弹层向上展开（字段靠近窗口/容器底部时用，避免菜单被窗口边缘裁掉）；
+    // 默认 false 保持向下展开，向后兼容
+    DropdownBuilder& openUp(bool value = true) { openUp_ = value; return *this; }
     DropdownBuilder& bindOpen(eui::Signal<bool>& signal) {
         open(signal.get());
         onOpenChange([&signal](bool value) { signal.set(value); });
@@ -93,7 +96,8 @@ public:
         const float popupHeight = itemHeight * static_cast<float>(std::max(1, count)) + popupPadding * 2.0f;
         const float rootHeight = height + popupGap + popupHeight;
         const float visible = open_ ? 1.0f : 0.0f;
-        const float popupOffsetY = open_ ? 0.0f : -6.0f;
+        // 向下：收起时从上方 -6 滑入；向上：镜像，从下方 +6 滑入、以底边为缩放锚
+        const float popupOffsetY = open_ ? 0.0f : (openUp_ ? 6.0f : -6.0f);
         const float popupScale = open_ ? 1.0f : 0.96f;
         const std::function<void(int)> onChange = onChange_;
         const std::function<void(bool)> onOpenChange = onOpenChange_;
@@ -139,12 +143,12 @@ public:
                     .build();
 
                 ui_.stack(id_ + ".popup")
-                    .y(height + popupGap)
+                    .y(openUp_ ? -(popupGap + popupHeight) : height + popupGap)
                     .size(width_, popupHeight)
                     .opacity(visible)
                     .translateY(popupOffsetY)
                     .scale(popupScale)
-                    .transformOrigin(0.5f, 0.0f)
+                    .transformOrigin(0.5f, openUp_ ? 1.0f : 0.0f)
                     .transition(transition_)
                     .animate(core::AnimProperty::Opacity | core::AnimProperty::Transform)
                     .content([&] {
@@ -218,6 +222,7 @@ private:
     std::string placeholder_ = "Select";
     int selected_ = -1;
     bool open_ = false;
+    bool openUp_ = false;
     float width_ = 260.0f;
     float height_ = -1.0f;
     float itemHeight_ = 0.0f;
