@@ -183,6 +183,8 @@ struct InteractionState {
     bool released = false;
     bool canceled = false;
     bool drag = false;
+    // 本次交互期间 drag 是否激活过（位移超阈值）。激活后即使松手回到元素内也不算 click。
+    bool dragMoved = false;
     bool active = false;
     bool changed = false;
     PointerButton activeButton = PointerButton::None;
@@ -212,6 +214,7 @@ struct InteractionState {
             hover = false;
             pressed = false;
             drag = false;
+            dragMoved = false;
             active = false;
             activeButton = PointerButton::None;
             dragDeltaX = 0.0;
@@ -227,6 +230,7 @@ struct InteractionState {
             active = true;
             activeButton = event.button;
             pressStarted = true;
+            dragMoved = false;
             dragStartX = event.x;
             dragStartY = event.y;
         }
@@ -236,16 +240,21 @@ struct InteractionState {
         dragDeltaY = event.y - dragStartY;
         drag = pressed && (std::fabs(dragDeltaX) > dragThreshold ||
                            std::fabs(dragDeltaY) > dragThreshold);
+        if (drag) {
+            dragMoved = true;
+        }
 
         const bool matchingEnd = active && event.button == activeButton &&
             (event.action == PointerAction::Release || event.action == PointerAction::Cancel);
         if (matchingEnd) {
             released = true;
             canceled = event.action == PointerAction::Cancel;
-            clicked = !canceled && hover;
+            // drag 激活过的交互即使松手在元素内也不触发 click（拖拽不等于点击）。
+            clicked = !canceled && !dragMoved && hover;
             active = false;
             pressed = false;
             drag = false;
+            dragMoved = false;
             activeButton = PointerButton::None;
         }
 

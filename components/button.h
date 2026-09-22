@@ -63,6 +63,12 @@ public:
     ButtonBuilder& radius(float value) { style_.radius = value; return *this; }
     ButtonBuilder& opacity(float value) { style_.opacity = std::clamp(value, 0.0f, 1.0f); return *this; }
     ButtonBuilder& disabled(bool value = true) { disabled_ = value; return *this; }
+    /** @brief disabled 时的文字颜色；不传则自动用现有 text 色的 40% 透明度置灰。 */
+    ButtonBuilder& disabledTextColor(const core::Color& value) {
+        disabledTextColor_ = value;
+        hasDisabledTextColor_ = true;
+        return *this;
+    }
     ButtonBuilder& preserveFocusOnPress(bool value = true) { preserveFocusOnPress_ = value; return *this; }
     ButtonBuilder& translate(float x, float y) { translateX_ = x; translateY_ = y; return *this; }
     ButtonBuilder& translateX(float value) { translateX_ = value; return *this; }
@@ -115,6 +121,12 @@ public:
         shadow.spread *= scale_;
         core::Color textColor = style_.text;
         core::Color iconColor = style_.icon;
+        if (disabled_) {
+            // disabled 自动置灰：默认现有色的 40% 透明度，disabledTextColor 可覆盖。
+            textColor = hasDisabledTextColor_ ? disabledTextColor_
+                                              : theme::withOpacity(style_.text, 0.40f);
+            iconColor = theme::withOpacity(style_.icon, 0.40f);
+        }
         textColor.a *= style_.opacity;
         iconColor.a *= style_.opacity;
         const std::function<void()> onPress = onPress_;
@@ -214,6 +226,8 @@ private:
     float x_ = 0.0f;
     float y_ = 0.0f;
     bool disabled_ = false;
+    bool hasDisabledTextColor_ = false;
+    core::Color disabledTextColor_{1.0f, 1.0f, 1.0f, 1.0f};
     bool preserveFocusOnPress_ = false;
     bool hasX_ = false;
     bool hasY_ = false;

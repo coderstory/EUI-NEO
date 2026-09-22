@@ -86,6 +86,12 @@ public:
         onFocus_ = std::move(callback);
         return *this;
     }
+    /** @brief 按键 passthrough（仅聚焦时触发，键事件只派发给焦点元素）：
+     *  返回 true 表示已消费，跳过内置编辑处理（移动光标、删除、undo 等）；返回 false 走内置逻辑。 */
+    InputBuilder& onKeyEvent(std::function<bool(const core::KeyEvent&)> callback) {
+        onKeyEvent_ = std::move(callback);
+        return *this;
+    }
 
     void build() {
         const std::string hitId = id_ + ".hit";
@@ -101,6 +107,7 @@ public:
         const std::function<void(const std::string&)> onChange = onChange_;
         const std::function<void()> onEnter = onEnter_;
         const std::function<void(bool)> onFocus = onFocus_;
+        const std::function<bool(const core::KeyEvent&)> onKeyEvent = onKeyEvent_;
         const float textLineHeight = fontSize * 1.2f;
         const float textY = multiline_ ? inset : std::max(0.0f, (height_ - textLineHeight) * 0.5f);
         const float textHeight = multiline_ ? std::max(0.0f, height_ - inset * 2.0f) : textLineHeight;
@@ -196,7 +203,11 @@ public:
                             layout.maxVerticalScroll);
                     });
                 }
-                hit.onKeyEvent([&state, allowMultiline, onChange, onEnter, width, inset, fontSize, fontFamily, textHeight](const core::KeyEvent& event) {
+                hit.onKeyEvent([&state, allowMultiline, onChange, onEnter, onKeyEvent, width, inset, fontSize, fontFamily, textHeight](const core::KeyEvent& event) {
+                        // 用户 passthrough 先于内置编辑：返回 true 已消费，跳过内置处理。
+                        if (onKeyEvent && onKeyEvent(event)) {
+                            return true;
+                        }
                         if (!event.isDown()) {
                             return false;
                         }
@@ -495,6 +506,7 @@ private:
     std::function<void(const std::string&)> onChange_;
     std::function<void()> onEnter_;
     std::function<void(bool)> onFocus_;
+    std::function<bool(const core::KeyEvent&)> onKeyEvent_;
     std::string text_;
     std::string placeholder_ = "Hello EUI-NEO 😉";
     bool multiline_ = false;
