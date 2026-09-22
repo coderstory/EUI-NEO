@@ -123,13 +123,13 @@ Debug 配置只控制诊断输出，不参与业务状态。`showDebugStatsInTit
 
 ### 窗口效果（透明半透）
 
-`.windowEffect(core::platform::WindowEffect::Transparent)` 让主窗口与子窗口以透明帧缓冲创建（GLFW `GLFW_TRANSPARENT_FRAMEBUFFER` / SDL2 `SDL_WINDOW_TRANSPARENT`），此时 `clearColor` 的 alpha < 1 即整体半透、可透出桌面与下层窗口。默认 `None`（实色，行为与历史版本逐像素一致）。
+`.windowEffect(core::platform::WindowEffect::Transparent)` 让主窗口与子窗口以透明帧缓冲创建（GLFW `GLFW_TRANSPARENT_FRAMEBUFFER`；SDL2 无逐像素透明 flag、Vulkan 在 Windows 上 compositeAlpha 普遍只报 OPAQUE，两者降级 `None`），此时 `clearColor` 的 alpha < 1 即整体半透、可透出桌面与下层窗口。默认 `None`（实色，行为与历史版本逐像素一致）。
 
 要点：
 
 - 透明 hint 是创建期属性，不能运行时关闭；「半透 ↔ 不透明」的运行时切换通过把 clearColor alpha 拉回 1 实现视觉等价，不重建窗口。
 - 半透像素的合成正确性由 GL 后端自动保证：透明窗口的 render cache blit 走 premultiply（DWM 按 premultiplied alpha 合成窗口表面，straight 拷贝会整体过亮/发灰）；alpha=1 时该变换恒等，不透明窗口路径不变。
-- Vulkan 后端在 Windows 上 compositeAlpha 普遍只报 OPAQUE，`windowEffect` 降级为 `None`（标题栏联动不受影响）。
+- Vulkan 后端（Windows compositeAlpha 普遍 OPAQUE）与 SDL2 后端（无逐像素透明 flag）降级为 `None`（标题栏联动不受影响）。
 - 桌面合成被禁用等导致透明帧缓冲不可用时，GLFW 静默降级为不透明窗口（stderr 诊断一行），渲染侧按同一属性自动回退 straight blit。
 
 运行时改底色/不透明度用 `app::setClearColor(color)`：下一帧生效，覆盖主窗口与全部存活子窗口（此后新开的子窗口同样跟随），优先于 `DslAppConfig::clearColor` 与 `DslWindowConfig::clearColor` 的启动快照；`app::currentClearColor()` 返回当前生效值。这也是主题切换底色即时跟随的正规通道（不再需要重启）。Acrylic/Mica 的 DWM backdrop 应用属后续 Phase，`WindowEffect` 枚举已预留 `Acrylic`/`Mica`/`MicaAlt` 值。示例见 `examples/window_effect.cpp`。

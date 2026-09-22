@@ -116,7 +116,7 @@ private:
                                                         const std::vector<core::Rect>& dirtyRects);
     void recordRenderCacheBlitHistory(std::uint64_t generation, bool fullSync, const std::vector<core::Rect>& rects);
     void invalidateRenderCacheSync();
-    // 透明窗口（GLFW_TRANSPARENT_FRAMEBUFFER / SDL_WINDOW_TRANSPARENT）的
+    // 透明窗口（GLFW_TRANSPARENT_FRAMEBUFFER）的
     // cache→默认帧缓冲 blit 需要 premultiply（spike 实证 DWM 按 premultiplied
     // 合成窗口表面 alpha，straight 拷贝会过亮）。懒查询 + 懒建着色器资源。
     bool outputUsesTransparentFramebuffer();

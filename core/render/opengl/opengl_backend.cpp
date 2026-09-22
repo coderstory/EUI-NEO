@@ -447,8 +447,10 @@ bool OpenGLRenderBackend::outputUsesTransparentFramebuffer() {
         return false;
     }
 #if defined(EUI_WINDOW_BACKEND_SDL2)
-    outputTransparentState_ =
-        (SDL_GetWindowFlags(static_cast<SDL_Window*>(window_)) & SDL_WINDOW_TRANSPARENT) != 0 ? 1 : 0;
+    // SDL2 无逐像素透明帧缓冲（SDL_WINDOW_TRANSPARENT 属 SDL3），
+    // 后端永远走 straight blit（窗口层已把 windowEffect 降级为 None）。
+    (void)window_;
+    outputTransparentState_ = 0;
 #else
     outputTransparentState_ =
         glfwGetWindowAttrib(static_cast<GLFWwindow*>(window_), GLFW_TRANSPARENT_FRAMEBUFFER) == GLFW_TRUE ? 1 : 0;

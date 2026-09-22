@@ -101,8 +101,9 @@ struct DslAppConfig {
     /**
      * @brief 窗口效果（启动快照，磨砂设计 Phase B）。
      *
-     * 非 None 时主窗口以透明帧缓冲创建（GLFW_TRANSPARENT_FRAMEBUFFER /
-     * SDL_WINDOW_TRANSPARENT），clearColor 的 alpha < 1 即整体半透；Acrylic/
+     * 非 None 时主窗口以透明帧缓冲创建（GLFW_TRANSPARENT_FRAMEBUFFER；
+     * SDL2 无逐像素透明 flag，Vulkan 在 Windows 上 compositeAlpha 普遍
+     * OPAQUE——两者降级 None），clearColor 的 alpha < 1 即整体半透；Acrylic/
      * Mica 的 DWM backdrop 应用在 Phase C。透明 hint 是创建期属性不可关闭，
      * 运行时「任何档 ↔ 关」通过把 clearColor alpha 拉回 1 视觉等价实现，
      * 不重建窗口。Vulkan 后端在 Windows 上降级为 None。半透像素的

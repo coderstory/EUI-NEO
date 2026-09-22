@@ -356,11 +356,9 @@ Handle createWindow(const WindowCreateRequest& request) {
     if (request.maximized) {
         flags |= SDL_WINDOW_MAXIMIZED;
     }
-    // 透明帧缓冲（磨砂设计 Phase B，SDL2 等价物）。Vulkan 侧降级不设。
-    if (request.windowEffect != platform::WindowEffect::None &&
-        request.renderApi != RenderApi::Vulkan) {
-        flags |= SDL_WINDOW_TRANSPARENT;
-    }
+    // 透明帧缓冲（磨砂设计 Phase B）：SDL2 无逐像素透明窗口 flag
+    //（SDL_WINDOW_TRANSPARENT 是 SDL3 的；SDL2 仅整窗 SDL_SetWindowOpacity，
+    // 语义不同）——设计允许降级，SDL2 后端对 windowEffect 按 None 处理。
     flags |= request.renderApi == RenderApi::Vulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL;
 
     SDL_Window* window = SDL_CreateWindow(
