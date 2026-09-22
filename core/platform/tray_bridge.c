@@ -2,6 +2,35 @@
 
 #include <string.h>
 
+#if defined(_WIN32)
+#include <windows.h>
+
+#include <stdlib.h>
+
+/* UTF-8 → UTF-16（malloc 分配，调用方 free；失败返回 NULL）。
+ * Win32 托盘菜单文本是 UTF-8，直接走 ANSI 菜单 API（InsertMenuItemA）会在
+ * 非 UTF-8 系统代码页（如简中 GBK）下乱码，必须转 UTF-16 走 W 系 API。
+ * 3rd/tray/tray.h 的 Win32 patch 与单元测试共用此函数。 */
+wchar_t* eui_tray_utf8_to_utf16(const char* utf8) {
+    if (utf8 == 0) {
+        return 0;
+    }
+    int n = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    if (n <= 0) {
+        return 0;
+    }
+    wchar_t* out = (wchar_t*)malloc((size_t)n * sizeof(wchar_t));
+    if (out == 0) {
+        return 0;
+    }
+    if (MultiByteToWideChar(CP_UTF8, 0, utf8, -1, out, n) <= 0) {
+        free(out);
+        return 0;
+    }
+    return out;
+}
+#endif
+
 #if defined(EUI_TRAY_WINAPI)
 #define TRAY_WINAPI 1
 #define EUI_TRAY_HAS_BACKEND 1
@@ -162,8 +191,11 @@ static void eui_tray_rebuild_menu(void) {
             [g_menu addItem:[NSMenuItem separatorItem]];
             continue;
         }
+        /* stringWithUTF8String 对非法 UTF-8 返回 nil，initWithTitle:nil 会抛
+         * Objective-C 异常——兜底成空串（待 Mac 实机验证）。 */
+        NSString* title = [NSString stringWithUTF8String:item->text];
         NSMenuItem* menu_item =
-            [[NSMenuItem alloc] initWithTitle:[NSString stringWithUTF8String:item->text]
+            [[NSMenuItem alloc] initWithTitle:(title != nil ? title : @"")
                                       action:@selector(itemSelected:)
                                keyEquivalent:@""];
         [menu_item setTarget:g_target];
