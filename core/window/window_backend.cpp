@@ -386,6 +386,10 @@ Handle createWindow(const WindowCreateRequest& request) {
                                          ? std::max(minimumHeight, request.maxHeight)
                                          : unboundedSize);
         }
+        // 鼠标穿透（G4）：SDL2 无创建期 flag，创建后立即按属性设置（2.26+）
+        if (request.mousePassthrough) {
+            setWindowMousePassthrough(window, true);
+        }
     }
 #if defined(__linux__) && !defined(__ANDROID__) && defined(SDL_VIDEO_DRIVER_X11)
     if (window != nullptr && request.highDpi) {
@@ -539,6 +543,49 @@ void setImeCursorRect(Handle window, float x, float y, float width, float height
 #endif
 }
 
+void setWindowPos(Handle window, int x, int y) {
+    if (window != nullptr) {
+        SDL_SetWindowPosition(static_cast<SDL_Window*>(window), x, y);
+    }
+}
+
+void getWindowPos(Handle window, int& x, int& y) {
+    x = 0;
+    y = 0;
+    if (window != nullptr) {
+        SDL_GetWindowPosition(static_cast<SDL_Window*>(window), &x, &y);
+    }
+}
+
+void setWindowMousePassthrough(Handle window, bool enabled) {
+    // SDL2 2.26+ 才有 SDL_SetWindowMousePassthrough；老版本静默无操作
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+    if (window != nullptr) {
+        SDL_SetWindowMousePassthrough(static_cast<SDL_Window*>(window),
+                                      enabled ? SDL_TRUE : SDL_FALSE);
+    }
+#else
+    (void)window;
+    (void)enabled;
+#endif
+}
+
+void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height) {
+    x = 0;
+    y = 0;
+    SDL_Rect bounds{};
+    // SDL_GetDisplayUsableBounds 已剔除任务栏/Dock 区域；失败时回退 0（调用方按无效处理）
+    if (SDL_GetDisplayUsableBounds(0, &bounds) == 0) {
+        x = bounds.x;
+        y = bounds.y;
+        width = bounds.w;
+        height = bounds.h;
+    } else {
+        width = 0;
+        height = 0;
+    }
+}
+
 } // namespace core::window
 
 #else
@@ -587,6 +634,12 @@ Handle createWindow(const WindowCreateRequest& request) {
     glfwWindowHint(GLFW_DECORATED, request.decorated ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_FLOATING, request.alwaysOnTop ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_MAXIMIZED, request.maximized ? GLFW_TRUE : GLFW_FALSE);
+    // 不抢焦点（桌宠设计 G1）：glfwShowWindow 是否把窗口带到前台。hint 跨
+    // glfwCreateWindow 残留，两态都显式设置。
+    glfwWindowHint(GLFW_FOCUS_ON_SHOW, request.focusOnShow ? GLFW_TRUE : GLFW_FALSE);
+    // 鼠标穿透（G4）：GLFW 3.4 创建期 hint（仅无边框窗口生效，有边框静默忽略）
+    glfwWindowHint(GLFW_MOUSE_PASSTHROUGH,
+                   request.mousePassthrough ? GLFW_TRUE : GLFW_FALSE);
 
     GLFWwindow* window = glfwCreateWindow(
         request.width,
@@ -683,6 +736,39 @@ void setWindowIcon(Handle window, int width, int height, unsigned char* pixels) 
 
 void setImeCursorRect(Handle window, float x, float y, float width, float height) {
     eui_ime_set_cursor_rect_with_font(static_cast<GLFWwindow*>(window), x, y, width, height, height);
+}
+
+void setWindowPos(Handle window, int x, int y) {
+    if (window != nullptr) {
+        glfwSetWindowPos(static_cast<GLFWwindow*>(window), x, y);
+    }
+}
+
+void getWindowPos(Handle window, int& x, int& y) {
+    x = 0;
+    y = 0;
+    if (window != nullptr) {
+        glfwGetWindowPos(static_cast<GLFWwindow*>(window), &x, &y);
+    }
+}
+
+void setWindowMousePassthrough(Handle window, bool enabled) {
+    if (window != nullptr) {
+        glfwSetWindowAttrib(static_cast<GLFWwindow*>(window), GLFW_MOUSE_PASSTHROUGH,
+                            enabled ? GLFW_TRUE : GLFW_FALSE);
+    }
+}
+
+void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height) {
+    x = 0;
+    y = 0;
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    if (monitor == nullptr) {
+        width = 0;
+        height = 0;
+        return;
+    }
+    glfwGetMonitorWorkarea(monitor, &x, &y, &width, &height);
 }
 
 } // namespace core::window

@@ -26,6 +26,7 @@
 #include "core/input/input_state.h"
 #include "core/platform/platform.h"
 #include "core/platform/native_bridge.h"
+#include "core/platform/window_style.h"
 #include "core/render/render_backend.h"
 #include "core/window/window_backend.h"
 
@@ -442,6 +443,14 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     windowRequest.parent = parentWindow;
     windowRequest.renderApi = core::render::windowRenderApi();
     windowRequest.windowEffect = app::windowEffect();
+    // 子窗口配置透传（桌宠设计 §2.6 G1/G4；focusOnShow 在 SDL2 后端无对应能力）
+    windowRequest.x = request.x;
+    windowRequest.y = request.y;
+    windowRequest.positionSet = request.positionSet;
+    windowRequest.decorated = request.decorated;
+    windowRequest.alwaysOnTop = request.alwaysOnTop;
+    windowRequest.resizable = request.resizable;
+    windowRequest.mousePassthrough = request.mousePassthrough;
     SDL_Window* window = static_cast<SDL_Window*>(core::window::createWindow(windowRequest));
     if (window == nullptr) {
         return {};
@@ -464,9 +473,21 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
         core::window::destroyWindow(window);
         return {};
     }
-    // clearColor 运行时覆盖（app::setClearColor）对后续新开子窗口同样生效
-    if (const std::optional<eui::Color>& override_ = app::detail::clearColorOverride()) {
-        managed->content.setClearColor(*override_);
+    // clearColor 运行时覆盖（app::setClearColor）对后续新开子窗口同样生效；
+    // 自管背景的窗口（ignoreClearColorOverride，如桌宠 sprite 窗）除外
+    if (request.followClearColorOverride) {
+        if (const std::optional<eui::Color>& override_ = app::detail::clearColorOverride()) {
+            managed->content.setClearColor(*override_);
+        }
+    }
+    // 任务栏隐藏（桌宠设计 G5）：nativeWindowInfo 给出平台原生句柄
+    if (request.hideFromTaskbar) {
+        core::platform::applyWindowStyleFlags(
+            core::window::nativeWindowInfo(window).platformWindow,
+            core::platform::WindowStyleFlags{true, false});
+    }
+    if (request.onWindowCreated) {
+        request.onWindowCreated(window);
     }
     if (request.modal) {
         SDL_SetWindowModalFor(window, parentWindow);
@@ -731,6 +752,9 @@ int eui_app_run() {
             effectiveClearColor.b != appliedClearColor.b || effectiveClearColor.a != appliedClearColor.a) {
             appliedClearColor = effectiveClearColor;
             childWindows.updateAll([&effectiveClearColor](ManagedWindow& managed) {
+                if (!managed.content.request().followClearColorOverride) {
+                    return;
+                }
                 managed.content.setClearColor(effectiveClearColor);
             });
         }

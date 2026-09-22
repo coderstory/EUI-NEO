@@ -21,6 +21,29 @@ struct DslWindowRequest {
     int width = 640;
     int height = 420;
     bool modal = false;
+    // ---- 子窗口配置透传（桌宠设计 §2.6 G1/G2）----
+    // 全部落到 WindowCreateRequest（后端已支持；此前子窗口必然带标题栏/
+    // 不置顶/可缩放，是纯接线缺口）。默认值与 WindowCreateRequest 一致，
+    // 既有调用零改动兼容。
+    int x = 0;
+    int y = 0;
+    bool positionSet = false;
+    bool decorated = true;
+    bool alwaysOnTop = false;
+    bool resizable = true;
+    // 显示时不抢前台焦点（GLFW_FOCUS_ON_SHOW；SDL2 后端忽略）
+    bool focusOnShow = true;
+    // 创建期整窗鼠标穿透（GLFW_MOUSE_PASSTHROUGH，仅无边框窗口生效；
+    // 运行时切换走 core::window::setWindowMousePassthrough）
+    bool mousePassthrough = false;
+    // 任务栏/Alt+Tab 隐藏（Windows WS_EX_TOOLWINDOW；其他平台静默降级）
+    bool hideFromTaskbar = false;
+    // 是否跟随 app::setClearColor 的全局广播（桌宠这类自管背景色的
+    // 覆盖窗口——如 clearColor alpha=0 的 sprite 窗——应设 false）
+    bool followClearColorOverride = true;
+    // 子窗口创建成功后回调（core::window::Handle，可用来做运行时
+    // setWindowPos / setWindowMousePassthrough 等）
+    std::function<void(core::window::Handle)> onWindowCreated;
     std::function<void(const eui::KeyEvent&)> onKeyEvent;
     DslWindowCompose compose;
 };

@@ -25,6 +25,7 @@
 #include "core/input/input_state.h"
 #include "core/platform/platform.h"
 #include "core/platform/window_effect.h"
+#include "core/platform/window_style.h"
 #include "core/window/window_backend.h"
 #include "core/render/render_backend.h"
 
@@ -284,6 +285,16 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     windowRequest.renderApi = core::render::windowRenderApi();
     // 磨砂 Phase C：子窗口跟主窗口同档——非 None 时带透明帧缓冲 hint 创建
     windowRequest.windowEffect = app::currentWindowEffect();
+    // 子窗口配置透传（桌宠设计 §2.6 G1/G4）：decorated/alwaysOnTop/resizable/
+    // position/focusOnShow/mousePassthrough，后端 createWindow 已支持
+    windowRequest.x = request.x;
+    windowRequest.y = request.y;
+    windowRequest.positionSet = request.positionSet;
+    windowRequest.decorated = request.decorated;
+    windowRequest.alwaysOnTop = request.alwaysOnTop;
+    windowRequest.resizable = request.resizable;
+    windowRequest.focusOnShow = request.focusOnShow;
+    windowRequest.mousePassthrough = request.mousePassthrough;
     GLFWwindow* childWindow = static_cast<GLFWwindow*>(core::window::createWindow(windowRequest));
     if (!childWindow) {
         return {};
@@ -316,9 +327,20 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     applyTitleBarAppearanceToWindow(childWindow);
     // 新子窗口跟随当前窗口效果（磨砂 Phase C）：创建期透明 hint + backdrop 档位
     applyWindowEffectToWindow(childWindow, app::currentWindowEffect());
-    // clearColor 运行时覆盖（app::setClearColor）对后续新开子窗口同样生效
-    if (const std::optional<eui::Color>& override_ = app::detail::clearColorOverride()) {
-        managed->content.setClearColor(*override_);
+    // clearColor 运行时覆盖（app::setClearColor）对后续新开子窗口同样生效；
+    // 自管背景的窗口（ignoreClearColorOverride，如桌宠 sprite 窗）除外
+    if (request.followClearColorOverride) {
+        if (const std::optional<eui::Color>& override_ = app::detail::clearColorOverride()) {
+            managed->content.setClearColor(*override_);
+        }
+    }
+    // 任务栏/Alt+Tab 隐藏（桌宠设计 G5，Windows WS_EX_TOOLWINDOW）
+    if (request.hideFromTaskbar) {
+        core::platform::applyWindowStyleFlags(
+            nativeWindowHandle(childWindow), core::platform::WindowStyleFlags{true, false});
+    }
+    if (request.onWindowCreated) {
+        request.onWindowCreated(childWindow);
     }
     if (managed->content.request().modal) {
         glfwFocusWindow(childWindow);
@@ -606,11 +628,15 @@ int eui_app_run() {
 
         // clearColor 联动（磨砂 Phase B）：app::setClearColor 的变更广播到全部
         // 存活子窗口（各自 requestFullPaint）；主窗口已由 setClearColor 触发全量重绘。
+        // 自管背景的窗口（ignoreClearColorOverride，如桌宠 sprite 窗）不跟随。
         const eui::Color effectiveClearColor = app::currentClearColor();
         if (effectiveClearColor.r != appliedClearColor.r || effectiveClearColor.g != appliedClearColor.g ||
             effectiveClearColor.b != appliedClearColor.b || effectiveClearColor.a != appliedClearColor.a) {
             appliedClearColor = effectiveClearColor;
             childWindows.updateAll([&managedClearColor = appliedClearColor](ManagedWindow& managed) {
+                if (!managed.content.request().followClearColorOverride) {
+                    return;
+                }
                 managed.content.setClearColor(managedClearColor);
             });
         }

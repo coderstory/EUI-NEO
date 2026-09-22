@@ -194,7 +194,18 @@ struct DslWindowConfig {
     int windowWidthValue = 640;
     int windowHeightValue = 420;
     bool modalValue = false;
-    std::function<void(const eui::KeyEvent&)> keyEventHandler;
+    // ---- 子窗口配置（桌宠设计 §2.6 G1/G2/G4/G5）----
+    int windowXValue = 0;
+    int windowYValue = 0;
+    bool windowPositionSetValue = false;
+    bool decoratedValue = true;
+    bool alwaysOnTopValue = false;
+    bool resizableValue = true;
+    bool focusOnShowValue = true;
+    bool clickThroughValue = false;
+    bool hideFromTaskbarValue = false;
+    bool ignoreClearColorOverrideValue = false;
+    std::function<void(core::window::Handle)> windowCreatedHandler;
 
     DslWindowConfig& title(std::string value) { titleValue = std::move(value); return *this; }
     DslWindowConfig& pageId(std::string value) { pageIdValue = std::move(value); return *this; }
@@ -207,11 +218,49 @@ struct DslWindowConfig {
     }
     DslWindowConfig& windowWidth(int value) { windowWidthValue = value; return *this; }
     DslWindowConfig& windowHeight(int value) { windowHeightValue = value; return *this; }
+    DslWindowConfig& windowPosition(int x, int y) {
+        windowXValue = x;
+        windowYValue = y;
+        windowPositionSetValue = true;
+        return *this;
+    }
     DslWindowConfig& modal(bool value = true) { modalValue = value; return *this; }
+    /** @brief 无边框（GLFW_DECORATED=0；桌宠/覆盖类窗口） */
+    DslWindowConfig& decorated(bool value = true) { decoratedValue = value; return *this; }
+    /** @brief 置顶（GLFW_FLOATING；失焦仍保持置顶） */
+    DslWindowConfig& alwaysOnTop(bool value = true) { alwaysOnTopValue = value; return *this; }
+    DslWindowConfig& resizable(bool value = true) { resizableValue = value; return *this; }
+    /** @brief 显示时不抢前台焦点（GLFW_FOCUS_ON_SHOW=0；SDL2 后端忽略） */
+    DslWindowConfig& focusOnShow(bool value = true) { focusOnShowValue = value; return *this; }
+    /**
+     * @brief 创建期整窗鼠标穿透（GLFW_MOUSE_PASSTHROUGH，仅无边框窗口生效）。
+     * 运行时切换用 core::window::setWindowMousePassthrough。
+     */
+    DslWindowConfig& clickThrough(bool value = true) { clickThroughValue = value; return *this; }
+    /**
+     * @brief 任务栏/Alt+Tab 隐藏（Windows WS_EX_TOOLWINDOW；macOS/Linux
+     * 静默降级——子窗口本就不进 Dock）。
+     */
+    DslWindowConfig& hideFromTaskbar(bool value = true) { hideFromTaskbarValue = value; return *this; }
+    /**
+     * @brief 不跟随 app::setClearColor 的全局广播（默认 false = 跟随）。
+     * 桌宠这类自管背景色的覆盖窗口（clearColor alpha=0 的 sprite 窗）应设
+     * true，否则全局主题/窗口效果切档会把透明底冲成主窗口底色。
+     */
+    DslWindowConfig& ignoreClearColorOverride(bool value = true) {
+        ignoreClearColorOverrideValue = value;
+        return *this;
+    }
+    /** @brief 子窗口创建成功回调（Handle 可用于 setWindowPos / 穿透切换等） */
+    DslWindowConfig& onWindowCreated(std::function<void(core::window::Handle)> handler) {
+        windowCreatedHandler = std::move(handler);
+        return *this;
+    }
     DslWindowConfig& onKeyEvent(std::function<void(const eui::KeyEvent&)> handler) {
         keyEventHandler = std::move(handler);
         return *this;
     }
+    std::function<void(const eui::KeyEvent&)> keyEventHandler;
 };
 
 const DslAppConfig& dslAppConfig();

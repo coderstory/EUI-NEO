@@ -168,9 +168,21 @@ void openWindow(const DslWindowConfig& config, DslWindowCompose composeFn) {
     request.title = config.titleValue.empty() ? "Window" : config.titleValue;
     request.pageId = config.pageIdValue.empty() ? request.title : config.pageIdValue;
     request.clearColor = config.clearColorValue;
-    request.width = std::max(160, config.windowWidthValue);
-    request.height = std::max(120, config.windowHeightValue);
+    // 最小尺寸只防 0/负数（G2：桌宠 128×128 等小窗曾被 160×120 下限强行放大）
+    request.width = std::max(1, config.windowWidthValue);
+    request.height = std::max(1, config.windowHeightValue);
     request.modal = config.modalValue;
+    request.x = config.windowXValue;
+    request.y = config.windowYValue;
+    request.positionSet = config.windowPositionSetValue;
+    request.decorated = config.decoratedValue;
+    request.alwaysOnTop = config.alwaysOnTopValue;
+    request.resizable = config.resizableValue;
+    request.focusOnShow = config.focusOnShowValue;
+    request.mousePassthrough = config.clickThroughValue;
+    request.hideFromTaskbar = config.hideFromTaskbarValue;
+    request.followClearColorOverride = !config.ignoreClearColorOverrideValue;
+    request.onWindowCreated = config.windowCreatedHandler;
     request.onKeyEvent = config.keyEventHandler;
     request.compose = std::move(composeFn);
     detail::dslWindowRequests().push_back(std::move(request));

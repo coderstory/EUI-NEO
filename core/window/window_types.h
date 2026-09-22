@@ -43,6 +43,12 @@ struct WindowCreateRequest {
     // compositeAlpha 普遍只报 OPAQUE，SDL2 无逐像素透明 flag——两者对本
     // 字段降级 None。
     platform::WindowEffect windowEffect = platform::WindowEffect::None;
+    // 显示时不抢前台焦点（桌宠设计 §2.6 G1；GLFW_FOCUS_ON_SHOW 创建期 hint，
+    // SDL2 后端无对应能力、忽略）
+    bool focusOnShow = true;
+    // 鼠标穿透：整窗点击透到下层窗口（G4；GLFW_MOUSE_PASSTHROUGH——GLFW 3.4
+    // 仅无边框窗口生效，Win32 即 WS_EX_TRANSPARENT；SDL2 2.26+ 运行期设置）
+    bool mousePassthrough = false;
 };
 
 struct NativeWindowInfo {
