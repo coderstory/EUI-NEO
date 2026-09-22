@@ -211,7 +211,65 @@ bool verifyInteractionCapture() {
     middleRelease.action = core::PointerAction::Release;
     middleRelease.buttons = {};
     interaction.update(bounds, middleRelease, true, accepted);
-    return !interaction.active && interaction.released && interaction.clicked;
+    // 交互期间 drag 激活过：松手即使回到元素内也不触发 click。
+    return !interaction.active && interaction.released && !interaction.clicked;
+}
+
+bool verifyDragCancelsClick() {
+    const core::Rect bounds{0.0f, 0.0f, 100.0f, 100.0f};
+    const core::PointerButtons accepted = core::PointerButton::Left;
+
+    auto pressAt = [](double x, double y) {
+        core::PointerEvent event;
+        event.x = x;
+        event.y = y;
+        event.action = core::PointerAction::Press;
+        event.button = core::PointerButton::Left;
+        event.buttons = core::PointerButton::Left;
+        return event;
+    };
+
+    // 拖拽超阈值后回到起点松手：不触发 click。
+    core::InteractionState dragged;
+    dragged.update(bounds, pressAt(20.0, 20.0), true, accepted);
+    core::PointerEvent dragMove = pressAt(20.0, 20.0);
+    dragMove.action = core::PointerAction::Move;
+    dragMove.button = core::PointerButton::None;
+    dragMove.x = 40.0;
+    dragged.update(bounds, dragMove, true, accepted);
+    if (!dragged.drag || !dragged.dragMoved) {
+        return false;
+    }
+    core::PointerEvent dragRelease = pressAt(20.0, 20.0);
+    dragRelease.action = core::PointerAction::Release;
+    dragRelease.buttons = {};
+    dragged.update(bounds, dragRelease, true, accepted);
+    if (dragged.clicked || !dragged.released) {
+        return false;
+    }
+
+    // 位移在阈值内：普通点击不受影响。
+    core::InteractionState clicked;
+    clicked.update(bounds, pressAt(20.0, 20.0), true, accepted);
+    core::PointerEvent smallMove = pressAt(20.0, 20.0);
+    smallMove.action = core::PointerAction::Move;
+    smallMove.button = core::PointerButton::None;
+    smallMove.x = 21.0;
+    clicked.update(bounds, smallMove, true, accepted);
+    if (clicked.drag || clicked.dragMoved) {
+        return false;
+    }
+    core::PointerEvent clickRelease = pressAt(20.0, 20.0);
+    clickRelease.action = core::PointerAction::Release;
+    clickRelease.buttons = {};
+    clicked.update(bounds, clickRelease, true, accepted);
+    // 下一次交互（新按下）dragMoved 复位。
+    core::InteractionState next;
+    next.update(bounds, pressAt(50.0, 50.0), true, accepted);
+    if (next.dragMoved) {
+        return false;
+    }
+    return clicked.clicked && clicked.released;
 }
 
 } // namespace
@@ -243,6 +301,10 @@ int main() {
     }
     if (!verifyInteractionCapture()) {
         std::cerr << "Pointer button acceptance or gesture capture failed\n";
+        return 1;
+    }
+    if (!verifyDragCancelsClick()) {
+        std::cerr << "Drag activation did not cancel click for that interaction\n";
         return 1;
     }
     return 0;
