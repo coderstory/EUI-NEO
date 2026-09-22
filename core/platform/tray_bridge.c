@@ -738,6 +738,14 @@ static void eui_dm_add_item_props(GVariantBuilder* builder, gint32 id) {
     g_variant_builder_add(builder, "(ia{sv})", id, &props);
 }
 
+/* 菜单项被点击：id -> g_final_items 下标，回调为空则忽略。 */
+static void eui_sni_activate(gint32 id) {
+    gint32 index = id - 1;
+    if (index >= 0 && index < g_final_count && g_final_items[index].cb != NULL) {
+        g_final_items[index].cb(g_final_items[index].user);
+    }
+}
+
 static void eui_dm_method_call(GDBusConnection* conn, const gchar* sender,
                                const gchar* object_path,
                                const gchar* interface_name,
@@ -841,14 +849,6 @@ static const GDBusInterfaceVTable eui_dm_vtable = {
     NULL,   /* get_property: dbusmenu has no per-object properties we read */
     NULL
 };
-
-/* 菜单项被点击：id -> g_final_items 下标，回调为空则忽略。 */
-static void eui_sni_activate(gint32 id) {
-    gint32 index = id - 1;
-    if (index >= 0 && index < g_final_count && g_final_items[index].cb != NULL) {
-        g_final_items[index].cb(g_final_items[index].user);
-    }
-}
 
 /* ---------------------------------------------------------------------------
  * Backend lifecycle
