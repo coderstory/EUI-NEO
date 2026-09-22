@@ -76,6 +76,28 @@ core::platform::TitleBarAppearance currentTitleBarAppearance();
 void setClearColor(const eui::Color& color);
 /** @brief 当前生效的 clearColor：运行时覆盖优先，否则取 dslAppConfig 启动快照。 */
 eui::Color currentClearColor();
+/**
+ * @brief 运行时切换窗口效果（DWM backdrop 档位），下一帧生效。
+ *
+ * 覆盖主窗口 + 全部存活子窗口，此后新开的子窗口同样跟随；优先于
+ * DslAppConfig::windowEffect 的启动快照。仅 Windows GLFW 后端生效（SDL2
+ * 窗口无逐像素透明，按 None 降级）。透明帧缓冲 hint 是创建期属性：从 None
+ * 切到其他档需要窗口带透明 hint 创建才可见（应用侧常开 hint + clearColor
+ * alpha=1 实现「关」档视觉等价，见磨砂设计 §3.1.5）。可在任意回调里调用
+ *（主线程）。不返回 bool：backdrop 是否真正生效取决于系统版本，真值以
+ * activeWindowEffect() 的回查为准（应用发生在下一帧）。
+ */
+void setWindowEffect(core::platform::WindowEffect effect);
+/** @brief 期望的窗口效果：运行时覆盖优先，否则取 dslAppConfig 启动快照。 */
+core::platform::WindowEffect currentWindowEffect();
+/**
+ * @brief 实际生效的窗口效果（能力降级后的真值）。
+ *
+ * 由主循环在每次应用后回写：请求 Acrylic/Mica 而系统 < Win11 22621 时，
+ * 按透明帧缓冲是否实际开启降级为 Transparent/None。主循环首次应用前返回
+ * currentWindowEffect()（最佳已知值）。设置页用它回查降级并提示。
+ */
+core::platform::WindowEffect activeWindowEffect();
 bool initialize(eui::window::Handle window);
 bool update(eui::window::Handle window, float deltaSeconds, int windowWidth, int windowHeight, float dpiScale, float pointerScale);
 bool update(eui::window::Handle window, float deltaSeconds, int windowWidth, int windowHeight, float dpiScale, float pointerScale, bool updateRequested);
@@ -88,6 +110,8 @@ std::vector<DslWindowRequest> consumeWindowRequests();
 
 namespace detail {
 void requestFullPaint();
+/** @brief 主循环回写实际生效的窗口效果（glfw_app_main 专用）。 */
+void setActiveWindowEffect(core::platform::WindowEffect effect);
 }
 
 } // namespace app

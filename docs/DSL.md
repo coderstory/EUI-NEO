@@ -121,18 +121,20 @@ Debug 配置只控制诊断输出，不参与业务状态。`showDebugStatsInTit
 
 运行时切换主题时用 `app::setTitleBarAppearance(core::platform::TitleBarAppearance{dark})`：即时生效、无需重启，覆盖主窗口与全部存活子窗口（此后新开的子窗口同样跟随），并优先于 `.darkTitleBar(...)` 的启动快照。`app::currentTitleBarAppearance()` 返回当前生效值。`TitleBarAppearance` 还预留了 `customColor`/`colorAbgr`（Windows 自定义标题栏底色，COLORREF），默认不启用——系统材质贯通标题栏时应让 DWM 自绘。示例见 `examples/window_effect.cpp`。
 
-### 窗口效果（透明半透）
+### 窗口效果（透明半透 + DWM backdrop）
 
 `.windowEffect(core::platform::WindowEffect::Transparent)` 让主窗口与子窗口以透明帧缓冲创建（GLFW `GLFW_TRANSPARENT_FRAMEBUFFER`；SDL2 无逐像素透明 flag、Vulkan 在 Windows 上 compositeAlpha 普遍只报 OPAQUE，两者降级 `None`），此时 `clearColor` 的 alpha < 1 即整体半透、可透出桌面与下层窗口。默认 `None`（实色，行为与历史版本逐像素一致）。
 
 要点：
 
-- 透明 hint 是创建期属性，不能运行时关闭；「半透 ↔ 不透明」的运行时切换通过把 clearColor alpha 拉回 1 实现视觉等价，不重建窗口。
+- 透明 hint 是创建期属性，不能运行时关闭；「半透 ↔ 不透明」的运行时切换通过把 clearColor alpha 拉回 1 实现视觉等价，不重建窗口。需要运行时切到半透/磨砂档的应用，可以常开 hint（启动即 `Transparent`）+ 「关」档 alpha=1 视觉等价。
 - 半透像素的合成正确性由 GL 后端自动保证：透明窗口的 render cache blit 走 premultiply（DWM 按 premultiplied alpha 合成窗口表面，straight 拷贝会整体过亮/发灰）；alpha=1 时该变换恒等，不透明窗口路径不变。
 - Vulkan 后端（Windows compositeAlpha 普遍 OPAQUE）与 SDL2 后端（无逐像素透明 flag）降级为 `None`（标题栏联动不受影响）。
 - 桌面合成被禁用等导致透明帧缓冲不可用时，GLFW 静默降级为不透明窗口（stderr 诊断一行），渲染侧按同一属性自动回退 straight blit。
 
-运行时改底色/不透明度用 `app::setClearColor(color)`：下一帧生效，覆盖主窗口与全部存活子窗口（此后新开的子窗口同样跟随），优先于 `DslAppConfig::clearColor` 与 `DslWindowConfig::clearColor` 的启动快照；`app::currentClearColor()` 返回当前生效值。这也是主题切换底色即时跟随的正规通道（不再需要重启）。Acrylic/Mica 的 DWM backdrop 应用属后续 Phase，`WindowEffect` 枚举已预留 `Acrylic`/`Mica`/`MicaAlt` 值。示例见 `examples/window_effect.cpp`。
+运行时改底色/不透明度用 `app::setClearColor(color)`：下一帧生效，覆盖主窗口与全部存活子窗口（此后新开的子窗口同样跟随），优先于 `DslAppConfig::clearColor` 与 `DslWindowConfig::clearColor` 的启动快照；`app::currentClearColor()` 返回当前生效值。这也是主题切换底色即时跟随的正规通道（不再需要重启）。
+
+运行时切 DWM backdrop 材质用 `app::setWindowEffect(effect)`（磨砂 Phase C）：`Acrylic`（TRANSIENTWINDOW 实时模糊）/ `Mica`（MAINWINDOW 壁纸采样）/ `MicaAlt`（TABBEDWINDOW）/ `None`·`Transparent`（显式关 backdrop，回到纯 clearColor alpha 半透），下一帧应用到主窗口与全部存活子窗口，优先于 `.windowEffect(...)` 启动快照。仅 Windows 11 22H2（22621）+ 的 GLFW 后端生效；`DWMSBT_AUTO` 不可靠（spike 实测无效），档位一律显式。backdrop 材质画在窗口整个 bounds 后面（含标题栏），窗口内容需带 alpha（透明 hint + clearColor alpha < 1）才能露出；「关」档把 clearColor alpha 拉回 1 即完全遮住材质。`app::activeWindowEffect()` 返回实际生效值（能力降级后的真值，主循环每次应用后回写）：请求 `Acrylic`/`Mica` 而系统不支持时，按透明帧缓冲是否实际开启降级为 `Transparent`/`None`——设置页用它回查降级并提示用户。示例见 `examples/window_effect.cpp`。
 
 
 不设置 `.textFont(...)` 时使用 `core/render/text.cpp` 里的全局默认文本字体；不设置 `.iconFont(...)` 时使用全局默认图标字体。默认字体优先从可执行文件旁的 `assets/`、工作目录 `assets/`、上级运行目录 `assets/` 查找；找不到内置字体资源时会回退到平台系统字体，避免单 exe 漏带 assets 后普通文本整段不可见。

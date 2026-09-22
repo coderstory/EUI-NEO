@@ -40,4 +40,31 @@ struct TitleBarAppearance {
 //（平台/系统版本不支持或句柄无效 → false，静默降级不抛不刷日志）。
 bool applyTitleBarAppearance(void* nativeWindowHandle, const TitleBarAppearance& appearance);
 
+// 把窗口效果（DWM backdrop 档位）应用到平台原生窗口句柄（磨砂设计 Phase C）。
+// None/Transparent 显式设 DWMSBT_NONE（关 backdrop，透明/实色由帧缓冲 hint 与
+// clearColor alpha 决定）；Acrylic/Mica/MicaAlt 设对应 SYSTEMBACKDROP 材质。
+// 幂等、可运行时反复调用；返回是否实际生效（系统 < Win11 22621、非 Windows
+// 平台或句柄无效 → false，静默降级不抛不刷日志；能力缓存避免逐帧重试）。
+bool applyWindowEffect(void* nativeWindowHandle, WindowEffect effect);
+
+// WindowEffect → DWM_SYSTEMBACKDROP_TYPE 值（纯函数，单测/实现共用）。
+// spike 结论（2026-09-22）：DWMSBT_AUTO(0) 不可靠（只画默认标题栏后面、可能
+// 被内部启发式关掉），必须显式选 NONE/材质档之一。
+inline int systemBackdropValue(WindowEffect effect) {
+    switch (effect) {
+    case WindowEffect::Mica:    return 2; // DWMSBT_MAINWINDOW
+    case WindowEffect::Acrylic: return 3; // DWMSBT_TRANSIENTWINDOW
+    case WindowEffect::MicaAlt: return 4; // DWMSBT_TABBEDWINDOW
+    default:                    return 1; // DWMSBT_NONE（None/Transparent：显式关）
+    }
+}
+
+// applyWindowEffect 返回 false 时的降级语义（纯函数，单测/主循环共用）：
+// 透明帧缓冲 hint 在创建期开启且不可逆——hint 实际生效（含 GLFW 静默回查通过）
+// 则视觉上仍是 Transparent 半透档，否则 None。与请求的档位无关（失败的请求
+// 只剩「能透/不能透」两种落点）。
+inline WindowEffect degradedWindowEffect(WindowEffect /*desired*/, bool transparentFramebufferActive) {
+    return transparentFramebufferActive ? WindowEffect::Transparent : WindowEffect::None;
+}
+
 } // namespace core::platform
