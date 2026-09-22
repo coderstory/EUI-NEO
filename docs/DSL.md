@@ -103,6 +103,18 @@ Debug 配置只控制诊断输出，不参与业务状态。`showDebugStatsInTit
 
 托盘后台运行默认关闭。需要托盘的页面可以在 `DslAppConfig` 中显式调用 `.tray(true)`，例如串口工具。启用托盘后，关闭或最小化窗口会隐藏到托盘并释放图形资源；托盘 `Show` 会重新显示窗口，`Exit` 才真正退出。
 
+托盘菜单默认是内置的 `Show`/`Exit` 两项。`.trayMenu(...)` 注册自定义菜单项（`TrayMenuItem{text, callback}`，`text` 为 `"-"` 表示分隔线），默认项 `Show`/`Exit` 保留在末尾；第二参数传 `false` 可移除默认项，此时应用需自行提供退出入口。不调用 `.trayMenu` 或传空列表时行为与旧版完全一致（仅 `Show`/`Exit`）。回调在主线程触发，可在其中更新 UI 状态并调用 `requestUpdate()`：
+
+```cpp
+.tray(true)
+.trayMenu({
+    {"清空日志", [] { state.logs.clear(); requestUpdate(); }},
+    {"-", nullptr},
+})  // 菜单为：清空日志 | 分隔线 | Show | Exit
+```
+
+运行期更新菜单用 `eui::platform::setTrayMenu(items, keepDefault)`（托盘初始化前后均可调用，已初始化时即时生效；Linux SNI 后端在面板下次展开菜单时生效）。
+
 ### 标题栏外观（深浅主题联动）
 
 `.darkTitleBar(true)` 让窗口标题栏（非客户区）在启动时进入深色模式，浅色界面配浅色标题栏、深色界面配深色标题栏。仅 Windows（DWMWA_USE_IMMERSIVE_DARK_MODE，Win11 22000+）生效，其他平台或老系统静默忽略。默认 `false`，行为与现状一致。

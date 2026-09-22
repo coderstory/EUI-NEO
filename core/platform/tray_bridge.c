@@ -1,5 +1,7 @@
 #include "core/platform/tray_bridge.h"
 
+#include <string.h>
+
 #if defined(EUI_TRAY_WINAPI)
 #define TRAY_WINAPI 1
 #define EUI_TRAY_HAS_BACKEND 1
@@ -14,6 +16,74 @@
 #define EUI_TRAY_HAS_BACKEND 0
 #endif
 
+/* ---------------------------------------------------------------------------
+ * 自定义菜单注册（与后端无关的共用层）
+ * ------------------------------------------------------------------------- */
+
+static eui_tray_menu_item g_custom_items[EUI_TRAY_MAX_MENU_ITEMS];
+static int g_custom_count = 0;
+static int g_keep_default_menu = 1;
+
+/* 各后端（含无后端 stub）各自实现：把 g_custom_items 展开成平台菜单。 */
+static void eui_tray_menu_changed(void);
+
+/* 展开后的最终菜单，容量 = 自定义项上限 + 分隔线 + Show + Exit。 */
+static eui_tray_menu_item g_final_items[EUI_TRAY_MAX_MENU_ITEMS + 3];
+static int g_final_count = 0;
+
+int eui_tray_expand_menu(const eui_tray_menu_item* custom, int custom_count,
+                         int keep_default,
+                         void (*show_cb)(void* user), void (*exit_cb)(void* user),
+                         eui_tray_menu_item* out, int out_capacity) {
+    if (out == 0 || out_capacity <= 0 || show_cb == 0 || exit_cb == 0) {
+        return 0;
+    }
+
+    const int has_custom = (custom != 0 && custom_count > 0);
+    /* 空自定义菜单永远回退默认 Show/Exit，保证向后兼容。 */
+    const int use_default = !has_custom || (keep_default != 0);
+    int n = 0;
+
+    if (has_custom) {
+        for (int i = 0; i < custom_count && n < out_capacity; i++) {
+            out[n++] = custom[i];
+        }
+        if (use_default && n < out_capacity) {
+            eui_tray_menu_item sep = {0, 0, 0, 0, 0};   /* text == NULL => 分隔线 */
+            out[n++] = sep;
+        }
+    }
+    if (use_default) {
+        if (n < out_capacity) {
+            eui_tray_menu_item show = {"Show", 0, 0, show_cb, 0};
+            out[n++] = show;
+        }
+        if (n < out_capacity) {
+            eui_tray_menu_item exit = {"Exit", 0, 0, exit_cb, 0};
+            out[n++] = exit;
+        }
+    }
+    return n;
+}
+
+void eui_tray_set_menu(const eui_tray_menu_item* items, int count, int keep_default) {
+    if (count < 0) {
+        count = 0;
+    }
+    if (count > EUI_TRAY_MAX_MENU_ITEMS) {
+        count = EUI_TRAY_MAX_MENU_ITEMS;
+    }
+    if (items != 0 && count > 0) {
+        memcpy(g_custom_items, items, (size_t)count * sizeof(g_custom_items[0]));
+        g_custom_count = count;
+        g_keep_default_menu = keep_default != 0;
+    } else {
+        g_custom_count = 0;
+        g_keep_default_menu = 1;   /* 空注册 => 默认 Show/Exit */
+    }
+    eui_tray_menu_changed();
+}
+
 #if EUI_TRAY_HAS_BACKEND
 
 #if defined(EUI_TRAY_APPKIT)
@@ -27,19 +97,15 @@ static NSStatusItem* g_status_item = nil;
 static NSMenu* g_menu = nil;
 
 @interface EUITrayTarget : NSObject <NSApplicationDelegate>
-- (void)show:(id)sender;
-- (void)exit:(id)sender;
+- (void)itemSelected:(id)sender;
 @end
 
 @implementation EUITrayTarget
-- (void)show:(id)sender {
-    (void)sender;
-    g_show_requested = 1;
-}
-
-- (void)exit:(id)sender {
-    (void)sender;
-    g_exit_requested = 1;
+- (void)itemSelected:(id)sender {
+    NSInteger index = [sender tag];
+    if (index >= 0 && index < g_final_count && g_final_items[index].cb != NULL) {
+        g_final_items[index].cb(g_final_items[index].user);
+    }
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
@@ -75,26 +141,49 @@ static NSImage* eui_tray_image(const char* icon_path) {
     return image;
 }
 
+static void eui_menu_show(void* user) {
+    (void)user;
+    g_show_requested = 1;
+}
+
+static void eui_menu_exit(void* user) {
+    (void)user;
+    g_exit_requested = 1;
+}
+
 static void eui_tray_rebuild_menu(void) {
     [g_menu release];
     g_menu = [[NSMenu alloc] initWithTitle:@""];
     [g_menu setAutoenablesItems:NO];
 
-    NSMenuItem* show_item = [[NSMenuItem alloc] initWithTitle:@"Show"
-                                                       action:@selector(show:)
-                                                keyEquivalent:@""];
-    [show_item setTarget:g_target];
-    [g_menu addItem:show_item];
-    [show_item release];
+    for (int i = 0; i < g_final_count; i++) {
+        const eui_tray_menu_item* item = &g_final_items[i];
+        if (item->text == NULL) {
+            [g_menu addItem:[NSMenuItem separatorItem]];
+            continue;
+        }
+        NSMenuItem* menu_item =
+            [[NSMenuItem alloc] initWithTitle:[NSString stringWithUTF8String:item->text]
+                                      action:@selector(itemSelected:)
+                               keyEquivalent:@""];
+        [menu_item setTarget:g_target];
+        [menu_item setTag:i];
+        [menu_item setEnabled:(item->disabled ? NO : YES)];
+        [menu_item setState:(item->checked ? NSOnState : NSOffState)];
+        [g_menu addItem:menu_item];
+        [menu_item release];
+    }
+}
 
-    [g_menu addItem:[NSMenuItem separatorItem]];
-
-    NSMenuItem* exit_item = [[NSMenuItem alloc] initWithTitle:@"Exit"
-                                                       action:@selector(exit:)
-                                                keyEquivalent:@""];
-    [exit_item setTarget:g_target];
-    [g_menu addItem:exit_item];
-    [exit_item release];
+static void eui_tray_menu_changed(void) {
+    g_final_count = eui_tray_expand_menu(g_custom_items, g_custom_count,
+                                         g_keep_default_menu,
+                                         eui_menu_show, eui_menu_exit,
+                                         g_final_items, EUI_TRAY_MAX_MENU_ITEMS + 3);
+    if (g_target != nil) {
+        eui_tray_rebuild_menu();
+        [g_status_item setMenu:g_menu];   /* status_item 未创建时向 nil 发消息是安全的 */
+    }
 }
 
 int eui_tray_init(const char* icon_path) {
@@ -108,7 +197,7 @@ int eui_tray_init(const char* icon_path) {
         g_exit_requested = 0;
         g_target = [[EUITrayTarget alloc] init];
         [NSApp setDelegate:g_target];
-        eui_tray_rebuild_menu();
+        eui_tray_menu_changed();
 
         g_status_item = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
         if (g_status_item == nil) {
@@ -235,9 +324,26 @@ static gchar* g_icon_dir = NULL;
 #define SNI_IFACE          "org.kde.StatusNotifierItem"
 #define DBUSMENU_IFACE     "com.canonical.dbusmenu"
 
-#define SNI_MENU_ID_SHOW   1
-#define SNI_MENU_ID_SEP    2
-#define SNI_MENU_ID_EXIT   3
+/* DBusMenu item id = 最终菜单下标 + 1（0 是根）。 */
+static guint32 g_menu_revision = 1;
+
+static void eui_menu_show(void* user) {
+    (void)user;
+    g_show_requested = 1;
+}
+
+static void eui_menu_exit(void* user) {
+    (void)user;
+    g_exit_requested = 1;
+}
+
+static void eui_tray_menu_changed(void) {
+    g_final_count = eui_tray_expand_menu(g_custom_items, g_custom_count,
+                                         g_keep_default_menu,
+                                         eui_menu_show, eui_menu_exit,
+                                         g_final_items, EUI_TRAY_MAX_MENU_ITEMS + 3);
+    ++g_menu_revision;
+}
 
 static void eui_sni_destroy_objects(void);
 
@@ -610,25 +716,25 @@ static GVariant* eui_dm_build_layout(gint32 parent_id, gint32 depth) {
 
     GVariantBuilder children;
     g_variant_builder_init(&children, G_VARIANT_TYPE("av"));
-    g_variant_builder_add_value(&children,
-        g_variant_new_variant(eui_dm_item_tuple(SNI_MENU_ID_SHOW, "Show", FALSE)));
-    g_variant_builder_add_value(&children,
-        g_variant_new_variant(eui_dm_item_tuple(SNI_MENU_ID_SEP, NULL, TRUE)));
-    g_variant_builder_add_value(&children,
-        g_variant_new_variant(eui_dm_item_tuple(SNI_MENU_ID_EXIT, "Exit", FALSE)));
+    for (int i = 0; i < g_final_count; i++) {
+        g_variant_builder_add_value(&children,
+            g_variant_new_variant(eui_dm_item_tuple(i + 1, g_final_items[i].text,
+                                                    g_final_items[i].text == NULL)));
+    }
     g_variant_builder_add_value(&tuple, g_variant_builder_end(&children));
 
     return g_variant_builder_end(&tuple);
 }
 
 static void eui_dm_add_item_props(GVariantBuilder* builder, gint32 id) {
+    gint32 index = id - 1;
+    if (index < 0 || index >= g_final_count || g_final_items[index].text == NULL) {
+        return;   /* 分隔线或未知 id：无属性可报 */
+    }
     GVariantBuilder props;
     g_variant_builder_init(&props, G_VARIANT_TYPE("a{sv}"));
-    if (id == SNI_MENU_ID_SHOW) {
-        g_variant_builder_add(&props, "{sv}", "label", g_variant_new_string("Show"));
-    } else if (id == SNI_MENU_ID_EXIT) {
-        g_variant_builder_add(&props, "{sv}", "label", g_variant_new_string("Exit"));
-    }
+    g_variant_builder_add(&props, "{sv}", "label",
+                          g_variant_new_string(g_final_items[index].text));
     g_variant_builder_add(builder, "(ia{sv})", id, &props);
 }
 
@@ -651,7 +757,7 @@ static void eui_dm_method_call(GDBusConnection* conn, const gchar* sender,
         g_free(property_names);
         /* Reply is (u(ia{sv}av)): revision + layout. */
         g_dbus_method_invocation_return_value(invocation,
-            g_variant_new("(u@(ia{sv}av))", (guint32)1,
+            g_variant_new("(u@(ia{sv}av))", g_menu_revision,
                           eui_dm_build_layout(parent_id, depth)));
     } else if (g_strcmp0(method_name, "GetGroupProperties") == 0) {
         gint32* ids = NULL;
@@ -662,8 +768,9 @@ static void eui_dm_method_call(GDBusConnection* conn, const gchar* sender,
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("a(ia{sv})"));
         if (n_ids == 0) {
-            eui_dm_add_item_props(&builder, SNI_MENU_ID_SHOW);
-            eui_dm_add_item_props(&builder, SNI_MENU_ID_EXIT);
+            for (int i = 0; i < g_final_count; i++) {
+                eui_dm_add_item_props(&builder, i + 1);
+            }
         } else {
             for (gsize i = 0; i < n_ids; i++) {
                 eui_dm_add_item_props(&builder, ids[i]);
@@ -678,8 +785,10 @@ static void eui_dm_method_call(GDBusConnection* conn, const gchar* sender,
         g_variant_get(parameters, "(i&s)", &id, &name);
         GVariant* value = NULL;
         if (g_strcmp0(name, "label") == 0) {
-            if (id == SNI_MENU_ID_SHOW) value = g_variant_new_string("Show");
-            else if (id == SNI_MENU_ID_EXIT) value = g_variant_new_string("Exit");
+            gint32 index = id - 1;
+            if (index >= 0 && index < g_final_count && g_final_items[index].text != NULL) {
+                value = g_variant_new_string(g_final_items[index].text);
+            }
         }
         if (value != NULL) {
             g_dbus_method_invocation_return_value(invocation, g_variant_new("(v)", value));
@@ -695,8 +804,7 @@ static void eui_dm_method_call(GDBusConnection* conn, const gchar* sender,
         guint32 timestamp = 0;
         g_variant_get(parameters, "(i&svu)", &id, &event_id, &data, &timestamp);
         if (g_strcmp0(event_id, "clicked") == 0) {
-            if (id == SNI_MENU_ID_SHOW) g_show_requested = 1;
-            else if (id == SNI_MENU_ID_EXIT) g_exit_requested = 1;
+            eui_sni_activate(id);
         }
         g_dbus_method_invocation_return_value(invocation, NULL);
     } else if (g_strcmp0(method_name, "EventGroup") == 0) {
@@ -708,8 +816,7 @@ static void eui_dm_method_call(GDBusConnection* conn, const gchar* sender,
         g_variant_get(parameters, "(a(isvu))", &iter);
         while (g_variant_iter_next(&iter, "(isvu)", &id, &event_id, &data, &timestamp)) {
             if (g_strcmp0(event_id, "clicked") == 0) {
-                if (id == SNI_MENU_ID_SHOW) g_show_requested = 1;
-                else if (id == SNI_MENU_ID_EXIT) g_exit_requested = 1;
+                eui_sni_activate(id);
             }
         }
         /* Empty error list. */
@@ -734,6 +841,14 @@ static const GDBusInterfaceVTable eui_dm_vtable = {
     NULL,   /* get_property: dbusmenu has no per-object properties we read */
     NULL
 };
+
+/* 菜单项被点击：id -> g_final_items 下标，回调为空则忽略。 */
+static void eui_sni_activate(gint32 id) {
+    gint32 index = id - 1;
+    if (index >= 0 && index < g_final_count && g_final_items[index].cb != NULL) {
+        g_final_items[index].cb(g_final_items[index].user);
+    }
+}
 
 /* ---------------------------------------------------------------------------
  * Backend lifecycle
@@ -811,6 +926,7 @@ int eui_tray_init(const char* icon_path) {
 
     g_show_requested = 0;
     g_exit_requested = 0;
+    eui_tray_menu_changed();
     g_icon_basename = (icon_path != NULL && *icon_path != '\0')
                       ? g_path_get_basename(icon_path) : NULL;
     g_icon_dir = (icon_path != NULL && *icon_path != '\0')
@@ -919,23 +1035,47 @@ static int g_initialized = 0;
 static int g_show_requested = 0;
 static int g_exit_requested = 0;
 static struct tray g_tray;
+static struct tray_menu g_tray_menu[EUI_TRAY_MAX_MENU_ITEMS + 3 + 1];   /* + 终止空项 */
 
-static void eui_tray_show(struct tray_menu* item) {
-    (void)item;
+static void eui_menu_show(void* user) {
+    (void)user;
     g_show_requested = 1;
 }
 
-static void eui_tray_exit(struct tray_menu* item) {
-    (void)item;
+static void eui_menu_exit(void* user) {
+    (void)user;
     g_exit_requested = 1;
 }
 
-static struct tray_menu g_menu[] = {
-    {"Show", 0, 0, eui_tray_show, 0},
-    {"-", 0, 0, 0, 0},
-    {"Exit", 0, 0, eui_tray_exit, 0},
-    {0, 0, 0, 0, 0}
-};
+static void eui_bridge_item_cb(struct tray_menu* item) {
+    if (item != 0 && item->context != 0) {
+        eui_tray_menu_item* menu = (eui_tray_menu_item*)item->context;
+        if (menu->cb != 0) {
+            menu->cb(menu->user);
+        }
+    }
+}
+
+static void eui_tray_menu_changed(void) {
+    g_final_count = eui_tray_expand_menu(g_custom_items, g_custom_count,
+                                         g_keep_default_menu,
+                                         eui_menu_show, eui_menu_exit,
+                                         g_final_items, EUI_TRAY_MAX_MENU_ITEMS + 3);
+    for (int i = 0; i < g_final_count; i++) {
+        const eui_tray_menu_item* item = &g_final_items[i];
+        g_tray_menu[i].text = (char*)(item->text != 0 ? item->text : "-");
+        g_tray_menu[i].disabled = item->disabled;
+        g_tray_menu[i].checked = item->checked;
+        g_tray_menu[i].cb = eui_bridge_item_cb;
+        g_tray_menu[i].context = (void*)&g_final_items[i];
+        g_tray_menu[i].submenu = 0;
+    }
+    memset(&g_tray_menu[g_final_count], 0, sizeof(g_tray_menu[g_final_count]));
+    g_tray.menu = g_tray_menu;
+    if (g_initialized) {
+        tray_update(&g_tray);
+    }
+}
 
 int eui_tray_init(const char* icon_path) {
     if (g_initialized) {
@@ -945,7 +1085,7 @@ int eui_tray_init(const char* icon_path) {
     g_show_requested = 0;
     g_exit_requested = 0;
     g_tray.icon = (char*)(icon_path != 0 ? icon_path : "");
-    g_tray.menu = g_menu;
+    eui_tray_menu_changed();
 
     if (tray_init(&g_tray) != 0) {
         return 0;
@@ -1000,6 +1140,9 @@ void eui_tray_shutdown(void) {
 #endif
 
 #else
+
+static void eui_tray_menu_changed(void) {
+}
 
 int eui_tray_init(const char* icon_path) {
     (void)icon_path;

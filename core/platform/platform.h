@@ -8,9 +8,25 @@
 
 namespace core::platform {
 
+/**
+ * @brief 自定义托盘菜单项。text 为 "-" 表示分隔线（callback 忽略）。
+ *
+ * 回调在主线程托盘事件轮询中触发（与 Show/Exit 默认项同一通路）。
+ */
+struct TrayMenuItem {
+    std::string text;
+    std::function<void()> callback;
+
+    bool isSeparator() const { return text == "-"; }
+};
+
 struct TrayOptions {
     std::string tooltip;
     std::string iconPath;
+    /** 自定义菜单项；为空时回退默认 Show/Exit。 */
+    std::vector<TrayMenuItem> menuItems;
+    /** 有自定义项时是否保留默认 Show/Exit（默认保留）。 */
+    bool keepDefaultMenuItems = true;
 };
 
 struct FileDialogOptions {
@@ -45,6 +61,13 @@ std::string chooseFile(const FileDialogOptions& options = {});
 std::vector<std::string> chooseFiles(const FileDialogOptions& options = {});
 bool initializeTray(const TrayOptions& options);
 bool isTrayInitialized();
+/**
+ * @brief 注册/更新自定义托盘菜单（托盘未初始化时先存储，随 initializeTray 生效）。
+ *
+ * items 为空回退默认 Show/Exit；keepDefault=false 时仅有自定义项
+ * （此时应用需自行提供退出入口）。主线程调用。
+ */
+void setTrayMenu(const std::vector<TrayMenuItem>& items, bool keepDefault = true);
 void pollTray(bool blocking = false);
 bool consumeTrayShowRequested();
 bool consumeTrayExitRequested();
