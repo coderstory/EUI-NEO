@@ -28,6 +28,7 @@ struct DslAppConfig {
     bool decoratedValue = true;
     bool alwaysOnTopValue = false;
     bool maximizedValue = false;
+    bool darkTitleBarValue = false;
     float uiScaleValue = 1.0f;
 #if defined(EUI_DEBUG_BUILD)
     bool showDebugStatsInTitleValue = true;
@@ -85,6 +86,14 @@ struct DslAppConfig {
     DslAppConfig& decorated(bool value = true) { decoratedValue = value; return *this; }
     DslAppConfig& alwaysOnTop(bool value = true) { alwaysOnTopValue = value; return *this; }
     DslAppConfig& maximized(bool value = true) { maximizedValue = value; return *this; }
+    /**
+     * @brief 标题栏深色模式（窗口非客户区随深浅主题联动，启动时快照）。
+     *
+     * 仅 Windows（DWMWA_USE_IMMERSIVE_DARK_MODE，Win11 22000+）生效，其他平台
+     * 静默忽略。运行时切换请用 app::setTitleBarAppearance（即时生效，
+     * 覆盖本启动快照并作用于主窗口 + 全部存活子窗口）。
+     */
+    DslAppConfig& darkTitleBar(bool value = true) { darkTitleBarValue = value; return *this; }
     DslAppConfig& uiScale(float value) {
         uiScaleValue = value > 0.0f ? value : 1.0f;
         return *this;

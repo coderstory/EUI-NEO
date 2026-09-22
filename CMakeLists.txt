@@ -254,6 +254,13 @@ if(EUI_WINDOW_BACKEND STREQUAL "glfw")
     list(APPEND CORE_SOURCES core/platform/ime_bridge.c)
 endif()
 
+# 标题栏外观（Phase A：深浅主题联动）。macOS/Linux 走 stub，Phase E 再分平台实现
+if(WIN32)
+    list(APPEND CORE_SOURCES core/platform/window_effect_win.cpp)
+else()
+    list(APPEND CORE_SOURCES core/platform/window_effect_stub.cpp)
+endif()
+
 # -----------------------------------------------------------------------------
 # Core library target
 # -----------------------------------------------------------------------------
@@ -361,7 +368,7 @@ target_link_libraries(eui_neo PUBLIC Freetype::Freetype)
 
 if(WIN32)
     target_compile_definitions(eui_neo PUBLIC EUI_TRAY_WINAPI=1 NOMINMAX)
-    target_link_libraries(eui_neo PUBLIC winmm urlmon shell32 user32 imm32 pdh)
+    target_link_libraries(eui_neo PUBLIC winmm urlmon shell32 user32 imm32 pdh dwmapi)
 elseif(APPLE)
     target_compile_definitions(eui_neo PUBLIC EUI_TRAY_APPKIT=1)
     target_link_libraries(eui_neo PUBLIC "-framework Cocoa" objc)

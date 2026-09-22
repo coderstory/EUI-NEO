@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <vector>
 
 #if defined(__APPLE__)
@@ -38,6 +39,12 @@ inline core::dsl::Runtime& dslRuntime() {
 inline std::vector<DslWindowRequest>& dslWindowRequests() {
     static std::vector<DslWindowRequest> requests;
     return requests;
+}
+
+// 标题栏外观的运行时覆盖（std::nullopt = 未覆盖，走 dslAppConfig 启动快照）
+inline std::optional<core::platform::TitleBarAppearance>& titleBarAppearanceOverride() {
+    static std::optional<core::platform::TitleBarAppearance> override_;
+    return override_;
 }
 
 struct DslAppState {
@@ -262,6 +269,21 @@ const char* trayIconPath() {
 
 void requestUpdate() {
     core::platform::requestUiUpdate();
+}
+
+void setTitleBarAppearance(const core::platform::TitleBarAppearance& appearance) {
+    detail::titleBarAppearanceOverride() = appearance;
+    // 唤醒可能 glfwWaitEvents 中的主循环，让外观在下一帧生效
+    core::platform::requestUiUpdate();
+}
+
+core::platform::TitleBarAppearance currentTitleBarAppearance() {
+    if (const std::optional<core::platform::TitleBarAppearance>& override_ = detail::titleBarAppearanceOverride()) {
+        return *override_;
+    }
+    core::platform::TitleBarAppearance appearance;
+    appearance.dark = dslAppConfig().darkTitleBarValue;
+    return appearance;
 }
 
 namespace detail {
