@@ -1512,6 +1512,16 @@ public:
         return !focusedId_.empty() && focusedId_ == resolveId(id);
     }
 
+    // 请求把焦点移动到一个元素（点击之外的编程式聚焦，如「新建笔记后自动
+    // 聚焦编辑器」）。id 用与 state()/isFocused() 一致的相对写法；请求挂到
+    // 帧末由 Runtime::compose 消费：
+    //   - 本帧元素树里没有该元素 → 请求丢弃（不排队等待后续帧）
+    //   - 同一帧多次请求 → 最后一次生效
+    //   - 派发回调（onClick/onKeyEvent 等）与 compose 内调用均安全
+    void requestFocus(const std::string& id) {
+        pendingFocusId_ = id;
+    }
+
     template <typename T>
     T& state(const std::string& id) {
         return stateStore_.get<T>(resolveId(id));
@@ -1540,6 +1550,13 @@ private:
 
     void setFocusedId(const std::string& id) {
         focusedId_ = id;
+    }
+
+    // requestFocus() 的请求取件口（Runtime::compose 帧末消费，取出即清空）
+    std::string consumePendingFocusId() {
+        std::string id;
+        pendingFocusId_.swap(id);
+        return id;
     }
 
     std::vector<std::string> consumeReleasedStateScopes() {
@@ -1821,6 +1838,7 @@ private:
     std::vector<Element*> stack_;
     std::unordered_map<std::string, Element*> index_;
     std::string focusedId_;
+    std::string pendingFocusId_;  // requestFocus() 挂起请求（Runtime 帧末取件）
     StateStore stateStore_;
     std::vector<std::string> releasedStateScopes_;
     std::size_t generatedId_ = 0;

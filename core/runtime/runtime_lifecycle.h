@@ -29,6 +29,14 @@ inline void Runtime::compose(const std::string& pageId, float logicalWidth, floa
             ui_.setFocusedId(focusedId_);
         }
     }
+    // requestFocus() 帧末消费（core/dsl.h Ui::requestFocus）：元素树与索引
+    // 已就位，按解析后的真实 id 移焦；本帧不存在该元素则丢弃请求。放在
+    // disabled 校验之前，请求指向禁用子树时当帧即被下面的既有逻辑清掉。
+    if (const std::string focusTarget = ui_.consumePendingFocusId(); !focusTarget.empty()) {
+        if (const Element* target = ui_.find(focusTarget)) {
+            setFocusedId(target->id);
+        }
+    }
     if (!focusedId_.empty() && isElementInDisabledTree(focusedId_)) {
         setFocusedId({});
     }
