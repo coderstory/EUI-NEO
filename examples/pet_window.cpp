@@ -37,6 +37,13 @@ struct PetWindowState {
     float menuX = 0.0f;
     float menuY = 0.0f;
     bool blink = false;
+    // 拖拽锚点（屏幕系）：窗口原点相对光标屏幕位的偏移，首次拖拽事件捕获。
+    // 不能按 DragEvent.delta 逐事件累加——delta 是窗口内相对坐标，窗口自身
+    // 一旦被移动，后续 delta 的参考系随之漂移（+d 移动让下一次读数偏 -d，
+    // 反馈回路 → 拖拽抖动；且 delta 是帧缓冲像素，DPI≠100% 时还差一个缩放）
+    bool dragAnchorValid = false;
+    double dragAnchorX = 0.0;
+    double dragAnchorY = 0.0;
 };
 
 void applyPassthrough(PetWindowState& state, bool enabled) {
@@ -56,16 +63,35 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                 .size(screen.width, screen.height)
                 .color({0.85f, 0.47f, 0.34f, 1.0f})   // Claude Clay #D97757
                 .radius(28.0f)
-                .onDrag([](const core::dsl::DragEvent& event) {
-                    // 逐事件按 delta 移动窗口（无需记录拖拽基点）
+                .onDrag([&state](const core::dsl::DragEvent& event) {
                     if (petHandle() == nullptr) return;
-                    int x = 0;
-                    int y = 0;
-                    core::window::getWindowPos(petHandle(), x, y);
+                    // 异常取消路径防御：拖拽键已不在按住状态 → 重新锚定
+                    if (!event.buttons.contains(event.button)) {
+                        state.dragAnchorValid = false;
+                    }
+                    // 光标屏幕位 = 窗口原点 + 窗口内光标（两者同为 GLFW 屏幕
+                    // 坐标系实时值，窗口移动立刻反映），窗口位 = 光标屏幕位 +
+                    // 锚点——窗口精确跟随光标，无反馈回路
+                    double cursorX = 0.0;
+                    double cursorY = 0.0;
+                    core::window::getCursorPosition(petHandle(), cursorX, cursorY);
+                    int winX = 0;
+                    int winY = 0;
+                    core::window::getWindowPos(petHandle(), winX, winY);
+                    const double screenX = static_cast<double>(winX) + cursorX;
+                    const double screenY = static_cast<double>(winY) + cursorY;
+                    if (!state.dragAnchorValid) {
+                        state.dragAnchorValid = true;
+                        state.dragAnchorX = static_cast<double>(winX) - screenX;
+                        state.dragAnchorY = static_cast<double>(winY) - screenY;
+                    }
                     core::window::setWindowPos(
                         petHandle(),
-                        x + static_cast<int>(event.deltaX),
-                        y + static_cast<int>(event.deltaY));
+                        static_cast<int>(screenX + state.dragAnchorX + 0.5),
+                        static_cast<int>(screenY + state.dragAnchorY + 0.5));
+                })
+                .onRelease([&state](const eui::PointerEvent&, const eui::Rect&) {
+                    state.dragAnchorValid = false;  // 释放/取消 → 下次拖拽重锚定
                 })
                 .onContextMenu([&state](const eui::PointerEvent& event, const eui::Rect&) {
                     state.menuX = event.x;
