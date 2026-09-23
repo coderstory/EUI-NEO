@@ -268,6 +268,14 @@ else()
     list(APPEND CORE_SOURCES core/platform/window_style_stub.cpp)
 endif()
 
+# 原生右键菜单（小尺寸覆盖窗自绘菜单被窗口 bounds 裁剪——桌宠右键菜单）。
+# macOS/Linux 走 stub（nullopt，调用方回退自绘）
+if(WIN32)
+    list(APPEND CORE_SOURCES core/platform/context_menu_win.cpp)
+else()
+    list(APPEND CORE_SOURCES core/platform/context_menu_stub.cpp)
+endif()
+
 # -----------------------------------------------------------------------------
 # Core library target
 # -----------------------------------------------------------------------------
