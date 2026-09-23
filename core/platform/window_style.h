@@ -20,6 +20,8 @@ struct WindowStyleFlags {
 // 把窗口样式位应用到平台原生窗口句柄（Windows: HWND）。幂等、可运行时反复
 // 调用（按 flags 增/清位后触发 SWP_FRAMECHANGED 让非客户区立即更新）；
 // 返回是否实际生效（非 Windows 平台/句柄无效 → false，静默降级不抛不刷日志）。
+// 注意（Windows）：toolWindow 隐含清掉 WS_EX_APPWINDOW（GLFW 创建窗口自带、
+// 强制进任务栏，与 TOOLWINDOW 互斥），恢复 false 时补回 APPWINDOW。
 bool applyWindowStyleFlags(void* nativeWindowHandle, const WindowStyleFlags& flags);
 
 } // namespace core::platform

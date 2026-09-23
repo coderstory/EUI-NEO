@@ -285,6 +285,9 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     windowRequest.renderApi = core::render::windowRenderApi();
     // 磨砂 Phase C：子窗口跟主窗口同档——非 None 时带透明帧缓冲 hint 创建
     windowRequest.windowEffect = app::currentWindowEffect();
+    // 窗口自身声明透明帧缓冲（桌宠 sprite 窗）：与全局效果档位解耦，全局
+    // setWindowEffect(None) 不剥夺子窗的逐像素透明
+    windowRequest.transparentFramebuffer = request.transparentFramebuffer;
     // 子窗口配置透传（桌宠设计 §2.6 G1/G4）：decorated/alwaysOnTop/resizable/
     // position/focusOnShow/mousePassthrough，后端 createWindow 已支持
     windowRequest.x = request.x;
@@ -295,6 +298,9 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     windowRequest.resizable = request.resizable;
     windowRequest.focusOnShow = request.focusOnShow;
     windowRequest.mousePassthrough = request.mousePassthrough;
+    // 任务栏隐藏窗隐藏创建：GLFW 可见创建即注册任务栏按钮（WS_EX_APPWINDOW），
+    // 样式（TOOLWINDOW）必须在首秀前就位（下方样式应用后 glfwShowWindow）
+    windowRequest.visible = !request.hideFromTaskbar;
     GLFWwindow* childWindow = static_cast<GLFWwindow*>(core::window::createWindow(windowRequest));
     if (!childWindow) {
         return {};
@@ -338,6 +344,9 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     if (request.hideFromTaskbar) {
         core::platform::applyWindowStyleFlags(
             nativeWindowHandle(childWindow), core::platform::WindowStyleFlags{true, false});
+        // 隐藏创建的窗口在此首秀（样式已就位，任务栏按钮从未注册过）；
+        // FOCUS_ON_SHOW hint 由 GLFW 显示路径遵守
+        glfwShowWindow(childWindow);
     }
     if (request.onWindowCreated) {
         request.onWindowCreated(childWindow);
@@ -595,15 +604,27 @@ int eui_app_run() {
         }
         pruneClosedWindows(childWindows);
         windowState.modalChildWindow = findModalChildWindow(childWindows);
-        if (windowState.hideToTrayRequested && !childWindows.empty()) {
-            windowState.hideToTrayRequested = false;
-        }
+        // 设计决策（2026-09-22-desktop-pet-design.md R5）：主窗隐藏到托盘时
+        // 子窗口（桌宠）独立存活——不再因 childWindows 非空取消隐藏（旧守卫
+        // 使有子窗时点 X 什么都不发生：close callback 已撤回关闭、隐藏又被
+        // 吞掉）。模态子窗的保护在 close callback（重聚焦模态并撤回关闭）。
         if (windowState.hideToTrayRequested) {
             renderBackend->releaseRenderCache();
             hideWindowToTray(window, windowState, *renderBackend);
         }
         if (windowState.hiddenToTray) {
             glfwWaitEventsTimeout(0.10);
+            // 托盘驻留期间子窗口（桌宠）照常运行（R5：宠物独立于主窗存活）：
+            // 动画推进 / 输入派发 / 开窗关窗 / 异步完成回调不断流。帧节奏由
+            // 0.10s 等待上限兜底（桌宠帧率 4-12fps 量级足够）
+            const bool childUpdateRequested = windowState.consumeUpdateRequest();
+            const float childDelta = windowState.consumeFrameDelta(glfwGetTime());
+            childWindows.updateAll([&](ManagedWindow& managed) {
+                updateManagedWindow(managed, childDelta, childUpdateRequested);
+            });
+            createRequestedWindows(childWindows, window, *renderBackend, app::consumeWindowRequests());
+            pruneClosedWindows(childWindows);
+            windowState.modalChildWindow = findModalChildWindow(childWindows);
             windowState.resetTiming(glfwGetTime());
             continue;
         }

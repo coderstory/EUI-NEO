@@ -344,6 +344,9 @@ Handle createWindow(const WindowCreateRequest& request) {
     if (request.highDpi) {
         flags |= SDL_WINDOW_ALLOW_HIGHDPI;
     }
+    if (!request.visible) {
+        flags |= SDL_WINDOW_HIDDEN;
+    }
     if (request.resizable) {
         flags |= SDL_WINDOW_RESIZABLE;
     }
@@ -635,11 +638,16 @@ Handle createWindow(const WindowCreateRequest& request) {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     } else {
         configureOpenGLWindowHints();
-        // 透明帧缓冲（磨砂设计 Phase B）：DWM 尊重重定向表面 alpha 的开关。
-        // Vulkan 侧无对应能力（compositeAlpha 普遍 OPAQUE），直接不设。
-        // hint 会跨 glfwCreateWindow 残留，两态都显式设置。
+        // 透明帧缓冲（磨砂设计 Phase B / 桌宠 sprite 窗）：DWM 尊重重定向表面
+        // alpha 的开关。两条来源：磨砂档位（windowEffect != None，应用全局）或
+        // 窗口自身声明（transparentFramebuffer，桌宠等覆盖窗——不随全局档位
+        // 回落 None 丢透明）。Vulkan 侧无对应能力（compositeAlpha 普遍
+        // OPAQUE），直接不设。hint 会跨 glfwCreateWindow 残留，两态都显式设置。
         glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER,
-                       request.windowEffect != platform::WindowEffect::None ? GLFW_TRUE : GLFW_FALSE);
+                       request.windowEffect != platform::WindowEffect::None ||
+                               request.transparentFramebuffer
+                           ? GLFW_TRUE
+                           : GLFW_FALSE);
         shareContext = static_cast<GLFWwindow*>(request.parent);
     }
     glfwWindowHint(GLFW_RESIZABLE, request.resizable ? GLFW_TRUE : GLFW_FALSE);
@@ -652,6 +660,10 @@ Handle createWindow(const WindowCreateRequest& request) {
     // 鼠标穿透（G4）：GLFW 3.4 创建期 hint（仅无边框窗口生效，有边框静默忽略）
     glfwWindowHint(GLFW_MOUSE_PASSTHROUGH,
                    request.mousePassthrough ? GLFW_TRUE : GLFW_FALSE);
+    // 隐藏创建（G5 时序）：任务栏隐藏窗须先创建（GLFW 默认即显示并注册任务栏
+    // 按钮）→ 应用 WS_EX_TOOLWINDOW → 再显示。hint 跨 glfwCreateWindow 残留，
+    // 两态都显式设置
+    glfwWindowHint(GLFW_VISIBLE, request.visible ? GLFW_TRUE : GLFW_FALSE);
 
     GLFWwindow* window = glfwCreateWindow(
         request.width,
@@ -664,7 +676,8 @@ Handle createWindow(const WindowCreateRequest& request) {
     }
     // 透明 hint 回查（设计 §3.1.2）：桌面合成被禁用/老平台时 GLFW 静默降级为
     // 不透明。渲染侧（GL 后端）按同一属性自检走 straight blit，故此处只诊断。
-    if (request.windowEffect != platform::WindowEffect::None &&
+    if ((request.windowEffect != platform::WindowEffect::None ||
+         request.transparentFramebuffer) &&
         glfwGetWindowAttrib(window, GLFW_TRANSPARENT_FRAMEBUFFER) != GLFW_TRUE) {
         std::fprintf(stderr,
                      "[eui] window: transparent framebuffer unavailable, "

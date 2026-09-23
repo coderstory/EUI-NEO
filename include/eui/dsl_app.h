@@ -204,6 +204,7 @@ struct DslWindowConfig {
     bool focusOnShowValue = true;
     bool clickThroughValue = false;
     bool hideFromTaskbarValue = false;
+    bool transparentFramebufferValue = false;
     bool ignoreClearColorOverrideValue = false;
     std::function<void(core::window::Handle)> windowCreatedHandler;
 
@@ -242,6 +243,17 @@ struct DslWindowConfig {
      * 静默降级——子窗口本就不进 Dock）。
      */
     DslWindowConfig& hideFromTaskbar(bool value = true) { hideFromTaskbarValue = value; return *this; }
+    /**
+     * @brief 逐像素透明帧缓冲（GLFW_TRANSPARENT_FRAMEBUFFER，创建期属性）。
+     *
+     * clearColor alpha=0 的 sprite 覆盖窗（桌宠）必设：不透明帧缓冲上透明底
+     * 呈现为黑底。与 app 级窗口效果档位解耦（setWindowEffect(None) 不影响
+     * 本窗口的透明能力）；Vulkan/SDL2 后端静默降级。
+     */
+    DslWindowConfig& transparentFramebuffer(bool value = true) {
+        transparentFramebufferValue = value;
+        return *this;
+    }
     /**
      * @brief 不跟随 app::setClearColor 的全局广播（默认 false = 跟随）。
      * 桌宠这类自管背景色的覆盖窗口（clearColor alpha=0 的 sprite 窗）应设

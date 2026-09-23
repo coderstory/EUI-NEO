@@ -2,9 +2,9 @@
 // 桌宠形态子窗口示例（桌宠设计文档 2026-09-22 §2.6 G1-G5 / M1）：
 //   - 无边框 + 置顶 + 不可缩放 + 显示不抢焦点 + 不进任务栏/Alt+Tab（G1/G5）
 //   - 128×128 小尺寸（G2：旧 openWindow 有 160×120 下限）
-//   - clearColor alpha=0 像素级透明（透明 hint 常开 + ignoreClearColorOverride，
+//   - clearColor alpha=0 像素级透明（transparentFramebuffer + ignoreClearColorOverride，
 //     全局 setClearColor 广播不冲掉 sprite 窗自己的底色）
-//   - onDrag + core::window::setWindowPos 拖拽移动（G3）
+//   - onDrag + core::window::setWindowPos 拖拽移动（G3，锚点跟随式）
 //   - 右键菜单运行时切换鼠标穿透（G4：setWindowMousePassthrough）
 // 主窗口是控制面板（开关桌宠窗口 / 穿透切换），桌宠窗口是一个自绘小方块
 // （真实皮肤走 sprite PNG，见 DevDesk module_pet）。
@@ -19,10 +19,7 @@ const DslAppConfig& dslAppConfig() {
         .title("Pet Window")
         .pageId("pet_window")
         .clearColor({0.16f, 0.18f, 0.20f, 1.0f})
-        .windowSize(420, 320)
-        // 透明帧缓冲 hint 常开：子窗口跟主窗口同档创建（桌宠窗据此获得
-        // 逐像素透明能力），主窗口自身 alpha=1 视觉等价实色
-        .windowEffect(core::platform::WindowEffect::Transparent);
+        .windowSize(420, 320);
     return config;
 }
 
@@ -127,6 +124,8 @@ void openPetWindow() {
                    .resizable(false)
                    .focusOnShow(false)            // G1：不抢焦点
                    .hideFromTaskbar(true)         // G5：不进任务栏/Alt+Tab
+                   .transparentFramebuffer(true)  // sprite 窗逐像素透明（自身声明，
+                                                  // 不依赖 app 级窗口效果档位）
                    .ignoreClearColorOverride()   // 自管背景：全局 setClearColor 不冲底色
                    .clearColor({0.0f, 0.0f, 0.0f, 0.0f})  // 全透底
                    .onWindowCreated([](core::window::Handle handle) {

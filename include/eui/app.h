@@ -38,6 +38,11 @@ struct DslWindowRequest {
     bool mousePassthrough = false;
     // 任务栏/Alt+Tab 隐藏（Windows WS_EX_TOOLWINDOW；其他平台静默降级）
     bool hideFromTaskbar = false;
+    // 逐像素透明帧缓冲（GLFW_TRANSPARENT_FRAMEBUFFER，创建期属性）：桌宠
+    // sprite 窗这类自管背景（clearColor alpha=0）的覆盖窗应设 true——与
+    // 全局窗口效果档位（app::setWindowEffect 回落 None）解耦，否则透明底
+    // 落在不透明帧缓冲上 = 黑底。磨砂档位 != None 时隐含透明
+    bool transparentFramebuffer = false;
     // 是否跟随 app::setClearColor 的全局广播（桌宠这类自管背景色的
     // 覆盖窗口——如 clearColor alpha=0 的 sprite 窗——应设 false）
     bool followClearColorOverride = true;
