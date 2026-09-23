@@ -604,15 +604,27 @@ int eui_app_run() {
         }
         pruneClosedWindows(childWindows);
         windowState.modalChildWindow = findModalChildWindow(childWindows);
-        if (windowState.hideToTrayRequested && !childWindows.empty()) {
-            windowState.hideToTrayRequested = false;
-        }
+        // 设计决策（2026-09-22-desktop-pet-design.md R5）：主窗隐藏到托盘时
+        // 子窗口（桌宠）独立存活——不再因 childWindows 非空取消隐藏（旧守卫
+        // 使有子窗时点 X 什么都不发生：close callback 已撤回关闭、隐藏又被
+        // 吞掉）。模态子窗的保护在 close callback（重聚焦模态并撤回关闭）。
         if (windowState.hideToTrayRequested) {
             renderBackend->releaseRenderCache();
             hideWindowToTray(window, windowState, *renderBackend);
         }
         if (windowState.hiddenToTray) {
             glfwWaitEventsTimeout(0.10);
+            // 托盘驻留期间子窗口（桌宠）照常运行（R5：宠物独立于主窗存活）：
+            // 动画推进 / 输入派发 / 开窗关窗 / 异步完成回调不断流。帧节奏由
+            // 0.10s 等待上限兜底（桌宠帧率 4-12fps 量级足够）
+            const bool childUpdateRequested = windowState.consumeUpdateRequest();
+            const float childDelta = windowState.consumeFrameDelta(glfwGetTime());
+            childWindows.updateAll([&](ManagedWindow& managed) {
+                updateManagedWindow(managed, childDelta, childUpdateRequested);
+            });
+            createRequestedWindows(childWindows, window, *renderBackend, app::consumeWindowRequests());
+            pruneClosedWindows(childWindows);
+            windowState.modalChildWindow = findModalChildWindow(childWindows);
             windowState.resetTiming(glfwGetTime());
             continue;
         }
