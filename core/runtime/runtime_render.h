@@ -1032,6 +1032,7 @@ inline void RuntimeRenderer::prepareText(
     instance.primitive->setHorizontalAlign(instance.horizontalAlign);
     instance.primitive->setVerticalAlign(instance.verticalAlign);
     instance.primitive->setLineHeight(lineHeight);
+    instance.primitive->setRuns(instance.textRuns);
     ++core::render::currentRenderFrameStats().textPrepares;
     instance.primitive->prepare();
 }
@@ -1084,6 +1085,7 @@ inline void RuntimeRenderer::renderText(
     instance.primitive->setHorizontalAlign(instance.horizontalAlign);
     instance.primitive->setVerticalAlign(instance.verticalAlign);
     instance.primitive->setLineHeight(lineHeight);
+    instance.primitive->setRuns(instance.textRuns);
     ++core::render::currentRenderFrameStats().textDraws;
     instance.primitive->render(windowWidth, windowHeight);
 }

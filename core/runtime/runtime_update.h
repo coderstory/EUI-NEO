@@ -910,7 +910,8 @@ inline void Runtime::updateText(
         instance.wrap != element.wrap ||
         instance.horizontalAlign != element.horizontalAlign ||
         instance.verticalAlign != element.verticalAlign ||
-        instance.lineHeight != element.lineHeight;
+        instance.lineHeight != element.lineHeight ||
+        instance.textRuns != element.textRuns;
     if (contentChanged) {
         if (instance.text.capacity() / 4u > element.text.size()) {
             std::string compactText = element.text;
@@ -927,6 +928,7 @@ inline void Runtime::updateText(
         instance.horizontalAlign = element.horizontalAlign;
         instance.verticalAlign = element.verticalAlign;
         instance.lineHeight = element.lineHeight;
+        instance.textRuns = normalizeTextRuns(element.text, element.textRuns);
     }
 
     bool changed = false;
