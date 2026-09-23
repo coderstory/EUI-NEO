@@ -1182,6 +1182,7 @@ struct TextPrimitive::Impl {
         Glyph glyph;
         float x = 0.0f;
         float y = 0.0f;
+        int byteStart = 0;   // 全文 UTF-8 字节偏移（run 着色查找用）
     };
 
     struct Line {
@@ -1241,7 +1242,7 @@ struct TextPrimitive::Impl {
     void rebuildLayout();
     void rebuildVertices();
     std::vector<ShapedGlyph> shapeText(const std::string& text);
-    void appendShapedGlyphToLine(Line& line, const ShapedGlyph& shaped, float& cursorX);
+    void appendShapedGlyphToLine(Line& line, const ShapedGlyph& shaped, float& cursorX, int paragraphOffset);
 
     static unsigned int readCodepoint(const std::string& text, size_t& index);
     static std::string resolveFontPath(const std::string& fontFamily, int fontWeight);
@@ -1357,7 +1358,13 @@ void TextPrimitive::Impl::setFontWeight(int fontWeight) {
 }
 
 void TextPrimitive::Impl::setColor(const Color& color) {
+    // v0.8 起颜色烘焙进顶点，变化必须重建顶点。
+    if (style_.color.r == color.r && style_.color.g == color.g &&
+        style_.color.b == color.b && style_.color.a == color.a) {
+        return;
+    }
     style_.color = color;
+    invalidateVertices();
 }
 
 void TextPrimitive::Impl::setMaxWidth(float maxWidth) {
@@ -1624,7 +1631,9 @@ void TextPrimitive::Impl::render(int windowWidth, int windowHeight) {
     core::render::TextDrawCommand command{};
     command.vertices = vertices_.data();
     command.vertexFloatCount = vertices_.size();
-    command.color = style_.color;
+    // v0.8：颜色烘焙进每顶点 9-float 格式；command.color 降级为批级 tint，恒白。
+    // 元素透明度动画在 runtime 侧折进 style_.color（setColor）再进顶点。
+    command.color = {1.0f, 1.0f, 1.0f, 1.0f};
     command.grayAtlas = {
         core::render::TextAtlasPageKind::Gray,
         atlas.gray.width,
@@ -1829,7 +1838,7 @@ void TextPrimitive::Impl::rebuildLayout() {
                 cursorX = 0.0f;
             }
 
-            appendShapedGlyphToLine(currentLine, glyph, cursorX);
+            appendShapedGlyphToLine(currentLine, glyph, cursorX, static_cast<int>(paragraphStart));
         }
 
         if (newline == std::string::npos) {
@@ -1857,6 +1866,20 @@ void TextPrimitive::Impl::invalidateVertices() {
 void TextPrimitive::Impl::rebuildVertices() {
     vertices_.clear();
     const float lineHeight = style_.lineHeight > 0.0f ? style_.lineHeight : style_.fontSize * 1.2f;
+    // runs 已归一化（升序、不重叠）；命中返回 run 色，未命中返回 nullptr（用 style_.color）。
+    const std::vector<TextRun>& runs = style_.runs;
+    const auto runColorAt = [&runs](int byteStart) -> const Color* {
+        if (runs.empty()) {
+            return nullptr;
+        }
+        const auto it = std::upper_bound(runs.begin(), runs.end(), byteStart,
+            [](int value, const TextRun& run) { return value < run.byteStart; });
+        if (it == runs.begin()) {
+            return nullptr;
+        }
+        const TextRun& run = *(it - 1);
+        return byteStart < run.byteEnd ? &run.color : nullptr;
+    };
     const auto close = [](float left, float right) {
         return std::fabs(left - right) <= 0.0001f;
     };
@@ -1906,6 +1929,8 @@ void TextPrimitive::Impl::rebuildVertices() {
             const float x1 = x0 + glyph.width;
             const float y1 = y0 + glyph.height;
             const float colored = glyph.colored ? 1.0f : 0.0f;
+            const Color* runColor = runColorAt(laidOut.byteStart);
+            const Color& glyphColor = runColor != nullptr ? *runColor : style_.color;
             Vec2 p0{x0, y0};
             Vec2 p1{x1, y0};
             Vec2 p2{x1, y1};
@@ -1963,13 +1988,15 @@ void TextPrimitive::Impl::rebuildVertices() {
                 p3 = {p3.x + offsetX, p3.y + offsetY};
             }
 
+            // 顶点格式 9 float：x, y, u, v, colored, r, g, b, a（per-vertex color）。
+            // 空 runs 时 glyphColor == style_.color，与旧 uniform 路径输出等价。
             vertices_.insert(vertices_.end(), {
-                p0.x, p0.y, glyph.u0, glyph.v0, colored,
-                p1.x, p1.y, glyph.u1, glyph.v0, colored,
-                p2.x, p2.y, glyph.u1, glyph.v1, colored,
-                p0.x, p0.y, glyph.u0, glyph.v0, colored,
-                p2.x, p2.y, glyph.u1, glyph.v1, colored,
-                p3.x, p3.y, glyph.u0, glyph.v1, colored
+                p0.x, p0.y, glyph.u0, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                p1.x, p1.y, glyph.u1, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                p2.x, p2.y, glyph.u1, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                p0.x, p0.y, glyph.u0, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                p2.x, p2.y, glyph.u1, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                p3.x, p3.y, glyph.u0, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a
             });
         }
     }
@@ -1987,7 +2014,10 @@ std::vector<TextPrimitive::ShapedGlyph> TextPrimitive::Impl::shapeText(const std
     return shapeTextWithFontStack(*holder, text, std::max(1.0f, style_.fontSize));
 }
 
-void TextPrimitive::Impl::appendShapedGlyphToLine(Line& line, const ShapedGlyph& shaped, float& cursorX) {
+void TextPrimitive::Impl::appendShapedGlyphToLine(Line& line,
+                                                  const ShapedGlyph& shaped,
+                                                  float& cursorX,
+                                                  int paragraphOffset) {
     if (!ensureGlyph(shaped)) {
         cursorX += shaped.advance;
         line.width = cursorX;
@@ -1996,7 +2026,8 @@ void TextPrimitive::Impl::appendShapedGlyphToLine(Line& line, const ShapedGlyph&
 
     const Glyph* glyph = findGlyph(shaped.key);
     if (glyph && shaped.key != 0 && shaped.codepoint != ' ' && shaped.codepoint != '\t') {
-        line.glyphs.push_back({*glyph, cursorX + shaped.xOffset, shaped.yOffset});
+        line.glyphs.push_back({*glyph, cursorX + shaped.xOffset, shaped.yOffset,
+                               paragraphOffset + shaped.byteStart});
         const float top = shaped.yOffset + glyph->yOffset;
         const float bottom = top + glyph->height;
         if (!line.hasInk) {

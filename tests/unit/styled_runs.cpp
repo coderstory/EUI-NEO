@@ -108,11 +108,135 @@ void testNormalizeUtf8() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 顶点着色（v0.8 顶点格式 9 float：x,y,u,v,colored,r,g,b,a）
+// ---------------------------------------------------------------------------
+
+bool sameColor(const core::Color& left, const core::Color& right) {
+    return left.r == right.r && left.g == right.g &&
+           left.b == right.b && left.a == right.a;
+}
+
+core::Color vertexColor(const std::vector<float>& vertices, std::size_t vertexIndex) {
+    const std::size_t base = vertexIndex * 9 + 5;
+    return {vertices[base], vertices[base + 1], vertices[base + 2], vertices[base + 3]};
+}
+
+void testEmptyRunsMatchLegacyColor() {
+    const core::Color base{0.9f, 0.85f, 0.8f, 1.0f};
+    core::TextPrimitive plain;
+    plain.initialize();
+    plain.setText("hello styled world");
+    plain.setColor(base);
+    plain.prepare();
+    const std::vector<float>& vertices = plain.debugVertices();
+
+    check(vertices.size() % 9 == 0, "vertices: 9-float stride");
+    check(!vertices.empty(), "vertices: non-empty");
+    const std::size_t vertexCount = vertices.size() / 9;
+    bool allBase = true;
+    for (std::size_t i = 0; i < vertexCount; ++i) {
+        if (!sameColor(vertexColor(vertices, i), base)) {
+            allBase = false;
+            break;
+        }
+    }
+    check(allBase, "empty runs: every vertex color == style color");
+
+    // 覆盖全文且同色的 run == 空 runs（顶点逐字节一致）
+    core::TextPrimitive covered;
+    covered.initialize();
+    covered.setText("hello styled world");
+    covered.setColor(base);
+    covered.setRuns({{0, 18, base}});
+    covered.prepare();
+    check(covered.debugVertices() == vertices,
+          "full-cover same-color run: byte-identical to empty runs");
+
+    // setRuns 只动顶点色，不动 layout：位置/uv/colored（每顶点前 5 float）不变
+    core::TextPrimitive styled;
+    styled.initialize();
+    styled.setText("hello styled world");
+    styled.setColor(base);
+    styled.setRuns({{0, 5, kRed}, {6, 11, kGreen}});
+    styled.prepare();
+    const std::vector<float>& styledVertices = styled.debugVertices();
+    bool layoutIdentical = styledVertices.size() == vertices.size();
+    if (layoutIdentical) {
+        for (std::size_t i = 0; i < vertexCount && layoutIdentical; ++i) {
+            for (int c = 0; c < 5; ++c) {
+                if (styledVertices[i * 9 + static_cast<std::size_t>(c)] !=
+                    vertices[i * 9 + static_cast<std::size_t>(c)]) {
+                    layoutIdentical = false;
+                    break;
+                }
+            }
+        }
+    }
+    check(layoutIdentical, "runs: position/uv/colored floats unchanged");
+}
+
+void testPerRunVertexColors() {
+    const core::Color base{0.7f, 0.7f, 0.7f, 1.0f};
+    core::TextPrimitive text;
+    text.initialize();
+    text.setText("hello world");   // 10 个可见 glyph（空格不入 line.glyphs）
+    text.setColor(base);
+    text.setRuns({{0, 5, kRed}});   // "hello" 红，其余默认色
+    text.prepare();
+    const std::vector<float>& vertices = text.debugVertices();
+
+    const std::size_t vertexCount = vertices.size() / 9;
+    check(vertexCount == 10 * 6, "per-run: vertex count (10 glyphs x 6)");
+    bool colorsCorrect = true;
+    for (std::size_t i = 0; i < vertexCount; ++i) {
+        const core::Color expected = i < 5 * 6 ? kRed : base;
+        if (!sameColor(vertexColor(vertices, i), expected)) {
+            colorsCorrect = false;
+            break;
+        }
+    }
+    check(colorsCorrect, "per-run: run glyphs colored, others default");
+
+    // setColor 现在必须触发顶点重建（颜色烘焙进顶点）
+    const core::Color recolored{0.1f, 0.2f, 0.3f, 1.0f};
+    text.setColor(recolored);
+    text.prepare();
+    const std::vector<float>& rebuilt = text.debugVertices();
+    const bool rebuiltColor = !rebuilt.empty() &&
+        sameColor(vertexColor(rebuilt, 0), kRed) &&
+        sameColor(vertexColor(rebuilt, 5 * 6), recolored);
+    check(rebuiltColor, "setColor invalidates vertices (baked color rebuilt)");
+}
+
+void testCjkRunBoundaries() {
+    const std::string text = "\xE4\xB8\xAD\xE6\x96\x87"
+                             "abc";   // 中文abc
+    const core::Color white{1.0f, 1.0f, 1.0f, 1.0f};
+    core::TextPrimitive primitive;
+    primitive.initialize();
+    primitive.setText(text);
+    primitive.setColor(white);
+    primitive.setRuns({{0, 6, kRed}});   // 覆盖 "中文"
+    primitive.prepare();
+    const std::vector<float>& vertices = primitive.debugVertices();
+    const std::size_t vertexCount = vertices.size() / 9;
+    // 5 个可见 glyph（中文abc）；前 2 个 glyph（12 顶点）应为红色。
+    check(vertexCount == 5 * 6, "cjk: vertex count");
+    const bool cjkColored = sameColor(vertexColor(vertices, 0), kRed) &&
+                            sameColor(vertexColor(vertices, 11), kRed) &&
+                            sameColor(vertexColor(vertices, 12), white);
+    check(cjkColored, "cjk: multibyte run colors exactly its codepoints");
+}
+
 } // namespace
 
 int main() {
     testNormalizeBasics();
     testNormalizeUtf8();
+    testEmptyRunsMatchLegacyColor();
+    testPerRunVertexColors();
+    testCjkRunBoundaries();
     if (failures == 0) {
         std::cout << "styled_runs: all checks passed\n";
         return 0;

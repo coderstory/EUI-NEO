@@ -38,8 +38,12 @@ struct TextAtlasPageData {
 };
 
 struct TextDrawCommand {
+    // 顶点格式 9 float/顶点：x, y, u, v, colored, r, g, b, a（per-vertex color，
+    // v0.8 起；TextPrimitive 把元素色/样式 run 色全部烘焙进顶点）。
     const float* vertices = nullptr;
     std::size_t vertexFloatCount = 0;
+    // 批级 tint（后端作为整批 uniform 上传）。TextPrimitive 恒传白色；
+    // 仅当调用方需要对整批文本统一调色时才使用非白值。
     core::Color color{};
     TextAtlasPageData grayAtlas{};
     TextAtlasPageData colorAtlas{};
