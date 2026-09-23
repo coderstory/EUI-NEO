@@ -166,7 +166,10 @@ app::openWindow(app::DslWindowConfig{}
 
 - `core::window::setWindowPos / getWindowPos`——运行时移动/读取窗口位置；
 - `core::window::setWindowMousePassthrough(window, bool)`——运行时切换整窗鼠标穿透（挂机模式）；
-- `core::window::getPrimaryMonitorWorkArea(x, y, w, h)`——主显示器工作区，供持久化位置钳制回屏幕内。
+- `core::window::getPrimaryMonitorWorkArea(x, y, w, h)`——主显示器工作区，供持久化位置钳制回屏幕内；
+- `core::window::getMonitorWorkAreas()`——全部显示器的工作区（`std::vector<MonitorWorkArea>`，空 = 查询失败/无头）。副屏工作区原点可能为负或超出主屏边界——宿主按位置钳制时要从枚举结果里选对应显示器，只拿主屏会把副屏位置吞回主屏（DevDesk 桌宠 M2 多显示器钳制）。
+
+系统电源事件（睡眠/唤醒）走 `core::platform::setSystemPowerHandler(callback)`：Windows 上主循环（`eui_app_run`）启动时把 `WM_POWERBROADCAST` 截获挂到主窗口 WndProc 链，即将挂起上报 `SystemPowerEvent::Suspending`、唤醒统一上报 `Resuming`（回调在主线程，可直接改窗口/运行时状态）；macOS/Linux 为 stub，回调永不触发（注册安全，功能降级为不启用）。典型用途：系统挂起期间停渲染循环、唤醒恢复。接口见 `core/platform/power_events.h`。
 
 任务栏隐藏的平台层接口是 `core::platform::applyWindowStyleFlags(handle, WindowStyleFlags{toolWindow, noActivate})`（Windows `WS_EX_TOOLWINDOW`/`WS_EX_NOACTIVATE`；macOS/Linux stub 返回 false）。`.hideFromTaskbar(true)` 内部即调它。
 

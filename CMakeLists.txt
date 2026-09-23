@@ -276,6 +276,15 @@ else()
     list(APPEND CORE_SOURCES core/platform/context_menu_stub.cpp)
 endif()
 
+# 系统电源事件（睡眠/唤醒通知宿主——DevDesk 桌宠 M2「Sleep 零渲染」）。
+# Windows 走 WM_POWERBROADCAST WndProc 子类链；macOS/Linux 走 stub（回调
+# 永不触发，宿主功能安全降级为不启用）
+if(WIN32)
+    list(APPEND CORE_SOURCES core/platform/power_events_win.cpp)
+else()
+    list(APPEND CORE_SOURCES core/platform/power_events_stub.cpp)
+endif()
+
 # -----------------------------------------------------------------------------
 # Core library target
 # -----------------------------------------------------------------------------

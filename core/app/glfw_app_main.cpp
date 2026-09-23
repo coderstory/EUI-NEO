@@ -24,6 +24,7 @@
 #include "core/app/main_window_runtime.h"
 #include "core/input/input_state.h"
 #include "core/platform/platform.h"
+#include "core/platform/power_events.h"
 #include "core/platform/window_effect.h"
 #include "core/platform/window_style.h"
 #include "core/window/window_backend.h"
@@ -573,6 +574,11 @@ int eui_app_run() {
     }
     app::MainWindowRuntime mainWindowRuntime(windowState);
     windowState.initializeTray();
+    // 系统电源事件（睡眠/唤醒，DevDesk 桌宠 M2 需求）：挂主窗口 WndProc 链
+    // 截获 WM_POWERBROADCAST，转发宿主经 core::platform::setSystemPowerHandler
+    // 注册的回调；非 Windows / 未注册 = 空操作。必须在此处（事件泵启动前）
+    // 安装，唤醒瞬间的广播才不会漏
+    core::platform::installSystemPowerNotifications(nativeWindowHandle(window));
     glfwSetWindowCloseCallback(window, [](GLFWwindow* currentWindow) {
         WindowState* state = static_cast<WindowState*>(glfwGetWindowUserPointer(currentWindow));
         if (state && state->modalChildWindow != nullptr && !glfwWindowShouldClose(state->modalChildWindow)) {
@@ -771,6 +777,9 @@ int eui_app_run() {
     }
 
     childWindows.destroyAll(destroyManagedWindow);
+    // 电源 hook 先于输入回调拆除（IME 桥的卸载是盲恢复自己的前级，会连带
+    // 摘掉压在其上的本 hook——顺序反过来时依赖 uninstall 内的链顶比对守卫）
+    core::platform::uninstallSystemPowerNotifications();
     core::releaseInputQueue(window);
     renderBackend->makeCurrent();
     renderBackend->releaseRenderCache();
