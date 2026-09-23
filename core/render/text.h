@@ -65,6 +65,9 @@ public:
     void setVerticalAlign(VerticalAlign align);
     void setLineHeight(float lineHeight);
     void setStyle(const TextStyle& style);
+    /// 颜色 runs：只重建顶点色，不动 layout（颜色不影响 shaping/advance）。
+    /// 期望已归一化（normalizeTextRuns）；runtime 侧在内容变化时已归一化。
+    void setRuns(const std::vector<TextRun>& runs);
     void setVisualScale(float originX, float originY, float scale);
     void setTransform(const Transform& transform, const Rect& frame);
     void setTransformMatrix(const TransformMatrix& matrix);
@@ -98,6 +101,10 @@ public:
 
     void prepare();
     void render(int windowWidth, int windowHeight);
+
+    /// 测试/诊断用：prepare() 之后的原始顶点缓冲。
+    /// 顶点格式 x,y,u,v,colored[,r,g,b,a]，每顶点 float 数由当前顶点格式决定。
+    const std::vector<float>& debugVertices() const;
 
 private:
     struct Impl;

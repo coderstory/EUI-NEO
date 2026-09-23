@@ -1115,11 +1115,74 @@ std::vector<unsigned char> copyBgraBitmapAsRgba(const FT_Bitmap& bitmap) {
 
 } // namespace
 
+std::vector<TextRun> normalizeTextRuns(const std::string& text, std::vector<TextRun> runs) {
+    if (runs.empty()) {
+        return {};
+    }
+    const int length = static_cast<int>(text.size());
+    // ponytail: 逐字节 owner 数组，O(text + runs)；编辑器场景 runs 是行级的
+    //（~100 字节），若将来要归一化整篇文档再换区间扫描。
+    std::vector<int> owner(static_cast<std::size_t>(length), -1);
+    bool any = false;
+    for (std::size_t i = 0; i < runs.size(); ++i) {
+        int start = runs[i].byteStart;
+        int end = runs[i].byteEnd;
+        if (start < 0) {
+            start = 0;
+        }
+        if (end > length) {
+            end = length;
+        }
+        if (start > end) {
+            continue;   // 反转 run 视为无效，丢弃
+        }
+        // 向下取整到 UTF-8 codepoint 起点：glyph 着色按 codepoint 粒度，
+        // 不允许 run 边界劈开一个 codepoint。
+        while (start > 0 && (static_cast<unsigned char>(text[static_cast<std::size_t>(start)]) & 0xC0) == 0x80) {
+            --start;
+        }
+        while (end > 0 && end < length &&
+               (static_cast<unsigned char>(text[static_cast<std::size_t>(end)]) & 0xC0) == 0x80) {
+            --end;
+        }
+        if (start >= end) {
+            continue;
+        }
+        any = true;
+        for (int byte = start; byte < end; ++byte) {
+            owner[static_cast<std::size_t>(byte)] = static_cast<int>(i);
+        }
+    }
+    if (!any) {
+        return {};
+    }
+
+    std::vector<TextRun> result;
+    const auto sameColor = [](const Color& left, const Color& right) {
+        return left.r == right.r && left.g == right.g &&
+               left.b == right.b && left.a == right.a;
+    };
+    for (int byte = 0; byte < length; ++byte) {
+        const int runIndex = owner[static_cast<std::size_t>(byte)];
+        if (runIndex < 0) {
+            continue;
+        }
+        const Color& color = runs[static_cast<std::size_t>(runIndex)].color;
+        if (!result.empty() && result.back().byteEnd == byte && sameColor(result.back().color, color)) {
+            result.back().byteEnd = byte + 1;   // 相邻同色合并
+            continue;
+        }
+        result.push_back(TextRun{byte, byte + 1, color});
+    }
+    return result;
+}
+
 struct TextPrimitive::Impl {
     struct LaidOutGlyph {
         Glyph glyph;
         float x = 0.0f;
         float y = 0.0f;
+        int byteStart = 0;   // 全文 UTF-8 字节偏移（run 着色查找用）
     };
 
     struct Line {
@@ -1148,6 +1211,7 @@ struct TextPrimitive::Impl {
     void setVerticalAlign(VerticalAlign align);
     void setLineHeight(float lineHeight);
     void setStyle(const TextStyle& style);
+    void setRuns(const std::vector<TextRun>& runs);
     void setVisualScale(float originX, float originY, float scale);
     void setTransform(const Transform& transform, const Rect& frame);
     void setTransformMatrix(const TransformMatrix& matrix);
@@ -1178,7 +1242,7 @@ struct TextPrimitive::Impl {
     void rebuildLayout();
     void rebuildVertices();
     std::vector<ShapedGlyph> shapeText(const std::string& text);
-    void appendShapedGlyphToLine(Line& line, const ShapedGlyph& shaped, float& cursorX);
+    void appendShapedGlyphToLine(Line& line, const ShapedGlyph& shaped, float& cursorX, int paragraphOffset);
 
     static unsigned int readCodepoint(const std::string& text, size_t& index);
     static std::string resolveFontPath(const std::string& fontFamily, int fontWeight);
@@ -1294,7 +1358,13 @@ void TextPrimitive::Impl::setFontWeight(int fontWeight) {
 }
 
 void TextPrimitive::Impl::setColor(const Color& color) {
+    // v0.8 起颜色烘焙进顶点，变化必须重建顶点。
+    if (style_.color.r == color.r && style_.color.g == color.g &&
+        style_.color.b == color.b && style_.color.a == color.a) {
+        return;
+    }
     style_.color = color;
+    invalidateVertices();
 }
 
 void TextPrimitive::Impl::setMaxWidth(float maxWidth) {
@@ -1407,6 +1477,15 @@ void TextPrimitive::Impl::setStyle(const TextStyle& style) {
     style_ = style;
     fontDirty_ = fontDirty_ || fontChanged;
     invalidateLayout();
+}
+
+void TextPrimitive::Impl::setRuns(const std::vector<TextRun>& runs) {
+    if (style_.runs == runs) {
+        return;
+    }
+    style_.runs = runs;
+    // 颜色 run 不影响 shaping/advance/换行——只重建顶点色。
+    invalidateVertices();
 }
 
 const TextStyle& TextPrimitive::Impl::style() const {
@@ -1552,7 +1631,9 @@ void TextPrimitive::Impl::render(int windowWidth, int windowHeight) {
     core::render::TextDrawCommand command{};
     command.vertices = vertices_.data();
     command.vertexFloatCount = vertices_.size();
-    command.color = style_.color;
+    // v0.8：颜色烘焙进每顶点 9-float 格式；command.color 降级为批级 tint，恒白。
+    // 元素透明度动画在 runtime 侧折进 style_.color（setColor）再进顶点。
+    command.color = {1.0f, 1.0f, 1.0f, 1.0f};
     command.grayAtlas = {
         core::render::TextAtlasPageKind::Gray,
         atlas.gray.width,
@@ -1757,7 +1838,7 @@ void TextPrimitive::Impl::rebuildLayout() {
                 cursorX = 0.0f;
             }
 
-            appendShapedGlyphToLine(currentLine, glyph, cursorX);
+            appendShapedGlyphToLine(currentLine, glyph, cursorX, static_cast<int>(paragraphStart));
         }
 
         if (newline == std::string::npos) {
@@ -1785,6 +1866,20 @@ void TextPrimitive::Impl::invalidateVertices() {
 void TextPrimitive::Impl::rebuildVertices() {
     vertices_.clear();
     const float lineHeight = style_.lineHeight > 0.0f ? style_.lineHeight : style_.fontSize * 1.2f;
+    // runs 已归一化（升序、不重叠）；命中返回 run 色，未命中返回 nullptr（用 style_.color）。
+    const std::vector<TextRun>& runs = style_.runs;
+    const auto runColorAt = [&runs](int byteStart) -> const Color* {
+        if (runs.empty()) {
+            return nullptr;
+        }
+        const auto it = std::upper_bound(runs.begin(), runs.end(), byteStart,
+            [](int value, const TextRun& run) { return value < run.byteStart; });
+        if (it == runs.begin()) {
+            return nullptr;
+        }
+        const TextRun& run = *(it - 1);
+        return byteStart < run.byteEnd ? &run.color : nullptr;
+    };
     const auto close = [](float left, float right) {
         return std::fabs(left - right) <= 0.0001f;
     };
@@ -1834,6 +1929,8 @@ void TextPrimitive::Impl::rebuildVertices() {
             const float x1 = x0 + glyph.width;
             const float y1 = y0 + glyph.height;
             const float colored = glyph.colored ? 1.0f : 0.0f;
+            const Color* runColor = runColorAt(laidOut.byteStart);
+            const Color& glyphColor = runColor != nullptr ? *runColor : style_.color;
             Vec2 p0{x0, y0};
             Vec2 p1{x1, y0};
             Vec2 p2{x1, y1};
@@ -1891,13 +1988,15 @@ void TextPrimitive::Impl::rebuildVertices() {
                 p3 = {p3.x + offsetX, p3.y + offsetY};
             }
 
+            // 顶点格式 9 float：x, y, u, v, colored, r, g, b, a（per-vertex color）。
+            // 空 runs 时 glyphColor == style_.color，与旧 uniform 路径输出等价。
             vertices_.insert(vertices_.end(), {
-                p0.x, p0.y, glyph.u0, glyph.v0, colored,
-                p1.x, p1.y, glyph.u1, glyph.v0, colored,
-                p2.x, p2.y, glyph.u1, glyph.v1, colored,
-                p0.x, p0.y, glyph.u0, glyph.v0, colored,
-                p2.x, p2.y, glyph.u1, glyph.v1, colored,
-                p3.x, p3.y, glyph.u0, glyph.v1, colored
+                p0.x, p0.y, glyph.u0, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                p1.x, p1.y, glyph.u1, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                p2.x, p2.y, glyph.u1, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                p0.x, p0.y, glyph.u0, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                p2.x, p2.y, glyph.u1, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                p3.x, p3.y, glyph.u0, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a
             });
         }
     }
@@ -1915,7 +2014,10 @@ std::vector<TextPrimitive::ShapedGlyph> TextPrimitive::Impl::shapeText(const std
     return shapeTextWithFontStack(*holder, text, std::max(1.0f, style_.fontSize));
 }
 
-void TextPrimitive::Impl::appendShapedGlyphToLine(Line& line, const ShapedGlyph& shaped, float& cursorX) {
+void TextPrimitive::Impl::appendShapedGlyphToLine(Line& line,
+                                                  const ShapedGlyph& shaped,
+                                                  float& cursorX,
+                                                  int paragraphOffset) {
     if (!ensureGlyph(shaped)) {
         cursorX += shaped.advance;
         line.width = cursorX;
@@ -1924,7 +2026,8 @@ void TextPrimitive::Impl::appendShapedGlyphToLine(Line& line, const ShapedGlyph&
 
     const Glyph* glyph = findGlyph(shaped.key);
     if (glyph && shaped.key != 0 && shaped.codepoint != ' ' && shaped.codepoint != '\t') {
-        line.glyphs.push_back({*glyph, cursorX + shaped.xOffset, shaped.yOffset});
+        line.glyphs.push_back({*glyph, cursorX + shaped.xOffset, shaped.yOffset,
+                               paragraphOffset + shaped.byteStart});
         const float top = shaped.yOffset + glyph->yOffset;
         const float bottom = top + glyph->height;
         if (!line.hasInk) {
@@ -2046,6 +2149,7 @@ void TextPrimitive::setHorizontalAlign(HorizontalAlign align) { impl_->setHorizo
 void TextPrimitive::setVerticalAlign(VerticalAlign align) { impl_->setVerticalAlign(align); }
 void TextPrimitive::setLineHeight(float lineHeight) { impl_->setLineHeight(lineHeight); }
 void TextPrimitive::setStyle(const TextStyle& style) { impl_->setStyle(style); }
+void TextPrimitive::setRuns(const std::vector<TextRun>& runs) { impl_->setRuns(runs); }
 void TextPrimitive::setVisualScale(float originX, float originY, float scale) { impl_->setVisualScale(originX, originY, scale); }
 void TextPrimitive::setTransform(const Transform& transform, const Rect& frame) { impl_->setTransform(transform, frame); }
 void TextPrimitive::setTransformMatrix(const TransformMatrix& matrix) { impl_->setTransformMatrix(matrix); }
@@ -2073,6 +2177,8 @@ void TextPrimitive::setDefaultFontFiles(const std::string& textFontFile, const s
     Impl::setDefaultFontFiles(textFontFile, iconFontFile);
 }
 void TextPrimitive::render(int windowWidth, int windowHeight) { impl_->render(windowWidth, windowHeight); }
+
+const std::vector<float>& TextPrimitive::debugVertices() const { return impl_->vertices_; }
 
 std::string TextPrimitive::resolveFontPath(const std::string& fontFamily, int fontWeight) {
     return Impl::resolveFontPath(fontFamily, fontWeight);

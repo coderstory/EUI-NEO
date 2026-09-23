@@ -12,7 +12,7 @@ namespace core::render::opengl {
 
 namespace {
 
-constexpr std::size_t kTextBatchMaxFloats = 262144;
+constexpr std::size_t kTextBatchMaxFloats = 524288;
 
 struct TextAtlasTexture {
     GLuint texture = 0;
@@ -89,12 +89,15 @@ bool ensureTextRenderResources(TextRenderResources& resources) {
         "layout(location = 0) in vec2 aPos;\n"
         "layout(location = 1) in vec2 aUv;\n"
         "layout(location = 2) in float aColored;\n"
+        "layout(location = 3) in vec4 aColor;\n"
         "uniform vec2 uWindowSize;\n"
         "out vec2 vUv;\n"
         "out float vColored;\n"
+        "out vec4 vColor;\n"
         "void main() {\n"
         "    vUv = aUv;\n"
         "    vColored = aColored;\n"
+        "    vColor = aColor;\n"
         "    vec2 ndc = vec2((aPos.x / uWindowSize.x) * 2.0 - 1.0,\n"
         "                    1.0 - (aPos.y / uWindowSize.y) * 2.0);\n"
         "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
@@ -104,19 +107,21 @@ bool ensureTextRenderResources(TextRenderResources& resources) {
         "#version 330 core\n"
         "in vec2 vUv;\n"
         "in float vColored;\n"
+        "in vec4 vColor;\n"
         "out vec4 FragColor;\n"
         "uniform sampler2D uGrayAtlas;\n"
         "uniform sampler2D uColorAtlas;\n"
         "uniform vec4 uColor;\n"
         "void main() {\n"
+        "    vec4 color = vColor * uColor;\n"
         "    if (vColored > 0.5) {\n"
         "        vec4 sampleColor = texture(uColorAtlas, vUv);\n"
         "        if (sampleColor.a <= 0.0) discard;\n"
-        "        FragColor = sampleColor * uColor.a;\n"
+        "        FragColor = sampleColor * color.a;\n"
         "    } else {\n"
         "        float alpha = texture(uGrayAtlas, vUv).r;\n"
         "        if (alpha <= 0.0) discard;\n"
-        "        FragColor = vec4(uColor.rgb, uColor.a * alpha);\n"
+        "        FragColor = vec4(color.rgb, color.a * alpha);\n"
         "    }\n"
         "}\n";
 
@@ -157,12 +162,15 @@ bool ensureTextRenderResources(TextRenderResources& resources) {
     glBindVertexArray(resources.vao);
     glBindBuffer(GL_ARRAY_BUFFER, resources.vbo);
     glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 5, nullptr);
+    // 顶点步长 9 float：x, y, u, v, colored, r, g, b, a。
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 9, nullptr);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 5, reinterpret_cast<void*>(sizeof(float) * 2));
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 9, reinterpret_cast<void*>(sizeof(float) * 2));
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float) * 5, reinterpret_cast<void*>(sizeof(float) * 4));
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float) * 9, reinterpret_cast<void*>(sizeof(float) * 4));
     glEnableVertexAttribArray(2);
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(float) * 9, reinterpret_cast<void*>(sizeof(float) * 5));
+    glEnableVertexAttribArray(3);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
@@ -263,10 +271,10 @@ void OpenGLRenderBackend::flushTextBatch() {
                  textBatchVertices_.data(),
                  GL_DYNAMIC_DRAW);
     glDrawArrays(GL_TRIANGLES, 0,
-                 static_cast<GLsizei>(textBatchVertices_.size() / 5));
+                 static_cast<GLsizei>(textBatchVertices_.size() / 9));
     auto& stats = core::render::currentRenderFrameStats();
     ++stats.textBatchFlushes;
-    stats.textBatchVertices += static_cast<std::uint64_t>(textBatchVertices_.size() / 5);
+    stats.textBatchVertices += static_cast<std::uint64_t>(textBatchVertices_.size() / 9);
     invalidateBackdropCapture();
     textBatchVertices_.clear();
     textBatchWindowWidth_ = 0;
@@ -317,17 +325,14 @@ void OpenGLRenderBackend::drawText(const TextDrawCommand& command, int windowWid
         resetStateCache();
     }
 
-    const bool colorChanged = textBatchVertices_.empty() == false &&
-        (textBatchColor_.r != command.color.r ||
-         textBatchColor_.g != command.color.g ||
-         textBatchColor_.b != command.color.b ||
-         textBatchColor_.a != command.color.a);
+    // v0.8：颜色在每顶点里，批内换色不再 flush（tint 恒白）。仍按
+    // atlas generation / 目标窗口变化切批。
     const bool atlasChanged = !textBatchVertices_.empty() &&
         (textBatchGrayGeneration_ != command.grayAtlas.generation ||
          textBatchColorGeneration_ != command.colorAtlas.generation);
     const bool targetChanged = !textBatchVertices_.empty() &&
         (textBatchWindowWidth_ != windowWidth || textBatchWindowHeight_ != windowHeight);
-    if (colorChanged || atlasChanged || targetChanged) {
+    if (atlasChanged || targetChanged) {
         flushTextBatch();
     }
     if (textBatchVertices_.size() + command.vertexFloatCount > kTextBatchMaxFloats &&

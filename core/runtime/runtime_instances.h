@@ -88,6 +88,7 @@ struct TextInstance {
     HorizontalAlign horizontalAlign = HorizontalAlign::Left;
     VerticalAlign verticalAlign = VerticalAlign::Top;
     float lineHeight = 0.0f;
+    std::vector<TextRun> textRuns;
     std::string contentDirtyKey;
 };
 

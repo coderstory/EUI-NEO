@@ -137,6 +137,10 @@ struct Element {
     HorizontalAlign horizontalAlign = HorizontalAlign::Left;
     VerticalAlign verticalAlign = VerticalAlign::Top;
     float lineHeight = 0.0f;
+    /// 行内颜色 runs（styled text）。空 = 旧单色路径。乱序/重叠/越界允许，
+    /// runtime 消费前会 normalizeTextRuns 归一化；keyed（dirtyKey）调用方需
+    /// 自行把 runs 变化编进 dirtyKey。
+    std::vector<core::TextRun> textRuns;
 
     std::string imageSource;
     std::shared_ptr<core::render::ImageStream> imageStream;
@@ -1190,6 +1194,25 @@ public:
 
     TextBuilder& lineHeight(float value) {
         element_->lineHeight = std::max(0.0f, value);
+        return *this;
+    }
+
+    /// 追加一个颜色 run（可多次调用，后写覆盖前写；渲染前统一归一化）。
+    /// 字节偏移是 .text() 全文的 UTF-8 偏移，未命中 run 的部分用 .color()。
+    TextBuilder& run(int byteStart, int byteEnd, const Color& color) {
+        element_->textRuns.push_back(core::TextRun{byteStart, byteEnd, color});
+        return *this;
+    }
+
+    /// 整批设置 runs（语法高亮器产出的标准形态）。
+    TextBuilder& runs(std::vector<core::TextRun> value) {
+        element_->textRuns = std::move(value);
+        return *this;
+    }
+
+    /// 清空 runs，回到单色。
+    TextBuilder& clearRuns() {
+        element_->textRuns.clear();
         return *this;
     }
 

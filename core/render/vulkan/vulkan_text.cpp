@@ -10,7 +10,7 @@ namespace core::render::vulkan {
 
 namespace {
 
-constexpr std::size_t kTextVertexFloatCapacity = 262144;
+constexpr std::size_t kTextVertexFloatCapacity = 524288;
 
 struct TextPushConstants {
     float windowSize[4] = {};
@@ -62,10 +62,10 @@ void VulkanRenderBackend::flushTextBatch() {
                        0,
                        sizeof(constants),
                        &constants);
-    vkCmdDraw(commandBuffer, static_cast<std::uint32_t>(batchCount / 5), 1, 0, 0);
+    vkCmdDraw(commandBuffer, static_cast<std::uint32_t>(batchCount / 9), 1, 0, 0);
     auto& stats = core::render::currentRenderFrameStats();
     ++stats.textBatchFlushes;
-    stats.textBatchVertices += static_cast<std::uint64_t>(batchCount / 5);
+    stats.textBatchVertices += static_cast<std::uint64_t>(batchCount / 9);
     invalidateBackdropCapture();
 }
 
@@ -85,15 +85,13 @@ void VulkanRenderBackend::drawText(const TextDrawCommand& command, int windowWid
         recordClearPass(clearColor_);
     }
 
+    // v0.8：颜色在每顶点里，批内换色不再 flush（tint 恒白）。仍按
+    // atlas generation / 目标窗口变化切批。
     const bool batchChanged = textBatchCount_ > 0 &&
         (textBatchWindowWidth_ != windowWidth ||
          textBatchWindowHeight_ != windowHeight ||
          textBatchGrayGeneration_ != command.grayAtlas.generation ||
-         textBatchColorGeneration_ != command.colorAtlas.generation ||
-         textBatchColor_.r != command.color.r ||
-         textBatchColor_.g != command.color.g ||
-         textBatchColor_.b != command.color.b ||
-         textBatchColor_.a != command.color.a);
+         textBatchColorGeneration_ != command.colorAtlas.generation);
     if (batchChanged) {
         flushTextBatch();
     }
@@ -201,10 +199,11 @@ bool VulkanRenderBackend::ensureTextPipeline() {
 
     VkVertexInputBindingDescription binding{};
     binding.binding = 0;
-    binding.stride = sizeof(float) * 5;
+    binding.stride = sizeof(float) * 9;   // x,y,u,v,colored,r,g,b,a
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    std::array<VkVertexInputAttributeDescription, 3> attributes{};
+    // 顶点格式 9 float：per-vertex color（v0.8）。
+    std::array<VkVertexInputAttributeDescription, 4> attributes{};
     attributes[0].binding = 0;
     attributes[0].location = 0;
     attributes[0].format = VK_FORMAT_R32G32_SFLOAT;
@@ -217,6 +216,10 @@ bool VulkanRenderBackend::ensureTextPipeline() {
     attributes[2].location = 2;
     attributes[2].format = VK_FORMAT_R32_SFLOAT;
     attributes[2].offset = sizeof(float) * 4;
+    attributes[3].binding = 0;
+    attributes[3].location = 3;
+    attributes[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attributes[3].offset = sizeof(float) * 5;
 
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
