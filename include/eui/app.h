@@ -7,6 +7,7 @@
 #include "core/platform/window_effect.h"
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,10 @@ struct DslWindowRequest {
     // 是否跟随 app::setClearColor 的全局广播（桌宠这类自管背景色的
     // 覆盖窗口——如 clearColor alpha=0 的 sprite 窗——应设 false）
     bool followClearColorOverride = true;
+    // 子窗口的窗口效果档位覆盖：nullopt = 跟随 app::currentWindowEffect()
+    //（既有行为）；显式档位（如桌宠 sprite 窗的 None——透明像素直出桌面，
+    // 不叠系统 backdrop 材质）优先于全局广播
+    std::optional<core::platform::WindowEffect> windowEffectOverride;
     // 子窗口创建成功后回调（core::window::Handle，可用来做运行时
     // setWindowPos / setWindowMousePassthrough 等）
     std::function<void(core::window::Handle)> onWindowCreated;
@@ -90,6 +95,14 @@ void requestUpdate();
  * 「退出」菜单等没有主窗口句柄的场景。
  */
 void requestExit();
+/**
+ * @brief 请求显示/还原主窗口：处理隐藏到托盘态（托盘 Show 同款恢复路径）
+ * 与最小化态（还原 + 聚焦），下一帧主循环生效。
+ *
+ * 与 requestExit 对称：可在任意窗口（含子窗口）的回调里调用（主线程），
+ * 用于自定义托盘菜单的「显示主窗口」项等没有主窗口句柄的场景。
+ */
+void requestShow();
 /**
  * @brief 运行时切换标题栏（非客户区）外观，即时生效，无需重启。
  *
@@ -149,6 +162,8 @@ void requestFullPaint();
 void setActiveWindowEffect(core::platform::WindowEffect effect);
 /** @brief 取走 requestExit 的退出请求（主循环每帧轮询，true 只返回一次）。 */
 bool consumeExitRequest();
+/** @brief 取走 requestShow 的显示请求（主循环每帧轮询，true 只返回一次）。 */
+bool consumeShowRequest();
 }
 
 } // namespace app

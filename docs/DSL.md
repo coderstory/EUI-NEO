@@ -151,8 +151,10 @@ app::openWindow(app::DslWindowConfig{}
     .focusOnShow(false)                 // 显示时不抢前台焦点（SDL2 后端忽略）
     .clickThrough(true)                 // 创建期整窗鼠标穿透（仅无边框生效）
     .hideFromTaskbar(true)              // 不进任务栏/Alt+Tab（Windows；macOS/Linux 静默降级）
+    .transparentFramebuffer(true)       // 逐像素透明帧缓冲（创建期 hint，sprite 窗必设）
     .ignoreClearColorOverride()         // 不跟随 app::setClearColor 全局广播（自管背景的窗口）
-    .clearColor({0, 0, 0, 0})           // 全透底（需 windowEffect 非 None 开透明 hint）
+    .windowEffect(core::platform::WindowEffect::None)  // backdrop 档位不跟随全局（sprite 窗透出桌面）
+    .clearColor({0, 0, 0, 0})           // 全透底（transparentFramebuffer(true) 开透明 hint）
     .onWindowCreated([](core::window::Handle h) { /* 保存句柄 */ }),
     composeFn);
 ```
@@ -166,6 +168,21 @@ app::openWindow(app::DslWindowConfig{}
 任务栏隐藏的平台层接口是 `core::platform::applyWindowStyleFlags(handle, WindowStyleFlags{toolWindow, noActivate})`（Windows `WS_EX_TOOLWINDOW`/`WS_EX_NOACTIVATE`；macOS/Linux stub 返回 false）。`.hideFromTaskbar(true)` 内部即调它。
 
 `ignoreClearColorOverride()` 面向自管背景色的覆盖窗口（如桌宠 sprite 窗）：`app::setClearColor` 的全局广播（主题切换/窗口效果切档）不会冲掉它自己的 `clearColor`，默认 false = 跟随广播（既有行为不变）。示例见 `examples/pet_window.cpp`。
+
+`windowEffect(WindowEffect)` 是子窗口的 backdrop 档位逐窗覆盖：默认（不调用）跟随 `app::setWindowEffect` 的全局广播；自管背景的 sprite 窗应显式传 `None`——透明像素直出桌面，不叠系统 backdrop 材质（全局磨砂档下不传会呈材质灰底）。透明帧缓冲 hint 由 `transparentFramebuffer(true)` 单独保证，与档位互不影响。
+
+小尺寸覆盖窗内的**自绘右键菜单会被窗口 bounds 裁剪**（128×128 的桌宠窗装不下菜单）。原生菜单走平台层：
+
+```cpp
+const core::window::NativeWindowInfo info = core::window::nativeWindowInfo(handle);
+const std::optional<std::vector<int>> selection =
+    core::platform::showContextMenu(info.platformWindow, items);
+// items: std::vector<core::platform::ContextMenuItem>（text="-" 分隔线、
+// children 子菜单）；返回索引路径（顶层 {i} / 子菜单 {i,j}），取消 = 空
+// vector，平台不支持 = nullopt（调用方可回退自绘菜单）
+```
+
+同步模态弹出（光标处，阻塞到选择/取消，与托盘菜单同一模式），仅主线程。`core::window::nativeWindowInfo` 的 `platformWindow` 在 GLFW 路径返回 HWND（与 SDL2 路径对齐）。
 
 
 

@@ -274,6 +274,15 @@ core::platform::WindowEffect applyWindowEffectToWindow(GLFWwindow* window, core:
     return core::platform::degradedWindowEffect(desired, transparentFramebuffer);
 }
 
+// 子窗口期望档位：显式覆盖（DslWindowConfig::windowEffect，桌宠 sprite 窗的
+// None——透明像素直出桌面不叠 backdrop 材质）优先，否则跟随全局档位
+core::platform::WindowEffect desiredChildWindowEffect(const app::DslWindowRequest& request) {
+    if (request.windowEffectOverride.has_value()) {
+        return *request.windowEffectOverride;
+    }
+    return app::currentWindowEffect();
+}
+
 std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& request,
                                                    GLFWwindow* parentWindow,
                                                    core::render::RenderBackend& shareBackend) {
@@ -331,8 +340,10 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     managed->state.paintRequested = true;
     // 新子窗口跟随当前标题栏外观（运行时联动，Phase A）
     applyTitleBarAppearanceToWindow(childWindow);
-    // 新子窗口跟随当前窗口效果（磨砂 Phase C）：创建期透明 hint + backdrop 档位
-    applyWindowEffectToWindow(childWindow, app::currentWindowEffect());
+    // 新子窗口跟随当前窗口效果（磨砂 Phase C）：创建期透明 hint + backdrop 档位。
+    // 透明 hint 来源另有 transparentFramebuffer 声明（sprite 窗），backdrop
+    // 档位尊重逐窗覆盖（None = 不叠系统材质，透明像素直出桌面）
+    applyWindowEffectToWindow(childWindow, desiredChildWindowEffect(request));
     // clearColor 运行时覆盖（app::setClearColor）对后续新开子窗口同样生效；
     // 自管背景的窗口（ignoreClearColorOverride，如桌宠 sprite 窗）除外
     if (request.followClearColorOverride) {
@@ -602,6 +613,19 @@ int eui_app_run() {
         if (windowState.consumeTrayShowRequested()) {
             restoreWindowFromTray(window, windowState);
         }
+        // app::requestShow（自定义托盘菜单「显示主窗口」项等）：与托盘 Show
+        // 同一恢复路径；主窗可见但最小化/失焦时也要还原 + 聚焦
+        if (app::detail::consumeShowRequest()) {
+            if (windowState.hiddenToTray) {
+                restoreWindowFromTray(window, windowState);
+            } else {
+                if (windowState.iconified) {
+                    glfwRestoreWindow(window);
+                }
+                glfwShowWindow(window);
+                glfwFocusWindow(window);
+            }
+        }
         pruneClosedWindows(childWindows);
         windowState.modalChildWindow = findModalChildWindow(childWindows);
         // 设计决策（2026-09-22-desktop-pet-design.md R5）：主窗隐藏到托盘时
@@ -671,12 +695,14 @@ int eui_app_run() {
         // 窗口效果联动（磨砂 Phase C）：app::setWindowEffect 的变更在下一帧应用到
         // 主窗口 + 全部存活子窗口（新子窗口在创建时已应用当前值）；实际生效值
         //（降级后）回写 app::activeWindowEffect()，供设置页回查降级并提示。
+        // 逐窗覆盖（桌宠 sprite 窗的 None）不跟随全局广播。
         if (app::currentWindowEffect() != appliedWindowEffectDesired) {
             appliedWindowEffectDesired = app::currentWindowEffect();
             const core::platform::WindowEffect effective =
                 applyWindowEffectToWindow(window, appliedWindowEffectDesired);
-            childWindows.updateAll([&appliedWindowEffectDesired](ManagedWindow& managed) {
-                applyWindowEffectToWindow(managed.window, appliedWindowEffectDesired);
+            childWindows.updateAll([](ManagedWindow& managed) {
+                applyWindowEffectToWindow(
+                    managed.window, desiredChildWindowEffect(managed.content.request()));
             });
             app::detail::setActiveWindowEffect(effective);
         }

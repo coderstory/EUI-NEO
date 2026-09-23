@@ -609,6 +609,20 @@ void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height) {
 #define GLFW_INCLUDE_NONE
 #endif
 #include <GLFW/glfw3.h>
+#if defined(_WIN32)
+// GLFW 路径此前不含 windows.h：交给 glfw3native.h 自带包含（LEAN_AND_MEAN +
+// NOMINMAX 防宏污染），暴露 glfwGetWin32Window（HWND 填 NativeWindowInfo）
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef GLFW_EXPOSE_NATIVE_WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#endif
+#include <GLFW/glfw3native.h>
+#endif
 
 #include "core/platform/ime_bridge.h"
 
@@ -711,6 +725,14 @@ void destroyWindow(Handle window) {
 NativeWindowInfo nativeWindowInfo(Handle window) {
     NativeWindowInfo result;
     result.handle = window;
+#if defined(_WIN32)
+    // platformWindow = HWND（对齐 SDL2 路径的填充语义）：原生菜单/DWM 等
+    // core::platform 调用需要原生句柄，此前 GLFW 路径只回 GLFW 句柄，调用
+    // 方无从取 HWND
+    if (window != nullptr) {
+        result.platformWindow = glfwGetWin32Window(static_cast<GLFWwindow*>(window));
+    }
+#endif
     return result;
 }
 

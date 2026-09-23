@@ -36,6 +36,7 @@ int main() {
     assert(!plain[0].mousePassthrough && !plain[0].hideFromTaskbar);
     assert(!plain[0].transparentFramebuffer);  // 默认不透明帧缓冲（既有行为）
     assert(plain[0].followClearColorOverride);
+    assert(!plain[0].windowEffectOverride.has_value());  // 默认跟随全局档位
     assert(!plain[0].onWindowCreated);
 
     // ---- 桌宠形态全量配置 → DslWindowRequest 逐字段透传（G1/G4）----
@@ -54,6 +55,7 @@ int main() {
                    .hideFromTaskbar(true)
                    .transparentFramebuffer(true)  // sprite 窗逐像素透明（黑底修复）
                    .ignoreClearColorOverride(true)
+                   .windowEffect(core::platform::WindowEffect::None)  // 不叠 backdrop 材质
                    .onWindowCreated([&](core::window::Handle handle) {
                        createdCalled = true;
                        createdHandle = handle;
@@ -69,6 +71,7 @@ int main() {
     assert(pet[0].mousePassthrough && pet[0].hideFromTaskbar);
     assert(pet[0].transparentFramebuffer);  // 透明 hint 不随全局效果档位回落
     assert(!pet[0].followClearColorOverride);
+    assert(pet[0].windowEffectOverride == core::platform::WindowEffect::None);  // 透出桌面而非材质
     assert(pet[0].clearColor.a == 0.0f);
     assert(static_cast<bool>(pet[0].onWindowCreated));
     // onWindowCreated 由主循环在真实窗口创建后触发（本测试无窗口）；
