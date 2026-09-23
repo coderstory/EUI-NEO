@@ -24,11 +24,17 @@ bool applyWindowStyleFlags(void* nativeWindowHandle, const WindowStyleFlags& fla
     if (extra == 0 && ::GetLastError() != 0) {
         return false;
     }
+    // WS_EX_TOOLWINDOW（不进任务栏/Alt+Tab）与 WS_EX_APPWINDOW（强制进任务栏）
+    // 互斥：GLFW 创建的窗口 ex-style 自带 WS_EX_APPWINDOW（win32_window.c
+    // getWindowExStyle），只加 TOOLWINDOW 不清 APPWINDOW 时任务栏按钮不消失
+    //（DevDesk 桌宠真机验证症状）。恢复默认时把 APPWINDOW 补回（GLFW 基线）。
     LONG_PTR updated = extra;
     if (flags.toolWindow) {
         updated |= WS_EX_TOOLWINDOW;
+        updated &= ~static_cast<LONG_PTR>(WS_EX_APPWINDOW);
     } else {
         updated &= ~static_cast<LONG_PTR>(WS_EX_TOOLWINDOW);
+        updated |= WS_EX_APPWINDOW;
     }
     if (flags.noActivate) {
         updated |= WS_EX_NOACTIVATE;

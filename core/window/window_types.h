@@ -54,6 +54,10 @@ struct WindowCreateRequest {
     // setWindowEffect(None)）拿不到 GLFW_TRANSPARENT_FRAMEBUFFER 而黑底。
     // Vulkan compositeAlpha / SDL2 无逐像素透明——同 windowEffect 降级。
     bool transparentFramebuffer = false;
+    // 创建后是否立即可见：需要创建期改 Win32 扩展样式（任务栏隐藏
+    // WS_EX_TOOLWINDOW）的窗口必须隐藏创建、样式就位后再显示——可见创建
+    // 会先注册任务栏按钮。默认 true（既有行为不变）
+    bool visible = true;
 };
 
 struct NativeWindowInfo {
