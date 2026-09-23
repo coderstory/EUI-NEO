@@ -336,6 +336,26 @@ bool consumeExitRequest() {
 }
 }
 
+// requestShow 的显示请求（主循环每帧经 detail::consumeShowRequest 取走）。
+// 与托盘 Show（tray bridge 的 consumeTrayShowRequested）不同：这是应用级
+// API，任意窗口回调（子窗口菜单等）没有主窗口句柄也能请求显示/还原主窗。
+inline std::atomic<bool>& showRequestedFlag() {
+    static std::atomic<bool> flag{false};
+    return flag;
+}
+
+void requestShow() {
+    showRequestedFlag().store(true, std::memory_order_relaxed);
+    // 唤醒可能 glfwWaitEvents / SDL_WaitEvent 中的主循环
+    core::platform::requestUiUpdate();
+}
+
+namespace detail {
+bool consumeShowRequest() {
+    return showRequestedFlag().exchange(false, std::memory_order_relaxed);
+}
+}
+
 void setTitleBarAppearance(const core::platform::TitleBarAppearance& appearance) {
     detail::titleBarAppearanceOverride() = appearance;
     // 唤醒可能 glfwWaitEvents 中的主循环，让外观在下一帧生效

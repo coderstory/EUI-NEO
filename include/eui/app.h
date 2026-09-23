@@ -91,6 +91,14 @@ void requestUpdate();
  */
 void requestExit();
 /**
+ * @brief 请求显示/还原主窗口：处理隐藏到托盘态（托盘 Show 同款恢复路径）
+ * 与最小化态（还原 + 聚焦），下一帧主循环生效。
+ *
+ * 与 requestExit 对称：可在任意窗口（含子窗口）的回调里调用（主线程），
+ * 用于自定义托盘菜单的「显示主窗口」项等没有主窗口句柄的场景。
+ */
+void requestShow();
+/**
  * @brief 运行时切换标题栏（非客户区）外观，即时生效，无需重启。
  *
  * 覆盖主窗口 + 全部存活子窗口，此后新开的子窗口同样跟随；优先于
@@ -149,6 +157,8 @@ void requestFullPaint();
 void setActiveWindowEffect(core::platform::WindowEffect effect);
 /** @brief 取走 requestExit 的退出请求（主循环每帧轮询，true 只返回一次）。 */
 bool consumeExitRequest();
+/** @brief 取走 requestShow 的显示请求（主循环每帧轮询，true 只返回一次）。 */
+bool consumeShowRequest();
 }
 
 } // namespace app

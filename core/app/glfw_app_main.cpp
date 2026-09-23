@@ -602,6 +602,19 @@ int eui_app_run() {
         if (windowState.consumeTrayShowRequested()) {
             restoreWindowFromTray(window, windowState);
         }
+        // app::requestShow（自定义托盘菜单「显示主窗口」项等）：与托盘 Show
+        // 同一恢复路径；主窗可见但最小化/失焦时也要还原 + 聚焦
+        if (app::detail::consumeShowRequest()) {
+            if (windowState.hiddenToTray) {
+                restoreWindowFromTray(window, windowState);
+            } else {
+                if (windowState.iconified) {
+                    glfwRestoreWindow(window);
+                }
+                glfwShowWindow(window);
+                glfwFocusWindow(window);
+            }
+        }
         pruneClosedWindows(childWindows);
         windowState.modalChildWindow = findModalChildWindow(childWindows);
         // 设计决策（2026-09-22-desktop-pet-design.md R5）：主窗隐藏到托盘时
