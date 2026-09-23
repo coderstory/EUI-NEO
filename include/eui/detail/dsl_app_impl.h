@@ -182,6 +182,7 @@ void openWindow(const DslWindowConfig& config, DslWindowCompose composeFn) {
     request.focusOnShow = config.focusOnShowValue;
     request.mousePassthrough = config.clickThroughValue;
     request.hideFromTaskbar = config.hideFromTaskbarValue;
+    request.transparentFramebuffer = config.transparentFramebufferValue;
     request.followClearColorOverride = !config.ignoreClearColorOverrideValue;
     request.onWindowCreated = config.windowCreatedHandler;
     request.onKeyEvent = config.keyEventHandler;

@@ -34,6 +34,7 @@ int main() {
     assert(plain[0].decorated && plain[0].resizable && !plain[0].alwaysOnTop);
     assert(!plain[0].positionSet && plain[0].focusOnShow);
     assert(!plain[0].mousePassthrough && !plain[0].hideFromTaskbar);
+    assert(!plain[0].transparentFramebuffer);  // 默认不透明帧缓冲（既有行为）
     assert(plain[0].followClearColorOverride);
     assert(!plain[0].onWindowCreated);
 
@@ -51,6 +52,7 @@ int main() {
                    .focusOnShow(false)
                    .clickThrough(true)
                    .hideFromTaskbar(true)
+                   .transparentFramebuffer(true)  // sprite 窗逐像素透明（黑底修复）
                    .ignoreClearColorOverride(true)
                    .onWindowCreated([&](core::window::Handle handle) {
                        createdCalled = true;
@@ -65,6 +67,7 @@ int main() {
     assert(!pet[0].decorated && pet[0].alwaysOnTop && !pet[0].resizable);
     assert(!pet[0].focusOnShow);
     assert(pet[0].mousePassthrough && pet[0].hideFromTaskbar);
+    assert(pet[0].transparentFramebuffer);  // 透明 hint 不随全局效果档位回落
     assert(!pet[0].followClearColorOverride);
     assert(pet[0].clearColor.a == 0.0f);
     assert(static_cast<bool>(pet[0].onWindowCreated));

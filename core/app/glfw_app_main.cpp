@@ -285,6 +285,9 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     windowRequest.renderApi = core::render::windowRenderApi();
     // 磨砂 Phase C：子窗口跟主窗口同档——非 None 时带透明帧缓冲 hint 创建
     windowRequest.windowEffect = app::currentWindowEffect();
+    // 窗口自身声明透明帧缓冲（桌宠 sprite 窗）：与全局效果档位解耦，全局
+    // setWindowEffect(None) 不剥夺子窗的逐像素透明
+    windowRequest.transparentFramebuffer = request.transparentFramebuffer;
     // 子窗口配置透传（桌宠设计 §2.6 G1/G4）：decorated/alwaysOnTop/resizable/
     // position/focusOnShow/mousePassthrough，后端 createWindow 已支持
     windowRequest.x = request.x;
