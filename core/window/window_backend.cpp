@@ -585,6 +585,21 @@ void requestWindowClose(Handle window) {
     }
 }
 
+bool windowIsFocused(Handle window) {
+#if defined(_WIN32)
+    if (window == nullptr) {
+        return false;
+    }
+    void* platformWindow = nativeWindowInfo(window).platformWindow;
+    return platformWindow != nullptr &&
+           GetForegroundWindow() == static_cast<HWND>(platformWindow);
+#else
+    // 非 Windows 暂无统一同步查询：恒视为有焦点（styledMenu 失焦自关降级）
+    (void)window;
+    return true;
+#endif
+}
+
 void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height) {
     x = 0;
     y = 0;
@@ -830,6 +845,21 @@ void requestWindowClose(Handle window) {
         glfwSetWindowShouldClose(static_cast<GLFWwindow*>(window), GLFW_TRUE);
         glfwPostEmptyEvent();
     }
+}
+
+bool windowIsFocused(Handle window) {
+#if defined(_WIN32)
+    // glfw3native.h 已带入 windows.h（LEAN_AND_MEAN + NOMINMAX）
+    if (window == nullptr) {
+        return false;
+    }
+    void* platformWindow = nativeWindowInfo(window).platformWindow;
+    return platformWindow != nullptr &&
+           GetForegroundWindow() == static_cast<HWND>(platformWindow);
+#else
+    (void)window;
+    return true;
+#endif
 }
 
 void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height) {

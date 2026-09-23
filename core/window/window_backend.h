@@ -38,6 +38,15 @@ void getWindowPos(Handle window, int& x, int& y);
 // 请求关闭窗口（子窗口：主循环下一帧走正常 prune/destroy 路径；
 // 主窗口：等同用户点关闭按钮——托盘模式下走隐藏到托盘语义）
 void requestWindowClose(Handle window);
+/**
+ * @brief 窗口当前是否持有系统输入焦点（styledMenu 等弹出窗失焦自关需要）。
+ *
+ * Windows（GLFW/SDL2 两后端）：GetForegroundWindow() 与窗口 HWND 比对，
+ * 同步查询、无回调依赖。非 Windows 平台暂无统一查询，恒返回 true——
+ * 调用方按"永不失焦"降级（弹出窗只靠选中/Esc/再次打开关闭）。
+ * handle 为空返回 false（窗口已销毁语义）。
+ */
+bool windowIsFocused(Handle window);
 // 运行时切换鼠标穿透（整窗点击透到下层；仅无边框窗口有意义）
 void setWindowMousePassthrough(Handle window, bool enabled);
 // 主显示器工作区（不含任务栏/Dock），供应用把持久化位置钳制回屏幕内

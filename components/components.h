@@ -27,6 +27,7 @@
 #include "components/toast.h"
 #include "components/tooltip.h"
 #include "components/contextmenu.h"
+#include "components/styledmenu.h"
 #include "components/carousel.h"
 #include "components/linechart.h"
 #include "components/barchart.h"
