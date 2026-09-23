@@ -435,6 +435,18 @@ Text 支持：
 
 底层文本使用 FreeType 渲染 glyph，并通过字体栈 fallback 选择覆盖字符的字体。`fontFamily("monospace")` 会选择跨平台等宽字体，`fontFamily("Emoji")` 会选择平台 emoji 字体；如果指定字体或内置 assets 字体加载失败，文本栈会继续尝试默认 UI 字体和系统字体兜底。需要精确光标位置或命中测试时，使用 `core::TextPrimitive::measureTextMetrics(...)` 获取 caret stops；返回的 `byteIndices` 是 UTF-8 byte offset，`caretX` 是对应的逻辑 x，和实际渲染使用同一套 fallback、emoji 缩放和 glyph advance。
 
+`.run(int byteStart, int byteEnd, const Color&)` / `.runs(std::vector<core::TextRun>)` / `.clearRuns()` 是 v0.8 新增的行内多色文本入口：一条 `ui.text` 元素内按 **UTF-8 字节偏移区间**（`[byteStart, byteEnd)`，全文坐标系）着色，未命中 run 的部分用 `.color()` 的元素级颜色。典型用法是语法高亮器把一行的 token 直接映射成 runs：
+
+```cpp
+ui.text("md.editor.line.42")
+    .text(lineText)
+    .color(tokens.text)                    // 未命中 run 的默认色
+    .runs(highlighter.runsForLine(42))     // vector<TextRun>
+    .build();
+```
+
+规则与约束：`.run()` 可多次调用、顺序即优先级（重叠区间**后写覆盖前写**）；乱序 / 重叠 / 越界 / 劈开多字节 codepoint 的输入都允许——框架在渲染前用 `core::normalizeTextRuns(text, runs)` 归一化（clamp 到 UTF-8 边界、去重叠、合并相邻同色、丢弃空 run），需要干净 runs 时也可自行调用。runs 只是颜色：不改布局、测量与 caret 映射（`measureTextMetrics` 与光标定位零影响），空 runs 时顶点输出与旧单色路径逐字节一致。使用 `dirtyKey` 的调用方（如 input 行级文本）必须把 runs 变化编进 key，否则增量更新不会触发重着色。可运行 `examples/styled_text_demo`（`styled_text_demo` app）查看一行多色 / CJK 多色 / 行级高亮模拟的效果。
+
 Text 的 transform 作用在生成后的 glyph 顶点上，适合做滚轮、轻量缩放和旋转动效；默认命中测试仍按未 transform 的布局 frame 计算，需要跟随视觉变换时开启 `.transformedHitTest()`。
 
 `ui.text(id)` 是标准文本入口。

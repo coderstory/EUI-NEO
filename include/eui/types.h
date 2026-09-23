@@ -28,6 +28,7 @@ using TransformMatrix = core::TransformMatrix;
 using HorizontalAlign = core::HorizontalAlign;
 using VerticalAlign = core::VerticalAlign;
 using TextStyle = core::TextStyle;
+using TextRun = core::TextRun;
 using CursorShape = core::CursorShape;
 using InputKey = core::InputKey;
 using KeyAction = core::KeyAction;
