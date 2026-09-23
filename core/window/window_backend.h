@@ -3,6 +3,7 @@
 #include "core/window/window_types.h"
 
 #include <string>
+#include <vector>
 
 namespace core::window {
 
@@ -41,6 +42,19 @@ void requestWindowClose(Handle window);
 void setWindowMousePassthrough(Handle window, bool enabled);
 // 主显示器工作区（不含任务栏/Dock），供应用把持久化位置钳制回屏幕内
 void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height);
+// 单个显示器的工作区矩形（屏幕坐标，与 getPrimaryMonitorWorkArea 同一坐标系）
+struct MonitorWorkArea {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+// 枚举全部显示器的工作区（不含任务栏/Dock），主显示器必在结果内。
+// 查询失败（无头 / 未初始化 / 无显示器）返回空 vector——调用方按「无工作区
+// 信息」原样处理，语义与 getPrimaryMonitorWorkArea 失败返回 0 宽高一致。
+// 供宿主按位置选对应显示器钳制（多显示器副屏坐标可能为负/超出主屏边界，
+// 只按主屏钳会吞掉副屏位置——DevDesk 桌宠 M2 需求）
+std::vector<MonitorWorkArea> getMonitorWorkAreas();
 void installInputCallbacks(Handle window);
 void uninstallInputCallbacks(Handle window);
 bool queryImeComposition(Handle window, std::string& text, bool& composing);

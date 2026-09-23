@@ -601,6 +601,23 @@ void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height) {
     }
 }
 
+std::vector<MonitorWorkArea> getMonitorWorkAreas() {
+    std::vector<MonitorWorkArea> areas;
+    const int count = SDL_GetNumVideoDisplays();
+    if (count > 0) {
+        areas.reserve(static_cast<size_t>(count));
+    }
+    for (int i = 0; i < count; ++i) {
+        SDL_Rect bounds{};
+        // 单个显示器查询失败 → 跳过该显示器（其余照常枚举）
+        if (SDL_GetDisplayUsableBounds(i, &bounds) != 0) {
+            continue;
+        }
+        areas.push_back(MonitorWorkArea{bounds.x, bounds.y, bounds.w, bounds.h});
+    }
+    return areas;
+}
+
 } // namespace core::window
 
 #else
@@ -825,6 +842,31 @@ void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height) {
         return;
     }
     glfwGetMonitorWorkarea(monitor, &x, &y, &width, &height);
+}
+
+std::vector<MonitorWorkArea> getMonitorWorkAreas() {
+    std::vector<MonitorWorkArea> areas;
+    int count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    // 未初始化（无头/早于 glfwInit）或无显示器：nullptr + count<=0 → 空 vector
+    if (monitors == nullptr || count <= 0) {
+        return areas;
+    }
+    areas.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        int x = 0;
+        int y = 0;
+        int width = 0;
+        int height = 0;
+        glfwGetMonitorWorkarea(monitors[i], &x, &y, &width, &height);
+        // 宽高为 0 的显示器（查询失败的降级形态）不列入——调用方钳制时按
+        // workW/workH<=0 原样返回，列了反而引入无意义候选
+        if (width <= 0 || height <= 0) {
+            continue;
+        }
+        areas.push_back(MonitorWorkArea{x, y, width, height});
+    }
+    return areas;
 }
 
 } // namespace core::window
