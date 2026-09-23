@@ -92,6 +92,16 @@ public:
         onKeyEvent_ = std::move(callback);
         return *this;
     }
+    /** @brief 行级样式回调（styled-runs，仅多行模式生效）：仅对【可视行】且该行
+     *  缓存未命中时调用一次，返回全文档坐标系的 core::TextRun（见
+     *  input_detail::LineStylesProvider）。结果按 (lineNo, textRevision,
+     *  styleRevision) 缓存在 InputState；使用方改高亮规则时自增
+     *  `ui.state<input_detail::InputModel::InputState>(id).styleRevision` 触发
+     *  全部可视行重高亮。颜色 run 不改 layout/caret，光标/选区/IME 覆盖层不受影响。 */
+    InputBuilder& lineStyles(input_detail::LineStylesProvider provider) {
+        lineStyles_ = std::move(provider);
+        return *this;
+    }
 
     void build() {
         const std::string hitId = id_ + ".hit";
@@ -409,19 +419,37 @@ public:
                                 if (y + textLineHeight < 0.0f || y > textHeight) {
                                     continue;
                                 }
-                                ui_.text(id_ + ".text." + std::to_string(index))
+                                const std::string lineText = display.text.substr(static_cast<std::size_t>(line.start),
+                                                                                 static_cast<std::size_t>(std::max(0, line.end - line.start)));
+                                std::string lineKey = textDirtyKey + "|" + std::to_string(index);
+                                std::vector<core::TextRun> localRuns;
+                                if (lineStyles_) {
+                                    // 全文档坐标 runs → 行内坐标；runs 变化必须编进
+                                    // 行级 dirtyKey（keyed 路径靠 key 变化触发重着色）。
+                                    localRuns = InputModel::lineLocalRuns(
+                                        InputModel::lineRuns(display, lineStyles_, lineText, line.start, static_cast<int>(index)),
+                                        lineText, line.start, line.end);
+                                    lineKey += "|r" + std::to_string(InputModel::runsFingerprint(localRuns));
+                                }
+                                auto lineTextElement = ui_.text(id_ + ".text." + std::to_string(index))
                                     .position(0.0f, y)
                                     .size(layout.visibleTextWidth, textLineHeight)
-                                    .dirtyKey(textDirtyKey + "|" + std::to_string(index))
-                                    .text(display.text.substr(static_cast<std::size_t>(line.start),
-                                                            static_cast<std::size_t>(std::max(0, line.end - line.start))))
+                                    .dirtyKey(lineKey)
+                                    .text(lineText)
                                     .fontSize(fontSize)
                                     .fontFamily(fontFamily_)
                                     .lineHeight(textLineHeight)
                                     .color(style_.text)
                                     .wrap(false)
-                                    .verticalAlign(core::VerticalAlign::Top)
-                                    .build();
+                                    .verticalAlign(core::VerticalAlign::Top);
+                                if (lineStyles_) {
+                                    lineTextElement.runs(std::move(localRuns));
+                                }
+                                lineTextElement.build();
+                            }
+                            if (lineStyles_) {
+                                // 滚出视口即逐出，缓存内存 O(视口)。
+                                InputModel::pruneLineRuns(display, static_cast<int>(firstLine), static_cast<int>(endLine));
                             }
                         } else {
                             ui_.text(id_ + ".text")
@@ -507,6 +535,7 @@ private:
     std::function<void()> onEnter_;
     std::function<void(bool)> onFocus_;
     std::function<bool(const core::KeyEvent&)> onKeyEvent_;
+    input_detail::LineStylesProvider lineStyles_;
     std::string text_;
     std::string placeholder_ = "Hello EUI-NEO 😉";
     bool multiline_ = false;
