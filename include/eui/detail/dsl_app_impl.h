@@ -186,6 +186,7 @@ void openWindow(const DslWindowConfig& config, DslWindowCompose composeFn) {
     request.followClearColorOverride = !config.ignoreClearColorOverrideValue;
     request.windowEffectOverride = config.windowEffectOverrideValue;
     request.onWindowCreated = config.windowCreatedHandler;
+    request.onWindowDestroyed = config.windowDestroyedHandler;
     request.onKeyEvent = config.keyEventHandler;
     request.compose = std::move(composeFn);
     detail::dslWindowRequests().push_back(std::move(request));

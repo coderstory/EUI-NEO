@@ -155,9 +155,12 @@ app::openWindow(app::DslWindowConfig{}
     .ignoreClearColorOverride()         // 不跟随 app::setClearColor 全局广播（自管背景的窗口）
     .windowEffect(core::platform::WindowEffect::None)  // backdrop 档位不跟随全局（sprite 窗透出桌面）
     .clearColor({0, 0, 0, 0})           // 全透底（transparentFramebuffer(true) 开透明 hint）
-    .onWindowCreated([](core::window::Handle h) { /* 保存句柄 */ }),
+    .onWindowCreated([](core::window::Handle h) { /* 保存句柄 */ })
+    .onWindowDestroyed([](core::window::Handle h) { /* 清空保存的句柄 */ }),
     composeFn);
 ```
+
+`onWindowDestroyed`（与 `onWindowCreated` 对称）在子窗口销毁**前**触发，传入句柄此刻仍有效；覆盖全部销毁路径（`requestWindowClose`、窗口关闭事件如 Alt+F4、应用退出）。宿主应在回调里清空缓存的窗口句柄——窗口销毁后句柄即悬垂（UAF），仅靠 `requestWindowClose` 调用点手动置空无法覆盖 Alt+F4 等框架内部销毁路径。
 
 配套的运行时窗口操作（`core/window/window_backend.h`，拖拽移动/穿透切换/位置钳制）：
 

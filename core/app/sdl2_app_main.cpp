@@ -502,6 +502,9 @@ void destroyManagedWindow(std::unique_ptr<ManagedWindow>& managed) {
         return;
     }
     if (managed->window != nullptr && managed->renderBackend != nullptr) {
+        // 销毁回调须在 content.shutdown() 前取出（shutdown 会清空 request_ 快照）
+        std::function<void(core::window::Handle)> onWindowDestroyed =
+            managed->content.request().onWindowDestroyed;
         if (managed->content.request().modal && managed->parentWindow != nullptr) {
             detachNativeChildWindow(managed->parentWindow, managed->window);
         }
@@ -517,6 +520,10 @@ void destroyManagedWindow(std::unique_ptr<ManagedWindow>& managed) {
             managed->content.shutdown(false);
         }
         managed->renderBackend.reset();
+        // 宿主销毁通知（onWindowCreated 对称）：窗口销毁前触发，句柄此刻仍有效
+        if (onWindowDestroyed) {
+            onWindowDestroyed(managed->window);
+        }
         core::window::destroyWindow(managed->window);
     }
     managed.reset();

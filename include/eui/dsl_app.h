@@ -210,6 +210,7 @@ struct DslWindowConfig {
     // nullopt = 跟随全局档位；显式值 = 本窗口固定档位（见 windowEffect()）
     std::optional<core::platform::WindowEffect> windowEffectOverrideValue;
     std::function<void(core::window::Handle)> windowCreatedHandler;
+    std::function<void(core::window::Handle)> windowDestroyedHandler;
 
     DslWindowConfig& title(std::string value) { titleValue = std::move(value); return *this; }
     DslWindowConfig& pageId(std::string value) { pageIdValue = std::move(value); return *this; }
@@ -282,6 +283,16 @@ struct DslWindowConfig {
     /** @brief 子窗口创建成功回调（Handle 可用于 setWindowPos / 穿透切换等） */
     DslWindowConfig& onWindowCreated(std::function<void(core::window::Handle)> handler) {
         windowCreatedHandler = std::move(handler);
+        return *this;
+    }
+    /**
+     * @brief 子窗口销毁前回调（与 onWindowCreated 对称；传入句柄在回调
+     * 期间仍有效，回调返回后窗口即被销毁）。覆盖所有销毁路径
+     *（requestWindowClose / 窗口关闭事件（Alt+F4）/ 应用退出）。
+     * 典型用途：宿主清空缓存的窗口句柄，避免悬垂引用。
+     */
+    DslWindowConfig& onWindowDestroyed(std::function<void(core::window::Handle)> handler) {
+        windowDestroyedHandler = std::move(handler);
         return *this;
     }
     DslWindowConfig& onKeyEvent(std::function<void(const eui::KeyEvent&)> handler) {

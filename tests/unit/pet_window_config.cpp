@@ -79,6 +79,16 @@ int main() {
     assert(!createdCalled);
     (void)createdHandle;
 
+    // ---- onWindowDestroyed（宿主句柄清理，DevDesk 桌宠 UAF 修复）----
+    assert(!plain[0].onWindowDestroyed);  // 默认空，向后兼容
+    openWindow(DslWindowConfig{}
+                   .title("destroyed-cb")
+                   .onWindowDestroyed([](core::window::Handle) {}),
+               [](eui::Ui&, const eui::Screen&) {});
+    std::vector<DslWindowRequest> destroyed = consumeWindowRequests();
+    assert(destroyed.size() == 1);
+    assert(static_cast<bool>(destroyed[0].onWindowDestroyed));
+
     // ---- 极小值防御：0/负尺寸收敛为 1（不 clamp 到 160×120）----
     openWindow(DslWindowConfig{}.windowSize(0, -5), [](eui::Ui&, const eui::Screen&) {});
     std::vector<DslWindowRequest> tiny = consumeWindowRequests();

@@ -156,6 +156,13 @@ void openPetWindow() {
                    .clearColor({0.0f, 0.0f, 0.0f, 0.0f})  // 全透底
                    .onWindowCreated([](core::window::Handle handle) {
                        petHandle() = handle;      // G3/G4：拖拽/穿透切换要用
+                   })
+                   .onWindowDestroyed([](core::window::Handle handle) {
+                       // 与 Created 对称：窗口销毁（关窗/Alt+F4/退出）前清句柄，
+                       // 比较只清自己的——热切换时新窗先建、旧窗后销毁
+                       if (petHandle() == handle) {
+                           petHandle() = nullptr;
+                       }
                    }),
                petCompose);
 }

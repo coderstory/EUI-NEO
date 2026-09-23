@@ -54,6 +54,12 @@ struct DslWindowRequest {
     // 子窗口创建成功后回调（core::window::Handle，可用来做运行时
     // setWindowPos / setWindowMousePassthrough 等）
     std::function<void(core::window::Handle)> onWindowCreated;
+    // 子窗口销毁前回调（与 onWindowCreated 对称，覆盖所有销毁路径：
+    // requestWindowClose / Alt+F4 等窗口关闭事件 / 应用退出 destroyAll）。
+    // 触发时机：窗口真正 glfwDestroyWindow/SDL 销毁之前，传入句柄此刻仍
+    // 有效（可比较/读取，但宿主不得在回调返回后继续持有）。典型用途：
+    // 宿主清空缓存的窗口句柄，避免销毁后悬垂引用（DevDesk 桌宠 UAF 修复）
+    std::function<void(core::window::Handle)> onWindowDestroyed;
     std::function<void(const eui::KeyEvent&)> onKeyEvent;
     DslWindowCompose compose;
 };
