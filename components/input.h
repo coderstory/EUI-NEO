@@ -82,6 +82,12 @@ public:
         onEnter_ = std::move(callback);
         return *this;
     }
+    /** @brief 取消回调（与 onEnter 对称）：Escape 优先触发 onCancel 而非 onEnter。
+     *  不设置时 Escape 仍回退到 onEnter（保持旧映射，向后兼容）。 */
+    InputBuilder& onCancel(std::function<void()> callback) {
+        onCancel_ = std::move(callback);
+        return *this;
+    }
     InputBuilder& onFocus(std::function<void(bool)> callback) {
         onFocus_ = std::move(callback);
         return *this;
@@ -116,6 +122,7 @@ public:
         const bool allowMultiline = multiline_;
         const std::function<void(const std::string&)> onChange = onChange_;
         const std::function<void()> onEnter = onEnter_;
+        const std::function<void()> onCancel = onCancel_;
         const std::function<void(bool)> onFocus = onFocus_;
         const std::function<bool(const core::KeyEvent&)> onKeyEvent = onKeyEvent_;
         const float textLineHeight = fontSize * 1.2f;
@@ -213,7 +220,7 @@ public:
                             layout.maxVerticalScroll);
                     });
                 }
-                hit.onKeyEvent([&state, allowMultiline, onChange, onEnter, onKeyEvent, width, inset, fontSize, fontFamily, textHeight](const core::KeyEvent& event) {
+                hit.onKeyEvent([&state, allowMultiline, onChange, onEnter, onCancel, onKeyEvent, width, inset, fontSize, fontFamily, textHeight](const core::KeyEvent& event) {
                         // 用户 passthrough 先于内置编辑：返回 true 已消费，跳过内置处理。
                         if (onKeyEvent && onKeyEvent(event)) {
                             return true;
@@ -334,7 +341,11 @@ public:
                                 onEnter();
                             }
                         } else if (event.key == core::InputKey::Escape) {
-                            if (onEnter) {
+                            // Esc 优先走 onCancel（取消语义：关弹窗/丢弃草稿）；
+                            // 未设 onCancel 时回退 onEnter（旧映射，向后兼容）。
+                            if (onCancel) {
+                                onCancel();
+                            } else if (onEnter) {
                                 onEnter();
                             }
                         } else {
@@ -533,6 +544,7 @@ private:
     core::Transition transition_ = core::Transition::make(0.16f, core::Ease::OutCubic);
     std::function<void(const std::string&)> onChange_;
     std::function<void()> onEnter_;
+    std::function<void()> onCancel_;
     std::function<void(bool)> onFocus_;
     std::function<bool(const core::KeyEvent&)> onKeyEvent_;
     input_detail::LineStylesProvider lineStyles_;
