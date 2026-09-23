@@ -13,7 +13,10 @@ inline bool Runtime::initialize(core::window::Handle window) {
 
 template <typename ComposeFn>
 inline void Runtime::compose(const std::string& pageId, float logicalWidth, float logicalHeight, ComposeFn&& composeFn) {
-    const std::vector<runtime::ElementSnapshot> previousStructure = elementStructure_;
+    // 审计 [38] 性能：previousStructure 仅作本帧比较基线，elementStructure_ 随后被
+    // collectElementStructure() 无条件重新赋值——move 拿走旧值即可，省去整棵元素结构
+    // （含每个元素 id 字符串）的深拷贝；语义不变。
+    auto previousStructure = std::move(elementStructure_);
     const Screen screen{logicalWidth, logicalHeight};
     ui_.begin(pageId);
     ui_.setFocusedId(focusedId_);
