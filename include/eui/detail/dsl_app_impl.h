@@ -184,6 +184,7 @@ void openWindow(const DslWindowConfig& config, DslWindowCompose composeFn) {
     request.hideFromTaskbar = config.hideFromTaskbarValue;
     request.transparentFramebuffer = config.transparentFramebufferValue;
     request.followClearColorOverride = !config.ignoreClearColorOverrideValue;
+    request.windowEffectOverride = config.windowEffectOverrideValue;
     request.onWindowCreated = config.windowCreatedHandler;
     request.onKeyEvent = config.keyEventHandler;
     request.compose = std::move(composeFn);

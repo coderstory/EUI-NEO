@@ -7,6 +7,7 @@
 #include "core/platform/window_effect.h"
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,10 @@ struct DslWindowRequest {
     // 是否跟随 app::setClearColor 的全局广播（桌宠这类自管背景色的
     // 覆盖窗口——如 clearColor alpha=0 的 sprite 窗——应设 false）
     bool followClearColorOverride = true;
+    // 子窗口的窗口效果档位覆盖：nullopt = 跟随 app::currentWindowEffect()
+    //（既有行为）；显式档位（如桌宠 sprite 窗的 None——透明像素直出桌面，
+    // 不叠系统 backdrop 材质）优先于全局广播
+    std::optional<core::platform::WindowEffect> windowEffectOverride;
     // 子窗口创建成功后回调（core::window::Handle，可用来做运行时
     // setWindowPos / setWindowMousePassthrough 等）
     std::function<void(core::window::Handle)> onWindowCreated;

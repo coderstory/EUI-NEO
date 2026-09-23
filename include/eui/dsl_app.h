@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -206,6 +207,8 @@ struct DslWindowConfig {
     bool hideFromTaskbarValue = false;
     bool transparentFramebufferValue = false;
     bool ignoreClearColorOverrideValue = false;
+    // nullopt = 跟随全局档位；显式值 = 本窗口固定档位（见 windowEffect()）
+    std::optional<core::platform::WindowEffect> windowEffectOverrideValue;
     std::function<void(core::window::Handle)> windowCreatedHandler;
 
     DslWindowConfig& title(std::string value) { titleValue = std::move(value); return *this; }
@@ -261,6 +264,19 @@ struct DslWindowConfig {
      */
     DslWindowConfig& ignoreClearColorOverride(bool value = true) {
         ignoreClearColorOverrideValue = value;
+        return *this;
+    }
+    /**
+     * @brief 本窗口的窗口效果（DWM backdrop）档位，不跟随全局切换。
+     *
+     * 默认（不调用）= 跟随 app::setWindowEffect 的全局广播与启动档位。
+     * 自管背景的覆盖窗（桌宠 sprite 窗：clearColor alpha=0 逐像素透出
+     * 桌面）应显式传 None——否则全局磨砂/半透档会把系统 backdrop 材质
+     * 画在窗口后面，透明像素透出的是材质色（灰）而非桌面。透明帧缓冲
+     * hint 由 transparentFramebuffer(true) 单独保证，不受本档位影响。
+     */
+    DslWindowConfig& windowEffect(core::platform::WindowEffect value) {
+        windowEffectOverrideValue = value;
         return *this;
     }
     /** @brief 子窗口创建成功回调（Handle 可用于 setWindowPos / 穿透切换等） */
