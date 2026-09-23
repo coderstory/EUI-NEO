@@ -8,13 +8,21 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace components::input_detail {
+
+/// styled-runs 行级样式回调（Phase B）：按可视行返回颜色 runs。
+/// 字节偏移是全文档 display 文本的 UTF-8 坐标系（含 preedit 替换后的内容），
+/// input 会按行裁剪并平移到行内坐标；返回空 vector = 该行用默认文本色。
+using LineStylesProvider = std::function<std::vector<core::TextRun>(
+    const std::string& displayText, int lineStartByte, int lineNo)>;
 
 struct InputModel {
     struct TextLine {
@@ -68,6 +76,20 @@ struct InputModel {
         bool layoutCacheValid = false;
         std::vector<EditSnapshot> undoStack;
         std::vector<EditSnapshot> redoStack;
+        // styled-runs Phase B：行级样式缓存。命中 key 是 (lineNo, textRevision,
+        // styleRevision) 三元组——任一 revision 变化即重算；只缓存可视行窗口，
+        // 滚出视口即逐出（内存 O(视口)）。IME 预编辑是独立 InputState 快照，
+        // 自带独立缓存，以 display 文本的 textRevision 自然区分、不污染正文。
+        struct LineRunCache {
+            unsigned long long textRevision = 0;
+            unsigned long long styleRevision = 0;
+            bool valid = false;
+            std::vector<core::TextRun> runs;
+        };
+        /// 使用方改高亮规则时自增（ui.state<InputModel::InputState>(id).styleRevision++），
+        /// 触发全部可视行重新回调。
+        unsigned long long styleRevision = 0;
+        std::unordered_map<int, LineRunCache> cachedLineRuns;
         // 预编辑只持有展示状态，不修改文档/撤销历史；提交或取消后立即释放。
         std::unique_ptr<InputState> preedit;
     };
@@ -681,6 +703,8 @@ struct InputModel {
         display.followCaret = state.followCaret;
         display.horizontalScroll = state.horizontalScroll;
         display.verticalScroll = state.verticalScroll;
+        // 高亮规则版本随正文快照同步，组合期间使用方 bump 也能触发重高亮。
+        display.styleRevision = state.styleRevision;
         return display;
     }
 
@@ -907,6 +931,81 @@ struct InputModel {
             state.horizontalScroll = cursorPixel - rightSafe;
         }
         state.horizontalScroll = std::clamp(state.horizontalScroll, 0.0f, std::max(0.0f, textWidth - viewportWidth + trailingPadding));
+    }
+
+    // ---- styled-runs Phase B：行级样式缓存与坐标平移 ----
+
+    /// 行级 runs 缓存：命中 (lineNo, textRevision, styleRevision) 三元组直接返回，
+    /// 未命中才调用 provider（provider 为空等同恒返回空 runs）。只应由多行可视行
+    /// 渲染路径调用，配合 pruneLineRuns 把缓存限制在可视行窗口内。
+    static const std::vector<core::TextRun>& lineRuns(InputState& state,
+                                                      const LineStylesProvider& provider,
+                                                      const std::string& displayText,
+                                                      int lineStartByte,
+                                                      int lineNo) {
+        InputState::LineRunCache& cache = state.cachedLineRuns[lineNo];
+        if (cache.valid && cache.textRevision == state.textRevision &&
+            cache.styleRevision == state.styleRevision) {
+            return cache.runs;
+        }
+        cache.runs = provider ? provider(displayText, lineStartByte, lineNo)
+                              : std::vector<core::TextRun>{};
+        cache.textRevision = state.textRevision;
+        cache.styleRevision = state.styleRevision;
+        cache.valid = true;
+        return cache.runs;
+    }
+
+    /// 把全文档坐标系的 runs 裁剪到 [lineStart, lineEnd) 并平移为行内坐标，
+    /// 再归一化（clamp UTF-8 边界、去重叠、合并相邻同色）。纯函数。
+    static std::vector<core::TextRun> lineLocalRuns(const std::vector<core::TextRun>& docRuns,
+                                                    const std::string& lineText,
+                                                    int lineStart,
+                                                    int lineEnd) {
+        std::vector<core::TextRun> local;
+        local.reserve(docRuns.size());
+        for (const core::TextRun& run : docRuns) {
+            const int start = std::max(run.byteStart, lineStart);
+            const int end = std::min(run.byteEnd, lineEnd);
+            if (start < end) {
+                local.push_back({start - lineStart, end - lineStart, run.color});
+            }
+        }
+        return core::normalizeTextRuns(lineText, std::move(local));
+    }
+
+    /// runs 内容指纹（FNV-1a over 字节区间与颜色位型）：keyed 调用方把 runs 变化
+    /// 编进 dirtyKey 用；runs ≤ 个位数时一次哈希纳秒级。
+    static unsigned long long runsFingerprint(const std::vector<core::TextRun>& runs) {
+        unsigned long long hash = 1469598103934665603ull;
+        const auto fold = [&hash](unsigned long long value) {
+            hash = (hash ^ value) * 1099511628211ull;
+        };
+        for (const core::TextRun& run : runs) {
+            fold(static_cast<unsigned long long>(run.byteStart));
+            fold(static_cast<unsigned long long>(run.byteEnd));
+            unsigned bits = 0;
+            std::memcpy(&bits, &run.color.r, sizeof(bits));
+            fold(bits);
+            std::memcpy(&bits, &run.color.g, sizeof(bits));
+            fold(bits);
+            std::memcpy(&bits, &run.color.b, sizeof(bits));
+            fold(bits);
+            std::memcpy(&bits, &run.color.a, sizeof(bits));
+            fold(bits);
+        }
+        return hash;
+    }
+
+    /// 只保留 [firstLine, endLineExclusive) 的行缓存，滚出视口即逐出。
+    static void pruneLineRuns(InputState& state, int firstLine, int endLineExclusive) {
+        for (auto it = state.cachedLineRuns.begin(); it != state.cachedLineRuns.end();) {
+            if (it->first < firstLine || it->first >= endLineExclusive) {
+                it = state.cachedLineRuns.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     static std::string makeDirtyKey(const InputState& state, bool focused, const InputLayout& layout) {
