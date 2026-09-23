@@ -113,6 +113,23 @@ void eui_tray_set_menu(const eui_tray_menu_item* items, int count, int keep_defa
     eui_tray_menu_changed();
 }
 
+/* 菜单接管钩子（与后端无关共用层）：Windows 由 tray.h Win32 分支在弹原生
+ * TrackPopupMenu 前调用 eui_tray_menu_requested()——钩子返回非 0 表示上层
+ * （app 层 styled 菜单等）已接管本次菜单展示，原生弹出被跳过；返回 0 走
+ * 原生菜单（降级路径）。其他后端不调用，注册无副作用。 */
+static eui_tray_menu_requested_fn g_menu_requested_fn = 0;
+
+void eui_tray_set_menu_requested_fn(eui_tray_menu_requested_fn fn) {
+    g_menu_requested_fn = fn;
+}
+
+int eui_tray_menu_requested(int x, int y, int left_button) {
+    if (g_menu_requested_fn == 0) {
+        return 0;
+    }
+    return g_menu_requested_fn(x, y, left_button);
+}
+
 #if EUI_TRAY_HAS_BACKEND
 
 #if defined(EUI_TRAY_APPKIT)

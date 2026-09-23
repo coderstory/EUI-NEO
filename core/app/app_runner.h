@@ -86,6 +86,9 @@ struct AppRunner {
             trayMenuItems(),
             trayKeepDefaultMenuItems()
         });
+        // 菜单接管回调（styled 菜单等）：注册失败/未注册（空 handler）时
+        // 原生托盘菜单行为不变；handler 在主线程托盘消息泵里触发
+        core::platform::setTrayMenuRequestedHandler(trayMenuRequestedHandler());
         return trayAvailable;
     }
 

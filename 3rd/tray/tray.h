@@ -217,6 +217,15 @@ static void tray_exit() { objc_msgSend(app, sel_registerName("terminate:"), app)
    in core/platform/tray_bridge.c (non-static so unit tests can reach it). */
 wchar_t *eui_tray_utf8_to_utf16(const char *utf8);
 
+/* EUI-NEO local patch: tray menu takeover hook (implemented in
+   core/platform/tray_bridge.c). Called on the tray window thread (the same
+   main thread that pumps glfw events) right before the native popup menu
+   would be shown, with the cursor position in physical screen pixels and
+   left_button = 1 for WM_LBUTTONUP. A non-zero return means the application
+   layer took over menu presentation (e.g. styled menu window) and the native
+   TrackPopupMenu path is skipped; zero keeps the original behavior. */
+int eui_tray_menu_requested(int x, int y, int left_button);
+
 #define WM_TRAY_CALLBACK_MESSAGE (WM_USER + 1)
 #define WC_TRAY_CLASS_NAME "TRAY"
 #define ID_TRAY_FIRST 1000
@@ -239,6 +248,9 @@ static LRESULT CALLBACK _tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam,
     if (lparam == WM_LBUTTONUP || lparam == WM_RBUTTONUP) {
       POINT p;
       GetCursorPos(&p);
+      if (eui_tray_menu_requested(p.x, p.y, lparam == WM_LBUTTONUP ? 1 : 0)) {
+        return 0;
+      }
       SetForegroundWindow(hwnd);
       WORD cmd = TrackPopupMenu(hmenu, TPM_LEFTALIGN | TPM_RIGHTBUTTON |
                                            TPM_RETURNCMD | TPM_NONOTIFY,

@@ -93,6 +93,8 @@ const char* trayIconPath();
 const std::vector<core::platform::TrayMenuItem>& trayMenuItems();
 /** @brief 是否在内置 Show/Exit 之外保留默认项（见 DslAppConfig::trayMenu）。 */
 bool trayKeepDefaultMenuItems();
+/** @brief 托盘菜单接管回调（DslAppConfig::onTrayMenu 注册），可能为空。 */
+const core::platform::TrayMenuRequestedHandler& trayMenuRequestedHandler();
 void requestUpdate();
 /**
  * @brief 请求退出应用：下一帧主循环退出（等同托盘 Exit，走同一清理路径）。

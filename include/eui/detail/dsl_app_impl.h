@@ -316,6 +316,10 @@ bool trayKeepDefaultMenuItems() {
     return dslAppConfig().trayKeepDefaultMenuValue;
 }
 
+const core::platform::TrayMenuRequestedHandler& trayMenuRequestedHandler() {
+    return dslAppConfig().trayMenuRequestedHandlerValue;
+}
+
 void requestUpdate() {
     core::platform::requestUiUpdate();
 }

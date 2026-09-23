@@ -68,6 +68,18 @@ bool isTrayInitialized();
  * （此时应用需自行提供退出入口）。主线程调用。
  */
 void setTrayMenu(const std::vector<TrayMenuItem>& items, bool keepDefault = true);
+/**
+ * @brief 托盘菜单接管 handler（当前仅 Windows tray.h Win32 分支触发）。
+ *
+ * 托盘图标按下（左/右键）时先于原生菜单弹出调用 handler(x, y, leftButton)：
+ * 返回 true = 上层已自行展示菜单（如 components::showStyledMenu 独立菜单窗），
+ * 原生 TrackPopupMenu 被跳过；返回 false = 降级弹原生托盘菜单（保持既有行为）。
+ * 坐标为光标物理像素（GetCursorPos）。在托盘消息泵（主线程）里调用，可在
+ * handler 内安全走 app::openWindow / requestUpdate。传空 std::function 注销。
+ * 其他平台不调用，注册无副作用。
+ */
+using TrayMenuRequestedHandler = std::function<bool(int x, int y, bool left_button)>;
+void setTrayMenuRequestedHandler(TrayMenuRequestedHandler handler);
 void pollTray(bool blocking = false);
 bool consumeTrayShowRequested();
 bool consumeTrayExitRequested();

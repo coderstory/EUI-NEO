@@ -34,6 +34,15 @@ typedef struct eui_tray_menu_item {
 void eui_tray_set_menu(const eui_tray_menu_item* items, int count, int keep_default);
 
 /*
+ * 菜单接管钩子（当前仅 Windows tray.h Win32 分支触发）。
+ * fn(x, y, left_button)：托盘图标按下（左/右）在弹原生菜单前调用，坐标为
+ * 光标物理像素（GetCursorPos）。返回非 0 = 上层已接管菜单展示，跳过原生
+ * 菜单；返回 0 = 按原行为弹原生菜单。fn 传 NULL 注销钩子。
+ */
+typedef int (*eui_tray_menu_requested_fn)(int x, int y, int left_button);
+void eui_tray_set_menu_requested_fn(eui_tray_menu_requested_fn fn);
+
+/*
  * 纯函数：把自定义项与默认 Show/Exit 合成最终菜单，写入 out（容量 out_capacity）。
  * 返回实际项数。默认项使用调用方传入的 show_cb/exit_cb（user 为 NULL 调用）。
  * 供各平台后端与单元测试共用。

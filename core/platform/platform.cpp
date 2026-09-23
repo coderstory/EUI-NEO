@@ -739,6 +739,24 @@ void setTrayMenu(const std::vector<TrayMenuItem>& items, bool keepDefault) {
     applyTrayMenu(state);
 }
 
+namespace {
+TrayMenuRequestedHandler& trayMenuRequestedHandler() {
+    static TrayMenuRequestedHandler handler;
+    return handler;
+}
+
+int trayMenuRequestedTrampoline(int x, int y, int left_button) {
+    const TrayMenuRequestedHandler& handler = trayMenuRequestedHandler();
+    return handler && handler(x, y, left_button != 0) ? 1 : 0;
+}
+} // namespace
+
+void setTrayMenuRequestedHandler(TrayMenuRequestedHandler handler) {
+    trayMenuRequestedHandler() = std::move(handler);
+    eui_tray_set_menu_requested_fn(trayMenuRequestedHandler() ? &trayMenuRequestedTrampoline
+                                                              : nullptr);
+}
+
 bool initializeTray(const TrayOptions& options) {
     TrayState& state = trayState();
     if (state.initialized) {

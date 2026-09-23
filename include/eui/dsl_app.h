@@ -51,6 +51,7 @@ struct DslAppConfig {
     std::string trayIconPathValue;
     std::vector<core::platform::TrayMenuItem> trayMenuValue;
     bool trayKeepDefaultMenuValue = true;
+    core::platform::TrayMenuRequestedHandler trayMenuRequestedHandlerValue;
     std::function<void(const eui::KeyEvent&)> keyEventHandler;
     std::function<void()> shutdownHandler;
     std::function<void(const std::string&)> openFileHandler;
@@ -165,6 +166,19 @@ struct DslAppConfig {
     DslAppConfig& trayMenu(std::vector<core::platform::TrayMenuItem> items, bool keepDefault = true) {
         trayMenuValue = std::move(items);
         trayKeepDefaultMenuValue = keepDefault;
+        return *this;
+    }
+    /**
+     * @brief 托盘菜单接管回调（当前仅 Windows 触发；见
+     *        core::platform::setTrayMenuRequestedHandler 语义）。
+     *
+     * 托盘按下（左/右键）时先于原生菜单弹出调用 handler(x, y, leftButton)：
+     * 返回 true = 上层已自行展示菜单（如 components::showStyledMenu），原生
+     * 菜单跳过；返回 false = 照常弹 trayMenu() 注册的原生菜单（降级路径）。
+     * 坐标为光标物理像素，主线程回调。未注册 = 行为与本参数不存在时一致。
+     */
+    DslAppConfig& onTrayMenu(std::function<bool(int x, int y, bool leftButton)> handler) {
+        trayMenuRequestedHandlerValue = std::move(handler);
         return *this;
     }
     DslAppConfig& onKeyEvent(std::function<void(const eui::KeyEvent&)> handler) {
