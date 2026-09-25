@@ -36,6 +36,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,6 +52,9 @@ struct StyledMenuItem {
     // 非空 = 子项组：本行画成组头（muted + chevron，不可选），
     // 子项紧随其后缩进渲染（独立弹窗内不递归开窗）
     std::vector<StyledMenuItem> children;
+    // opt-in 组折叠：true = 默认只显组头（折叠态），运行期点组头/chevron 切换
+    // 展开。false（默认）= 旧行为（总展平），向后兼容。DevDesk 桌宠换肤组设 true。
+    bool collapsedByDefault = false;
 
     StyledMenuItem() = default;
     explicit StyledMenuItem(std::string value) : text(std::move(value)) {}
@@ -73,6 +77,9 @@ struct StyledMenuRow {
     bool disabled = false;
     bool checked = false;
     int depth = 0;  // 缩进层级（组内子项 = 1）
+    // 组头行：源项 collapsedByDefault=true 时为可折叠组（true），
+    // 运行期可点组头/chevron 切换展开态；false = 总展平（旧行为）
+    bool collapsible = false;
 };
 
 namespace styled_menu_detail {
@@ -81,8 +88,15 @@ namespace styled_menu_detail {
 // core::platform::contextMenuCommandPaths 对齐：向量的原始下标，分隔线
 // 不产生可选中 path。子项组 = 组头行（path={i}，不可选）+ 子项行
 // （path={i,j}）。
+//
+// expanded 为 nullptr → 全展开（忽略 collapsedByDefault，所有组展平），
+//   用于开窗高度/宽度预留（宁高勿叠，展开子行不溢出窗外）。
+// expanded 非 nullptr → 按展开态：collapsedByDefault=true 且 path 不在
+//   expanded 中 → 只推组头（折叠态）；否则推组头 + 子行。
+// collapsedByDefault=false 的组恒展平（旧行为，向后兼容）。
 inline void flattenRecursive(const std::vector<StyledMenuItem>& items,
                              const std::vector<int>& prefix, int depth,
+                             const std::set<std::vector<int>>* expanded,
                              std::vector<StyledMenuRow>& out) {
     for (std::size_t i = 0; i < items.size(); ++i) {
         const StyledMenuItem& item = items[i];
@@ -102,8 +116,15 @@ inline void flattenRecursive(const std::vector<StyledMenuItem>& items,
             header.text = item.text;
             header.iconCodepoint = item.iconCodepoint;
             header.depth = depth;
+            header.collapsible = item.collapsedByDefault;
             out.push_back(std::move(header));
-            flattenRecursive(item.children, path, depth + 1, out);
+            const bool expand =
+                !item.collapsedByDefault ||
+                expanded == nullptr ||
+                expanded->count(path) > 0;
+            if (expand) {
+                flattenRecursive(item.children, path, depth + 1, expanded, out);
+            }
             continue;
         }
         StyledMenuRow row;
@@ -120,9 +141,31 @@ inline void flattenRecursive(const std::vector<StyledMenuItem>& items,
 
 } // namespace styled_menu_detail
 
+// 默认折叠态 flatten：collapsedByDefault=true 组折叠（只出组头），
+// collapsedByDefault=false 组展平（旧行为）。向后兼容——未设
+// collapsedByDefault 的菜单与改造前行为完全一致。
 inline std::vector<StyledMenuRow> styledMenuFlatten(const std::vector<StyledMenuItem>& items) {
     std::vector<StyledMenuRow> rows;
-    styled_menu_detail::flattenRecursive(items, {}, 0, rows);
+    const std::set<std::vector<int>> emptyExpanded;
+    styled_menu_detail::flattenRecursive(items, {}, 0, &emptyExpanded, rows);
+    return rows;
+}
+
+// 指定展开态 flatten：expanded 含 path 的可折叠组展开，其余可折叠组折叠。
+// 运行期点组头切换 expandedSet 后重算 rows 用此重载。
+inline std::vector<StyledMenuRow> styledMenuFlatten(const std::vector<StyledMenuItem>& items,
+                                                    const std::set<std::vector<int>>& expanded) {
+    std::vector<StyledMenuRow> rows;
+    styled_menu_detail::flattenRecursive(items, {}, 0, &expanded, rows);
+    return rows;
+}
+
+// 全展开 flatten（忽略 collapsedByDefault，所有组展平）——用于开窗时按
+// 全展开行数预留高度/宽度，折叠态子行画进预留区不溢出窗外（窗口尺寸定死、
+// 无运行期 size setter，取"宁高勿叠"语义，对齐 petMenuFullHeight）。
+inline std::vector<StyledMenuRow> styledMenuFlattenAllExpanded(const std::vector<StyledMenuItem>& items) {
+    std::vector<StyledMenuRow> rows;
+    styled_menu_detail::flattenRecursive(items, {}, 0, nullptr, rows);
     return rows;
 }
 
@@ -239,7 +282,9 @@ inline StyledMenuRect styledMenuClampPosition(float desiredX, float desiredY,
 namespace styled_menu_detail {
 
 struct StyledMenuRuntime {
-    std::vector<StyledMenuRow> rows;
+    std::vector<StyledMenuItem> items;  // 原始菜单树（组头切换展开态时重算 rows）
+    std::set<std::vector<int>> expandedSet;  // 当前展开的可折叠组 path 集合
+    std::vector<StyledMenuRow> rows;  // 当前展开态扁平行（渲染用）
     StyledMenuStyle style;
     std::function<void(const std::vector<int>&)> onSelect;
     core::window::Handle handle = nullptr;
@@ -287,18 +332,35 @@ inline bool showStyledMenu(const std::string& id,
                            std::function<void(const std::vector<int>&)> onSelect) {
     using namespace styled_menu_detail;
 
-    const std::vector<StyledMenuRow> rows = styledMenuFlatten(items);
-    if (rows.empty() || styledMenuSelectableCount(rows) == 0) {
+    // 当前折叠态行（初始显示 + 降级守卫）：collapsedByDefault=true 组只出组头
+    const std::vector<StyledMenuRow> currentRows = styledMenuFlatten(items);
+    if (currentRows.empty() || styledMenuSelectableCount(currentRows) == 0) {
         return false;
     }
+    // 全展开行（开窗高度/宽度预留——窗口尺寸定死无运行期 setter，按全展开
+    // 行数预留高度，折叠时组头下方留白，展开子行填进预留区不溢出窗外）
+    const std::vector<StyledMenuRow> fullRows = styledMenuFlattenAllExpanded(items);
 
     // 关旧开新（单实例）
     if (activeRuntime()) {
         requestDismiss(activeRuntime());
     }
 
-    const float panelHeight = styledMenuPanelHeight(rows, style);
-    const float windowWidth = style.panelWidth + style.margin * 2.0f;
+    // 宽度自适应（2026-09-24 DevDesk 反馈：固定 220 装不下较长中文菜单
+    // 文本）：最长行文本实宽 + 行首图标位 + 尾部勾选/箭头位 + 缩进 + 双侧
+    // inset，下限 style.panelWidth。按全展开行算宽——折叠子行文本也要装得下
+    float panelWidth = style.panelWidth;
+    for (const StyledMenuRow& row : fullRows) {
+        if (row.kind == StyledMenuRowKind::Separator) continue;
+        const float textW = core::TextPrimitive::measureTextWidth(
+            row.text, {}, style.fontSize);
+        const float rowNeed = style.inset * 2.0f + style.iconArea +
+                              static_cast<float>(row.depth) * style.indent +
+                              textW + style.iconArea;
+        panelWidth = std::max(panelWidth, rowNeed);
+    }
+    const float panelHeight = styledMenuPanelHeight(fullRows, style);
+    const float windowWidth = panelWidth + style.margin * 2.0f;
     const float windowHeight = panelHeight + style.margin * 2.0f;
 
     // 位置钳制：选包含期望点的工作区，查不到（无头）则原样
@@ -342,7 +404,8 @@ inline bool showStyledMenu(const std::string& id,
     }
 
     auto runtime = std::make_shared<StyledMenuRuntime>();
-    runtime->rows = rows;
+    runtime->items = std::move(items);  // 原始菜单树（组头切换时重算 rows）
+    runtime->rows = currentRows;        // 初始折叠态显示行
     runtime->style = style;
     runtime->onSelect = std::move(onSelect);
     activeRuntime() = runtime;
@@ -455,6 +518,29 @@ inline bool showStyledMenu(const std::string& id,
                                             .build();
                                     }
 
+                                    if (row.kind == StyledMenuRowKind::GroupHeader && row.collapsible) {
+                                        // 折叠组头 hit：点击/chevron 切换展开态，不 dismiss
+                                        // （菜单保持打开，子行画进预留高度区）。窗口生命期内
+                                        // expandedSet 持久——切回折叠态也走此路径
+                                        ui.rect(rowId + ".hit")
+                                            .position(panelX + style.inset, rowY)
+                                            .size(std::max(0.0f, panelWidth - style.inset * 2.0f), style.rowHeight)
+                                            .states(theme::color(0.0f, 0.0f, 0.0f, 0.0f), style.hover, style.hover)
+                                            .radius(std::max(2.0f, style.radius - 6.0f))
+                                            .instantStates()
+                                            .onClick([runtime, path = row.path] {
+                                                if (runtime->expandedSet.count(path) > 0) {
+                                                    runtime->expandedSet.erase(path);
+                                                } else {
+                                                    runtime->expandedSet.insert(path);
+                                                }
+                                                runtime->rows = styledMenuFlatten(
+                                                    runtime->items, runtime->expandedSet);
+                                                app::requestUpdate();
+                                            })
+                                            .build();
+                                    }
+
                                     const core::Color labelColor =
                                         row.disabled || row.kind == StyledMenuRowKind::GroupHeader
                                             ? style.mutedText
@@ -482,17 +568,24 @@ inline bool showStyledMenu(const std::string& id,
                                                   (row.checked ? style.iconArea : 0.0f)),
                                               style.rowHeight)
                                         .text(row.text)
-                                        .fontSize(style.fontSize)
+                                        .fontSize(style.fontSize).fontWeight(400)
                                         .lineHeight(style.lineHeight)
                                         .color(labelColor)
                                         .verticalAlign(core::VerticalAlign::Center)
                                         .build();
 
                                     if (row.kind == StyledMenuRowKind::GroupHeader) {
+                                        // chevron 随折叠态：折叠 ▸(0xF054)/展开 ▾(0xF078)；
+                                        // 非折叠组恒右箭头（旧行为，总展平）
+                                        const int chevronIcon = row.collapsible
+                                            ? (runtime->expandedSet.count(row.path) > 0
+                                               ? 0xF078   // ▾ fa-chevron-down（展开态）
+                                               : 0xF054)  // ▸ fa-chevron-right（折叠态）
+                                            : 0xF054;
                                         ui.text(rowId + ".chevron")
                                             .position(panelX + panelWidth - style.inset - style.iconArea, rowY)
                                             .size(style.iconArea, style.rowHeight)
-                                            .icon(0xF054)  // fa-chevron-right
+                                            .icon(chevronIcon)
                                             .fontSize(style.iconSize - 2.0f)
                                             .lineHeight(style.rowHeight)
                                             .color(style.mutedText)
