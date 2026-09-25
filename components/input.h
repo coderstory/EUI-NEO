@@ -136,7 +136,13 @@ public:
             const bool wasFocused = focused;
             state.text = text_;
             ++state.textRevision;
-            state.cursor = InputModel::clampUtf8Boundary(state.text, static_cast<int>(state.text.size()));
+            // 程序赋值（预填/外部改值）且未聚焦 → 光标回开头：光标在末尾会带动
+            // 水平滚动到尾部，长文本只见后半段（2026-09-24 DevDesk 导入表单
+            // 反馈：环境变量名/值显示尾部）；聚焦中的同步（undo 恢复等）保持
+            // 末尾光标——用户正在编辑
+            state.cursor = wasFocused
+                ? InputModel::clampUtf8Boundary(state.text, static_cast<int>(state.text.size()))
+                : 0;
             state.selectionStart = state.cursor;
             state.selectionEnd = state.cursor;
             if (!wasFocused) {
