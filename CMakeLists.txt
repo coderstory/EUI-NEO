@@ -111,24 +111,32 @@ if(APPLE)
 endif()
 
 function(eui_apply_compile_options target_name)
+    # Size-first codegen (-Os / /O1) is this project's own default. Consumer
+    # applications pass NO_SIZE_OPT so the app keeps the optimization level its
+    # CMAKE_BUILD_TYPE selects: DevDesk needs -O2/-O3, and -Os also trips a GCC
+    # 16.2 constexpr std::string C4-mangling link error against MSYS2 libstdc++.
+    set(_eui_size_opt TRUE)
+    if("NO_SIZE_OPT" IN_LIST ARGN)
+        set(_eui_size_opt FALSE)
+    endif()
     if(MSVC)
         target_compile_options(${target_name} PRIVATE
             /utf-8
             /wd4530
-            $<$<NOT:$<CONFIG:Debug>>:/O1>
+            $<$<AND:$<NOT:$<CONFIG:Debug>>,$<BOOL:${_eui_size_opt}>>:/O1>
             $<$<NOT:$<CONFIG:Debug>>:/GS->
             $<$<NOT:$<CONFIG:Debug>>:/sdl->
             $<$<NOT:$<CONFIG:Debug>>:/wd4819>
         )
     elseif(APPLE)
         target_compile_options(${target_name} PRIVATE
-            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>>:-Os>
+            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>,$<BOOL:${_eui_size_opt}>>:-Os>
             $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>,$<NOT:$<STREQUAL:${target_name},vcd_viewer>>,$<NOT:$<STREQUAL:${target_name},gpu_image_probe>>>:-fno-exceptions>
             $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>>:-fno-rtti>
         )
     else()
         target_compile_options(${target_name} PRIVATE
-            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>>:-Os>
+            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>,$<BOOL:${_eui_size_opt}>>:-Os>
             $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>,$<NOT:$<STREQUAL:${target_name},vcd_viewer>>,$<NOT:$<STREQUAL:${target_name},gpu_image_probe>>>:-fno-exceptions>
             $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>>:-fno-rtti>
         )
@@ -315,7 +323,8 @@ elseif(APPLE)
 endif()
 target_link_libraries(eui_neo PUBLIC Threads::Threads)
 target_compile_features(eui_neo PUBLIC cxx_std_17)
-target_compile_definitions(eui_neo PRIVATE YYJSON_DISABLE_WRITER=1)
+# YYJSON_DISABLE_WRITER was dropped here (and on eui_yyjson below): consumers
+# that include <yyjson.h> and link eui::neo need yyjson_mut_* to exist.
 # Keep application-facing debug defaults tied to CMake's configuration rather
 # than compiler-specific NDEBUG flags.  FetchContent consumers inherit this
 # definition through eui::neo when their target links the framework.
@@ -344,7 +353,6 @@ set(EUI_YYJSON_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/3rd/yyjson-0.12.0/src/yyjson.
 if(EUI_BUILD_SHARED)
     add_library(eui_yyjson STATIC "${EUI_YYJSON_SOURCE}")
     target_include_directories(eui_yyjson PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/3rd/yyjson-0.12.0/src")
-    target_compile_definitions(eui_yyjson PRIVATE YYJSON_DISABLE_WRITER=1)
     set_target_properties(eui_yyjson PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         C_VISIBILITY_PRESET hidden
@@ -511,7 +519,7 @@ function(eui_neo_configure_app target_name)
     endif()
     target_sources(${target_name} PRIVATE "${_eui_app_main_source}" ${_eui_app_icon_resource})
     target_link_libraries(${target_name} PRIVATE eui::neo)
-    eui_apply_compile_options(${target_name})
+    eui_apply_compile_options(${target_name} NO_SIZE_OPT)
     eui_apply_app_link_options(${target_name})
     eui_neo_copy_assets(${target_name})
     eui_neo_copy_runtime_dependencies(${target_name})

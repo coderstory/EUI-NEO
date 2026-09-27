@@ -780,7 +780,10 @@ inline std::size_t markdownDocumentCacheBytes(const std::string& source, const M
 }
 
 inline std::shared_ptr<const MarkdownDocument> cachedMarkdownDocument(const std::string& source) {
-    constexpr std::size_t kCacheCapacity = 8;
+    // 64 = one screenful of typical blocks; with 8 a long document evicted
+    // nearly every entry between frames and re-parsed on each compose pass.
+    // Total memory stays bounded by kCacheByteCapacity below.
+    constexpr std::size_t kCacheCapacity = 64;
     constexpr std::size_t kCacheByteCapacity = 1024 * 1024;
     constexpr std::size_t kEntryByteCapacity = 256 * 1024;
     MarkdownDocumentCache& cache = sharedMarkdownDocumentCache();

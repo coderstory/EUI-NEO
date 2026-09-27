@@ -188,6 +188,7 @@ std::string fileFilterName(const FileDialogOptions& options) {
     return options.filterName.empty() ? "Allowed files" : options.filterName;
 }
 
+#if defined(__APPLE__)
 std::string appleScriptString(const std::string& value) {
     std::string result;
     result.reserve(value.size() + 8);
@@ -199,6 +200,7 @@ std::string appleScriptString(const std::string& value) {
     }
     return result;
 }
+#endif
 
 std::vector<std::string> splitLines(const std::string& value) {
     std::vector<std::string> lines;
@@ -383,6 +385,7 @@ std::string windowsDialogError(DWORD errorCode) {
     return "GetOpenFileNameW failed with error code " + std::to_string(errorCode) + ".";
 }
 #else
+#if defined(__APPLE__)
 std::string osascriptCommand(const std::vector<std::string>& lines) {
     std::string command = "osascript";
     for (const std::string& line : lines) {
@@ -427,6 +430,8 @@ std::string appleFileDialogCommand(const FileDialogOptions& options, const std::
         "end if"
     });
 }
+
+#endif
 
 bool commandWasCancelled(const CommandResult& command) {
     return command.exitCode != 0 &&
