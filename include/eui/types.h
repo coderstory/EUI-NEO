@@ -39,6 +39,7 @@ using PointerAction = core::PointerAction;
 using PointerButton = core::PointerButton;
 using PointerButtons = core::PointerButtons;
 using PointerEvent = core::PointerEvent;
+using PointerSpace = core::PointerSpace;
 using ShaderToyChannel = core::render::ShaderToyChannel;
 using ShaderToyChannelKind = core::render::ShaderToyChannelKind;
 using ShaderToyError = core::render::ShaderToyError;

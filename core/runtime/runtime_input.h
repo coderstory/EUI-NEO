@@ -404,6 +404,9 @@ inline void Runtime::updateInteraction(
             interactionBounds.width / dpiScale,
             interactionBounds.height / dpiScale
         };
+        // U1 尺度契约第一版（纯增量）：本事件坐标是逻辑像素（上面已除过 dpiScale），
+        // scale 仍带窗口内容缩放系数，故把 space 标成 Logical，消费方可双向换算。
+        logicalEvent.space = PointerSpace::Logical;
         if (element.onMove(logicalEvent, logicalBounds)) {
             composeRequested_ = true;
             paintRequested_ = true;
@@ -436,6 +439,8 @@ inline void Runtime::updateInteraction(
             interactionBounds.width / dpiScale,
             interactionBounds.height / dpiScale
         };
+        // U1 尺度契约第一版：同 onMove，坐标已除过 dpiScale，标 Logical。
+        logicalEvent.space = PointerSpace::Logical;
         element.onContextMenu(logicalEvent, logicalBounds);
         composeRequested_ = true;
         paintRequested_ = true;
@@ -506,7 +511,11 @@ inline void Runtime::updateInteraction(
             instance.state.dragDeltaY,
             instance.state.activeButton,
             event.buttons,
-            event.modifiers
+            event.modifiers,
+            // U1 尺度契约第一版（纯增量）：与源指针事件同空间（Physical）、
+            // 同内容缩放系数；既有字段语义不变。
+            event.scale,
+            event.space
         });
         composeRequested_ = true;
         paintRequested_ = true;

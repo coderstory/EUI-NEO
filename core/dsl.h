@@ -76,6 +76,12 @@ enum class LoaderMode {
 struct Screen {
     float width = 0.0f;
     float height = 0.0f;
+    // U1 尺度契约第一版（纯增量）：内容缩放系数，物理像素 = 逻辑像素 * scale。
+    // width/height 是逻辑像素，scale 是当帧生效值（app::update 的
+    // dpiScale * app::uiScale()），与 app::contentScale()、PointerEvent::scale
+    // 同源同值。不填（手工构造 Screen，如测试）时退化为 1.0 = 100% 无缩放。
+    // 注意 scale 方向：**物理 = 逻辑 * scale**（scale 恒 > 0）。
+    float scale = 1.0f;
 };
 
 struct DragEvent {
@@ -88,6 +94,13 @@ struct DragEvent {
     PointerButton button = PointerButton::None;
     PointerButtons buttons;
     KeyModifiers modifiers;
+    // ---- U1 尺度契约第一版（纯增量；上面既有字段语义不变）----
+    // scale 同 Screen::scale（物理 = 逻辑 * scale）；space 为本事件
+    // x/y/deltaX/deltaY/totalX/totalY 所处的空间——框架派发固定为 Physical
+    // （与 DragEvent 既有语义一致，delta 是帧缓冲像素）。第二版统一语义时
+    // 才可能改派 Logical，届时只换本说明。
+    float scale = 1.0f;
+    core::PointerSpace space = core::PointerSpace::Physical;
 };
 
 struct Element {

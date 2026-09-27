@@ -75,7 +75,8 @@ public:
         logicalHeight /= configuredScale;
         bool changed = false;
         const auto composeFrame = [&] {
-            runtime_.compose(request_.pageId, logicalWidth, logicalHeight,
+            // effectiveScale 透传给 compose：Screen::scale（U1 尺度契约第一版）
+            runtime_.compose(request_.pageId, logicalWidth, logicalHeight, effectiveScale,
                 [&](core::dsl::Ui& ui, const core::dsl::Screen& screen) {
                     request_.compose(ui, screen);
                 });
