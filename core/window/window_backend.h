@@ -64,6 +64,25 @@ struct MonitorWorkArea {
 // 供宿主按位置选对应显示器钳制（多显示器副屏坐标可能为负/超出主屏边界，
 // 只按主屏钳会吞掉副屏位置——DevDesk 桌宠 M2 需求）
 std::vector<MonitorWorkArea> getMonitorWorkAreas();
+/**
+ * @brief 显示器「逻辑单位 → 窗口（物理像素）单位」换算系数：包含屏幕点
+ *        (x, y)（物理像素，同 getMonitorWorkAreas 坐标系）的显示器 DPI / 96。
+ *
+ * 为什么需要：窗口创建尺寸直达后端 glfwCreateWindow / SDL_CreateWindow 的
+ * **客户区物理像素**，而 compose/render 侧按 framebuffer / (dpiScale ×
+ * uiScale) 折算逻辑坐标空间——两侧口径不同。把逻辑单位量出来的尺寸（如
+ * styledMenu 面板高：行高/inset/margin 全按逻辑单位定义）直接当窗尺寸传，
+ * 高 DPI 显示器上窗会比内容小一个缩放比（125% 下菜单末行文字溢出到窗底
+ * 之外、长菜单项被截）。乘本系数后两侧口径一致。
+ *
+ * Windows：GetDpiForMonitor（shcore.dll，运行期解析符号，不引链接期依赖）；
+ * 查询失败（无显示器 / 系统不支持）返回 1.0f，按 1:1 降级。
+ * 其他平台恒 1.0f——macOS 窗口单位是点（content scale=2 时乘会双倍放大）、
+ * X11 无独立物理/逻辑分层，均不该换算（保持既有行为）。
+ *
+ * 纯查表，不依赖窗口/GL 初始化，可在无头环境调用（供单测）。
+ */
+float windowScaleForPoint(float x, float y);
 void installInputCallbacks(Handle window);
 void uninstallInputCallbacks(Handle window);
 bool queryImeComposition(Handle window, std::string& text, bool& composing);

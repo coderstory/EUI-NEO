@@ -241,6 +241,29 @@ inline float styledMenuPanelHeight(const std::vector<StyledMenuRow>& rows, const
     return height;
 }
 
+// 窗口尺寸（窗宽高，物理像素——openWindow 的 windowSize 口径）
+struct StyledMenuWindowSize {
+    float width = 0.0f;
+    float height = 0.0f;
+};
+
+// 面板度量（逻辑单位）+ 缩放系数 → 窗口尺寸（物理像素）。
+// 面板四周 style.margin 为阴影留白（同样按逻辑单位定义），一并折算。
+// scale = core::window::windowScaleForPoint(锚点) × app::uiScale()：窗口尺寸走
+// 后端客户区物理像素，而布局按 framebuffer / (dpiScale × uiScale) 折算逻辑
+// 单位——不折算则高 DPI 显示器上窗比内容小一个缩放比（125% 下菜单末行溢出
+// 窗底、长菜单项被截）。scale <= 0（查询异常/未配置）按 1:1 降级。
+// 返回值已 ceil 到整像素：同一份值同时用于位置钳制与 windowSize，两处必须
+// 完全一致（钳制按物理像素工作区算，用逻辑尺寸会钳错）。
+// 纯函数（无平台/主题依赖），单测锁 1:1 与 1.25 两种取值。
+inline StyledMenuWindowSize styledMenuWindowSize(float panelWidth, float panelHeight,
+                                                 float margin, float scale) {
+    const float factor = scale > 0.0f ? scale : 1.0f;
+    return StyledMenuWindowSize{
+        std::ceil((panelWidth + margin * 2.0f) * factor),
+        std::ceil((panelHeight + margin * 2.0f) * factor)};
+}
+
 struct StyledMenuRect {
     float x = 0.0f;
     float y = 0.0f;
@@ -360,8 +383,14 @@ inline bool showStyledMenu(const std::string& id,
         panelWidth = std::max(panelWidth, rowNeed);
     }
     const float panelHeight = styledMenuPanelHeight(fullRows, style);
-    const float windowWidth = panelWidth + style.margin * 2.0f;
-    const float windowHeight = panelHeight + style.margin * 2.0f;
+    // 逻辑单位 → 物理像素（显示器缩放 × 用户缩放）：窗尺寸是后端客户区物理
+    // 像素，布局却按 framebuffer / (dpiScale × uiScale) 折算逻辑空间，不折算
+    // 高 DPI 下窗比内容小一个缩放比。位置/工作区本身已是物理像素，不参与。
+    const StyledMenuWindowSize windowSize = styledMenuWindowSize(
+        panelWidth, panelHeight, style.margin,
+        core::window::windowScaleForPoint(screenX, screenY) * app::uiScale());
+    const float windowWidth = windowSize.width;
+    const float windowHeight = windowSize.height;
 
     // 位置钳制：选包含期望点的工作区，查不到（无头）则原样
     float clampedX = screenX;
@@ -415,8 +444,9 @@ inline bool showStyledMenu(const std::string& id,
     app::openWindow(app::DslWindowConfig{}
                         .title("EUI Styled Menu")
                         .pageId(prefix)
-                        .windowSize(static_cast<int>(std::ceil(windowWidth)),
-                                    static_cast<int>(std::ceil(windowHeight)))
+                        // 与上面钳制用的是同一份（已折算 + 已取整）尺寸
+                        .windowSize(static_cast<int>(windowSize.width),
+                                    static_cast<int>(windowSize.height))
                         .windowPosition(static_cast<int>(std::floor(clampedX)),
                                         static_cast<int>(std::floor(clampedY)))
                         .decorated(false)               // 无边框

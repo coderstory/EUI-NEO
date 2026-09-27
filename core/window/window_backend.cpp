@@ -6,6 +6,80 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+
+// ---------------------------------------------------------------------------
+// 显示器缩放系数（逻辑单位 → 窗口物理像素）：两条窗口后端分支（SDL2 / GLFW）
+// 的窗口尺寸语义相同（客户区物理像素），故实现放在分支外，只写一份。
+// ---------------------------------------------------------------------------
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+namespace core::window {
+
+namespace {
+
+// GetDpiForMonitor（shcore.dll，Win8.1+）：运行期解析符号，不引入链接期依赖
+//（单 exe / 静态链接约束；同 sdl2_app_main.cpp 的 GetDpiForWindow 写法）。
+using GetDpiForMonitorFunction = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
+constexpr int kMonitorDpiEffective = 0;  // MONITOR_DPI_TYPE::MDT_EFFECTIVE_DPI
+
+float win32MonitorScaleForPoint(float x, float y) {
+    const POINT point{static_cast<LONG>(std::lround(x)),
+                      static_cast<LONG>(std::lround(y))};
+    // 点落在显示器外/负坐标副屏/显示器间隙时取最近显示器（不会返回 nullptr）
+    const HMONITOR monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+    if (monitor == nullptr) {
+        return 1.0f;
+    }
+    static const GetDpiForMonitorFunction getDpiForMonitor = [] {
+        HMODULE shcore = LoadLibraryW(L"shcore.dll");
+        return shcore != nullptr
+            ? reinterpret_cast<GetDpiForMonitorFunction>(
+                  GetProcAddress(shcore, "GetDpiForMonitor"))
+            : nullptr;
+    }();
+    if (getDpiForMonitor == nullptr) {
+        return 1.0f;
+    }
+    UINT dpiX = 0;
+    UINT dpiY = 0;
+    if (FAILED(getDpiForMonitor(monitor, kMonitorDpiEffective, &dpiX, &dpiY)) ||
+        dpiX == 0) {
+        return 1.0f;
+    }
+    return static_cast<float>(dpiX) / 96.0f;
+}
+
+} // namespace
+
+float windowScaleForPoint(float x, float y) {
+    return win32MonitorScaleForPoint(x, y);
+}
+
+} // namespace core::window
+
+#else
+
+namespace core::window {
+
+float windowScaleForPoint(float x, float y) {
+    // macOS：窗口单位是点，content scale（Retina=2）不是「逻辑→窗口」换算；
+    // X11：无独立物理/逻辑分层。两平台均保持 1:1（既有行为）。
+    (void)x;
+    (void)y;
+    return 1.0f;
+}
+
+} // namespace core::window
+
+#endif
+
 #if defined(EUI_WINDOW_BACKEND_SDL2)
 
 #include <SDL.h>
