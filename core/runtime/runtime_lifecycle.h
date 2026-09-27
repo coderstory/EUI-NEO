@@ -13,11 +13,18 @@ inline bool Runtime::initialize(core::window::Handle window) {
 
 template <typename ComposeFn>
 inline void Runtime::compose(const std::string& pageId, float logicalWidth, float logicalHeight, ComposeFn&& composeFn) {
+    // 旧签名转发（U1 向后兼容）：不传 contentScale 的调用方 Screen::scale = 1.0f。
+    compose(pageId, logicalWidth, logicalHeight, 1.0f, std::forward<ComposeFn>(composeFn));
+}
+
+template <typename ComposeFn>
+inline void Runtime::compose(const std::string& pageId, float logicalWidth, float logicalHeight, float contentScale, ComposeFn&& composeFn) {
     // 审计 [38] 性能：previousStructure 仅作本帧比较基线，elementStructure_ 随后被
     // collectElementStructure() 无条件重新赋值——move 拿走旧值即可，省去整棵元素结构
     // （含每个元素 id 字符串）的深拷贝；语义不变。
     auto previousStructure = std::move(elementStructure_);
-    const Screen screen{logicalWidth, logicalHeight};
+    // U1 尺度契约第一版：Screen::scale = 本帧内容缩放系数（物理 = 逻辑 * scale）。
+    const Screen screen{logicalWidth, logicalHeight, contentScale};
     ui_.begin(pageId);
     ui_.setFocusedId(focusedId_);
     composeFn(ui_, screen);
@@ -86,6 +93,14 @@ inline bool Runtime::update(core::window::Handle window, float deltaSeconds, flo
     animating_ = false;
     composeRequested_ = false;
     wantsHandCursor_ = false;
+    // U1 尺度契约第一版（纯增量）：本帧全部指针事件由框架在此标注"坐标空间 +
+    // 内容缩放系数"，随事件下推到各回调（onPress/onRelease/onMove/onContextMenu/
+    // onDrag）。只填新字段，既有坐标语义不变——原始事件是物理像素；
+    // onMove/onContextMenu 仍在派发点翻成逻辑像素并同步把 space 标成 Logical。
+    for (PointerEvent& event : pointerEvents) {
+        event.scale = dpiScale;
+        event.space = PointerSpace::Physical;
+    }
     if (pruneInstancesRequested_) {
         instances_.markInstancesUnseen();
     }

@@ -74,6 +74,9 @@ struct DslAppState {
     bool iconApplied = false;
     float logicalWidth = 0.0f;
     float logicalHeight = 0.0f;
+    // U1 尺度契约第一版：主窗口最近一次 update 的内容缩放系数
+    //（物理 = 逻辑 * scale），app::contentScale() 的取值来源。
+    float contentScale = 1.0f;
 };
 
 inline DslAppState& dslAppState() {
@@ -294,6 +297,12 @@ float uiScale() {
     return configuredScale > 0.0f ? configuredScale : 1.0f;
 }
 
+float contentScale() {
+    // U1 尺度契约第一版：由主窗口 app::update 每帧回写（见下方 update 实现），
+    // 首次 update 之前恒为 1.0f。语义见声明处注释（include/eui/app.h）。
+    return detail::dslAppState().contentScale;
+}
+
 bool trayEnabled() {
     return dslAppConfig().trayEnabledValue;
 }
@@ -462,9 +471,11 @@ bool update(core::window::Handle window, float deltaSeconds, int windowWidth, in
     const float logicalWidth = static_cast<float>(windowWidth) / effectiveScale;
     const float logicalHeight = static_cast<float>(windowHeight) / effectiveScale;
     detail::DslAppState& state = detail::dslAppState();
+    // U1 尺度契约第一版：回写主窗口内容缩放系数，供 app::contentScale() 查询。
+    state.contentScale = effectiveScale;
 
     const auto composeFrame = [&] {
-        detail::dslRuntime().compose(config.pageIdValue, logicalWidth, logicalHeight, [](core::dsl::Ui& ui, const core::dsl::Screen& screen) {
+        detail::dslRuntime().compose(config.pageIdValue, logicalWidth, logicalHeight, effectiveScale, [](core::dsl::Ui& ui, const core::dsl::Screen& screen) {
             compose(ui, screen);
             const DslAppConfig& config = dslAppConfig();
             if (showDebugOverlay()) {

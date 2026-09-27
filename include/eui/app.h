@@ -86,6 +86,18 @@ bool windowDecorated();
 bool windowAlwaysOnTop();
 bool windowMaximized();
 float uiScale();
+/**
+ * @brief 当前主窗口内容缩放系数（U1 尺度契约第一版，纯增量 API）。
+ *
+ * 定义：**物理像素 = 逻辑像素 * contentScale**，取值为主循环传给 app::update 的
+ * dpiScale * uiScale()；与 compose 收到的 Screen::scale、指针事件的
+ * PointerEvent::scale / DragEvent::scale 同源同值。首次 update 之前返回 1.0f。
+ *
+ * 子窗口请用自己 compose 拿到的 Screen::scale（各窗口可能落在缩放不同的显示器上）。
+ * 典型用法：把 windowToCompose 这类换算的 dpiScale 入参直接换成它；或在指针回调里
+ * 用 (event.space == PointerSpace::Logical) ? v : v / event.scale 求逻辑像素值。
+ */
+float contentScale();
 bool trayEnabled();
 const char* trayTitle();
 const char* trayIconPath();

@@ -38,6 +38,13 @@ public:
         keyEventHandler_ = std::move(handler);
     }
 
+    /// contentScale：本帧生效的内容缩放系数（app::update 的 dpiScale * uiScale()），
+    /// 原样填入 Screen::scale 供 compose 侧消费（U1 尺度契约第一版，纯增量）。
+    template <typename ComposeFn>
+    void compose(const std::string& pageId, float logicalWidth, float logicalHeight, float contentScale, ComposeFn&& composeFn);
+
+    /// 旧签名（不传 contentScale）：行为与上方完全一致，仅 Screen::scale 退化为
+    /// 1.0f（等价 100% 无缩放）——既有调用方（如 DevDesk 的 spike 测试）零改动。
     template <typename ComposeFn>
     void compose(const std::string& pageId, float logicalWidth, float logicalHeight, ComposeFn&& composeFn);
 

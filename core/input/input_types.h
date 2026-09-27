@@ -149,6 +149,19 @@ enum class PointerAction {
     Cancel
 };
 
+/**
+ * @brief 指针事件坐标所处的空间（U1 尺度契约第一版，纯增量 API）。
+ *
+ * - Logical：逻辑像素（DSL 布局单位）。
+ * - Physical：物理像素（帧缓冲像素，窗口/显示器上报的原始坐标）。
+ *
+ * 换算关系：physical = logical * scale（scale 见 PointerEvent::scale）。
+ */
+enum class PointerSpace {
+    Logical,
+    Physical
+};
+
 struct PointerEvent {
     double x = 0.0;
     double y = 0.0;
@@ -158,6 +171,20 @@ struct PointerEvent {
     PointerButton button = PointerButton::None;
     PointerButtons buttons;
     KeyModifiers modifiers;
+
+    // ---- U1 尺度契约第一版（纯增量；上面既有字段语义一律不变）----
+    // scale：本事件所属窗口的当前内容缩放系数（physical = logical * scale），
+    //   即 app::update 传入的 dpiScale * app::uiScale()，与 compose 侧
+    //   Screen::scale、app::contentScale() 同源同值。
+    // space：本事件 x/y/deltaX/deltaY 所处的空间。**既有回调语义不变**——
+    //   onPress/onRelease/onDrag 收到的坐标仍是 Physical（原始物理像素），
+    //   onMove/onContextMenu 收到的仍是 Logical（框架已除过 scale）。
+    // 统一换算（任意指针回调通用）：
+    //   logical = (space == PointerSpace::Logical) ? v : v / scale
+    //   physical = (space == PointerSpace::Physical) ? v : v * scale
+    // 第二版会把全部指针回调统一到同一空间；届时只更新本注释，字段语义不变。
+    float scale = 1.0f;
+    PointerSpace space = PointerSpace::Physical;
 
     bool isDown(PointerButton value) const { return buttons.contains(value); }
     bool isPress(PointerButton value) const {
