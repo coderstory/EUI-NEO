@@ -578,10 +578,47 @@ std::string resolveProjectAssetPath(const std::string& filename) {
     return {};
 }
 
+// 平台首选系统 CJK UI 字体。理由：打包字体是装饰性/单一字重（或变量字体），
+// 既非用户熟悉的中文界面字体，也与「按同一份字体度量 + 渲染」的前提冲突；
+// 系统 CJK 字体（微软雅黑 / 苹方 / Noto CJK）覆盖 CJK + Latin，且必然存在。
+std::string resolvePreferredSystemUiFontPath() {
+#ifdef _WIN32
+    return firstExistingPath({
+        "C:/Windows/Fonts/msyh.ttc",    // 微软雅黑（Win 7+ 中文界面默认）
+        "C:/Windows/Fonts/msyhl.ttc",   // 微软雅黑 Light
+        "C:/Windows/Fonts/simhei.ttf",  // 黑体（兼容旧系统）
+    });
+#elif defined(__APPLE__)
+    return firstExistingPath({
+        "/System/Library/Fonts/PingFang.ttc",          // 苹方（macOS 10.11+）
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",  // 冬青黑体简体中文
+        "/System/Library/Fonts/STHeiti Light.ttc",
+    });
+#else
+    return firstExistingPath({
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-sans-cjk/NotoSansCJK-Regular.ttc",
+    });
+#endif
+}
+
 std::string resolveDefaultUiFontPath() {
+    // 优先级：显式 override（setDefaultFontFiles）→ 系统 CJK 字体 → 打包兜底
+    // → 系统 UI 字体。原顺序把打包字体放最前，导致默认界面用装饰性字体且
+    // 与系统字体混排（2026-09-27）
     const std::string& override = defaultUiFontFileOverride();
-    const std::string path = override.empty() ? resolveProjectAssetPath(kDefaultUiFontFile) : resolveFontFilePath(override);
-    if (const std::string existing = existingPath(path); !existing.empty()) {
+    if (!override.empty()) {
+        if (const std::string existing = existingPath(resolveFontFilePath(override)); !existing.empty()) {
+            return existing;
+        }
+    }
+    if (const std::string systemCjk = resolvePreferredSystemUiFontPath(); !systemCjk.empty()) {
+        return systemCjk;
+    }
+    const std::string bundled = resolveProjectAssetPath(kDefaultUiFontFile);
+    if (const std::string existing = existingPath(bundled); !existing.empty()) {
         return existing;
     }
     return resolveSystemUiFontPath();
