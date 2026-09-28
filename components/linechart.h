@@ -89,10 +89,10 @@ public:
         const theme::ThemeMetricTokens& metrics = tokens_.metrics;
         const float titleX = metrics.spacing.large;
         const float titleY = metrics.typography.control;
-        const float plotX = 28.0f;
-        const float plotY = 70.0f;
-        const float plotWidth = std::max(1.0f, width_ - 56.0f);
-        const float plotHeight = std::max(1.0f, height_ - 112.0f);
+        const float plotX = chromeless_ ? 0.0f : 28.0f;
+        const float plotY = chromeless_ ? 0.0f : 70.0f;
+        const float plotWidth = chromeless_ ? width_ : std::max(1.0f, width_ - 56.0f);
+        const float plotHeight = chromeless_ ? height_ : std::max(1.0f, height_ - 112.0f);
         const float bottomY = plotY + plotHeight;
         AnimState& anim = ui_.state<AnimState>(id_ + ".anim");
         syncAnimation(anim);
@@ -110,6 +110,7 @@ public:
         ui_.stack(id_)
             .size(width_, height_)
             .content([&] {
+                if (!chromeless_) {
                 ui_.rect(id_ + ".bg")
                     .size(width_, height_)
                     .color(style_.background)
@@ -117,6 +118,7 @@ public:
                     .border(1.0f, style_.border)
                     .shadow(style_.shadow)
                     .build();
+                }
 
                 if (!chromeless_) {
                 ui_.text(id_ + ".title")
@@ -130,6 +132,7 @@ public:
                     .build();
                 }
 
+                if (!chromeless_) {
                 for (int line = 0; line < 4; ++line) {
                     const float y = plotY + static_cast<float>(line) * plotHeight / 3.0f;
                     ui_.rect(id_ + ".grid." + std::to_string(line))
@@ -138,6 +141,7 @@ public:
                         .size(plotWidth, metrics.spacing.hairline)
                         .color(style_.grid)
                         .build();
+                }
                 }
 
                 auto drawCapsuleSegment = [&](const std::string& segmentId, const core::Vec2& from, const core::Vec2& to) {
@@ -183,6 +187,7 @@ public:
 
                 std::vector<TooltipItem> tooltips;
                 tooltips.reserve(displayValues.size());
+                if (!chromeless_) {
                 for (int index = 0; index < count; ++index) {
                     const core::Vec2 point = displayPoints[static_cast<std::size_t>(index)];
                     const std::string pointId = id_ + ".point." + std::to_string(index);
@@ -198,6 +203,7 @@ public:
                         .build();
 
                     tooltips.push_back({pointId, dataLabel(index) + "  " + percent(valueAt(values_, index)), point.x, point.y});
+                }
                 }
 
                 const float labelWidth = std::max(28.0f, std::min(42.0f, count > 1 ? stepX : plotWidth));
