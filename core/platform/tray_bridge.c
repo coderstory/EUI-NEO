@@ -144,6 +144,7 @@ static NSMenu* g_menu = nil;
 
 @interface EUITrayTarget : NSObject <NSApplicationDelegate>
 - (void)itemSelected:(id)sender;
+- (void)trayButtonClicked:(id)sender;   // M1：状态栏按钮 action（左右键分流，macos-three-features §4.1）
 @end
 
 @implementation EUITrayTarget
@@ -151,6 +152,29 @@ static NSMenu* g_menu = nil;
     NSInteger index = [sender tag];
     if (index >= 0 && index < g_final_count && g_final_items[index].cb != NULL) {
         g_final_items[index].cb(g_final_items[index].user);
+    }
+}
+
+// M1（2026-09-28 macos-three-features 设计 §4.1）：状态栏按钮点击分流。
+// sendActionOn: 已把左右键都纳入 action；这里取当前事件类型判左右：
+//   - eui_tray_menu_requested 返回非 0 → 上层（DSL handler → DevDesk onTrayMenu）
+//     已接管本次菜单展示（styled 菜单），原生弹出被跳过——与 Win32 tray.h
+//     分流语义一致；
+//   - 返回 0 / 未注册 → 显式弹出当前菜单对象（原生降级路径）。本实现按
+//     §4.2 预备改法不挂 setMenu:，原生弹出只走这里（备选方案 = 恢复 setMenu:，
+//     即为实机清单 M1 第 0 项的「与 action 共存」形态）。
+// ⚠️ 坐标：Cocoa 屏幕坐标原点在主屏左下；EUI/上层坐标为左上原点 → y 翻转
+//   （设计 §12-3：翻转方向为设计推断，实机验证后必要时微调一行）。
+- (void)trayButtonClicked:(id)sender {
+    (void)sender;
+    NSEvent* event = [NSApp currentEvent];
+    const BOOL is_right = (event != nil && [event type] == NSRightMouseUp);
+    const NSPoint mouse = [NSEvent mouseLocation];
+    const NSRect screen = [[NSScreen mainScreen] frame];
+    const int x = (int)mouse.x;
+    const int y = (int)(screen.size.height - mouse.y);
+    if (eui_tray_menu_requested(x, y, is_right ? 0 : 1) == 0) {
+        [g_status_item popUpStatusItemMenu:g_menu];
     }
 }
 
@@ -230,8 +254,9 @@ static void eui_tray_menu_changed(void) {
                                          eui_menu_show, eui_menu_exit,
                                          g_final_items, EUI_TRAY_MAX_MENU_ITEMS + 3);
     if (g_target != nil) {
-        eui_tray_rebuild_menu();
-        [g_status_item setMenu:g_menu];   /* status_item 未创建时向 nil 发消息是安全的 */
+        eui_tray_rebuild_menu();   /* M1（macos-three-features §4.2 预备改法）：不 setMenu:——
+                                    * 挂 menu 时 AppKit 点击自动弹原生菜单、button action 不触发
+                                    * （共存为实机验证第 0 项）；原生弹出只走 trayButtonClicked: */
     }
 }
 
@@ -273,7 +298,14 @@ int eui_tray_init(const char* icon_path) {
         [button setImage:image];
         [button setImagePosition:NSImageOnly];
         [button setToolTip:@"EUI NEO"];
-        [g_status_item setMenu:g_menu];
+        // M1（2026-09-28 macos-three-features 设计 §4.1）：按钮挂 target/action；
+        // NSButton 默认只在左键时发 action，sendActionOn: 把右键一并纳入。
+        // §4.2 预备改法（不挂 setMenu:）：挂 menu 时 AppKit 点击自动弹原生菜单、
+        // action 可能不触发（共存为实机验证第 0 项）；原生降级弹出统一走
+        // trayButtonClicked: 内的 popUpStatusItemMenu:。备选方案 = 恢复 setMenu:。
+        [button setTarget:g_target];
+        [button setAction:@selector(trayButtonClicked:)];
+        [button sendActionOn:(NSLeftMouseUpMask | NSRightMouseUpMask)];
         if ([g_status_item respondsToSelector:@selector(setVisible:)]) {
             [g_status_item setVisible:YES];
         }
