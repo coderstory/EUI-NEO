@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.14)
 project(EUI-NEO VERSION 0.7.0)
 
+# macOS 平台文件（*.mm / ObjC++）进编译链（M0：macos-three-features 设计 §3）：
+# 仅 Apple 平台启用 ObjC++ 语言；Windows/Linux 分支不启用、不受影响
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
@@ -319,7 +325,9 @@ elseif(APPLE)
     target_link_libraries(eui_neo PUBLIC
         "-framework CoreAudio"
         "-framework AudioToolbox"
-        "-framework CoreFoundation")
+        "-framework CoreFoundation"
+        # macOS 原生窗口/系统能力（M2/M3 的 NSWindow 操作、原生菜单等）
+        "-framework Cocoa")
 endif()
 target_link_libraries(eui_neo PUBLIC Threads::Threads)
 target_compile_features(eui_neo PUBLIC cxx_std_17)

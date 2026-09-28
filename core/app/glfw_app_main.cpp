@@ -11,7 +11,12 @@
 #endif
 
 #include <GLFW/glfw3.h>
-#ifdef _WIN32
+#if defined(_WIN32)
+#include <GLFW/glfw3native.h>
+#elif defined(__APPLE__)
+// macOS 路径（M0：macos-three-features 设计 §3）：GLFW 官方原生窗口查询 API
+// glfwGetCocoaWindow（返回 NSWindow*）需先定义 GLFW_EXPOSE_NATIVE_COCOA
+#define GLFW_EXPOSE_NATIVE_COCOA
 #include <GLFW/glfw3native.h>
 #endif
 
@@ -247,11 +252,15 @@ void installWindowCallbacks(GLFWwindow* window, WindowState& windowState) {
 }
 
 // ============ 标题栏外观联动（磨砂设计文档 Phase A）============
-// 非 Windows 平台 nativeWindowHandle 返回 nullptr，
-// core::platform::applyTitleBarAppearance 内部静默降级。
+// macOS 返回 NSWindow*（M0：macos-three-features 设计 §3）；
+// 其余平台返回 nullptr，core::platform::applyTitleBarAppearance 内部静默降级。
 void* nativeWindowHandle(GLFWwindow* window) {
 #if defined(_WIN32)
     return glfwGetWin32Window(window);
+#elif defined(__APPLE__)
+    // GLFW 官方 macOS 原生窗口查询 API（返回 NSWindow*，见 3rd/glfw 的
+    // glfwGetCocoaWindow）；M2 磨砂 applyWindowEffect 与标题栏外观消费此句柄
+    return glfwGetCocoaWindow(window);
 #else
     (void)window;
     return nullptr;

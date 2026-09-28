@@ -728,6 +728,13 @@ std::vector<MonitorWorkArea> getMonitorWorkAreas() {
 #define GLFW_EXPOSE_NATIVE_WIN32
 #endif
 #include <GLFW/glfw3native.h>
+#elif defined(__APPLE__)
+// macOS 路径（M0：macos-three-features 设计 §3）：glfwGetCocoaWindow
+// （NSWindow*）填 NativeWindowInfo.platformWindow，M3 桌宠三项消费
+#ifndef GLFW_EXPOSE_NATIVE_COCOA
+#define GLFW_EXPOSE_NATIVE_COCOA
+#endif
+#include <GLFW/glfw3native.h>
 #endif
 
 #include "core/platform/ime_bridge.h"
@@ -837,6 +844,13 @@ NativeWindowInfo nativeWindowInfo(Handle window) {
     // 方无从取 HWND
     if (window != nullptr) {
         result.platformWindow = glfwGetWin32Window(static_cast<GLFWwindow*>(window));
+    }
+#elif defined(__APPLE__)
+    // platformWindow = NSWindow*（M0：macos-three-features 设计 §3）：M3 的
+    // applyWindowStyleFlags / showContextMenu 经 nativeWindowInfo(handle)
+    // .platformWindow 取原生窗口（桌宠 pet_window.cpp → app::openWindow 链路）
+    if (window != nullptr) {
+        result.platformWindow = glfwGetCocoaWindow(static_cast<GLFWwindow*>(window));
     }
 #endif
     return result;
