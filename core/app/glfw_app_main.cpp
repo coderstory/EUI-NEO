@@ -231,6 +231,11 @@ void installWindowCallbacks(GLFWwindow* window, WindowState& windowState) {
         }
         if (focused != GLFW_TRUE) {
             core::cancelInput(currentWindow);
+            // 失焦 → 请求全局重绘：styledMenu 的「失焦自关」检查嵌在菜单窗
+            // compose 闭包里，而 compose 只在全局更新请求时执行——不在此
+            // 处请求，点菜单外（桌宠/桌面/其它窗口）后菜单窗不再重绘、
+            // 检查被饿死，菜单永不消失（DevDesk 桌宠右键菜单 bug 根因）
+            core::platform::requestUiUpdate();
         }
         state->paintRequested = true;
         if (focused && state->modalChildWindow != nullptr && !glfwWindowShouldClose(state->modalChildWindow)) {
