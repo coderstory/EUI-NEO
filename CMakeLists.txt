@@ -268,9 +268,13 @@ if(EUI_WINDOW_BACKEND STREQUAL "glfw")
     list(APPEND CORE_SOURCES core/platform/ime_bridge.c)
 endif()
 
-# 标题栏外观（Phase A：深浅主题联动）。macOS/Linux 走 stub，Phase E 再分平台实现
+# 标题栏外观（Phase A：深浅主题联动）+ 窗口磨砂（Phase C/E）。
+# Windows 走 DWM；macOS 走 NSVisualEffectView（macos-three-features 设计 §5.2，
+# Tahoe 风险门：失败返回 false 由上层降级链收口）；其余平台走 stub
 if(WIN32)
     list(APPEND CORE_SOURCES core/platform/window_effect_win.cpp)
+elseif(APPLE)
+    list(APPEND CORE_SOURCES core/platform/window_effect_macos.mm)
 else()
     list(APPEND CORE_SOURCES core/platform/window_effect_stub.cpp)
 endif()
