@@ -327,7 +327,13 @@ inline std::shared_ptr<StyledMenuRuntime>& activeRuntime() {
     return runtime;
 }
 
-inline void requestDismiss(const std::shared_ptr<StyledMenuRuntime>& runtime) {
+// 注意：参数必须按值拷贝，不能按 const& 绑定——closeStyledMenu / 菜单再开
+// （showStyledMenu 关旧开新）直接传 activeRuntime() 的引用，函数内
+// activeRuntime().reset() 会把调用方那个 shared_ptr 本身置空，随后
+// runtime->handle 解引用空指针崩（DevDesk pet_probes 实测 SIGSEGV；
+// 真实场景「菜单开着再开第二个」同样触发）。按值拷贝后 reset 只清静态，
+// 本函数持有的副本仍有效。
+inline void requestDismiss(std::shared_ptr<StyledMenuRuntime> runtime) {
     if (!runtime || runtime->dismissed) {
         return;
     }
@@ -509,6 +515,20 @@ inline bool showStyledMenu(const std::string& id,
                         ui.stack(prefix)
                             .size(screen.width, screen.height)
                             .content([&] {
+                                // 全窗 dismiss（类 12 click-away 结构落点，
+                                // 仿 components/contextmenu.h:166-173）：透明
+                                // 命中层先于面板建、尺寸=整窗、z 垫底——点
+                                // 菜单窗内任何非行/非面板区（含阴影留白）都
+                                // 视为点击外部 → 关菜单。失焦自关的兜底
+                                //（Windows 点桌面不换前台窗时菜单会常驻）
+                                ui.rect(prefix + ".dismiss")
+                                    .size(screen.width, screen.height)
+                                    .states(theme::color(0.0f, 0.0f, 0.0f, 0.0f),
+                                            theme::color(0.0f, 0.0f, 0.0f, 0.0f),
+                                            theme::color(0.0f, 0.0f, 0.0f, 0.0f))
+                                    .onClick([runtime] { requestDismiss(runtime); })
+                                    .build();
+
                                 // 圆角面板 + 边框 + 阴影
                                 ui.rect(prefix + ".panel")
                                     .position(panelX, panelY)
