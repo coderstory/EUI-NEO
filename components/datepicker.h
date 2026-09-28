@@ -187,10 +187,12 @@ private:
         return std::string(buffer);
     }
 
+    // 中文月份（DevDesk UI 整改 14：原英文月份名硬编码；星期/今日在
+    // 滚轮式 datepicker 中不存在——本组件是 月/日/年 三列滚轮）
     static const char* monthName(int month) {
         static constexpr std::array<const char*, 12> names{{
-            "January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December"
+            "一月", "二月", "三月", "四月", "五月", "六月",
+            "七月", "八月", "九月", "十月", "十一月", "十二月"
         }};
         return names[static_cast<std::size_t>(std::clamp(month, 1, 12) - 1)];
     }
@@ -304,7 +306,7 @@ private:
             .y(metrics_.typography.control)
             .size(std::max(0.0f, width - metrics_.spacing.overlay * 2.0f - metrics_.control.compact),
                   metrics_.spacing.header)
-            .text("Date")
+            .text("选择日期")
             .fontSize(metrics_.typography.heading)
             .lineHeight(metrics_.typography.heading + metrics_.typography.lineGapRelaxed)
             .color(style_.text)
@@ -313,7 +315,9 @@ private:
         ui_.rect(id_ + ".done.bg")
             .x(std::max(0.0f, width - metrics_.spacing.overlay - metrics_.control.segmented))
             .y(metrics_.typography.control)
-            .size(metrics_.spacing.overlay + metrics_.spacing.content, metrics_.spacing.header)
+            // 按钮宽 = overlay + 2×content：中文「确定」二字比英文 Done 宽，
+            // 加 8px 余量防文字贴边（DevDesk UI 整改 14）
+            .size(metrics_.spacing.overlay + metrics_.spacing.content * 2.0f, metrics_.spacing.header)
             .states(style_.accent,
                     core::mixColor(style_.accent, theme::color(1.0f, 1.0f, 1.0f), 0.12f),
                     core::mixColor(style_.accent, theme::color(0.0f, 0.0f, 0.0f), 0.14f))
@@ -333,8 +337,8 @@ private:
         ui_.text(id_ + ".done.text")
             .x(std::max(0.0f, width - metrics_.spacing.overlay - metrics_.control.segmented))
             .y(metrics_.typography.control)
-            .size(metrics_.spacing.overlay + metrics_.spacing.content, metrics_.spacing.header)
-            .text("Done")
+            .size(metrics_.spacing.overlay + metrics_.spacing.content * 2.0f, metrics_.spacing.header)
+            .text("确定")
             .fontSize(metrics_.typography.option)
             .lineHeight(metrics_.typography.option + metrics_.typography.lineGapTight)
             .color(theme::color(1.0f, 1.0f, 1.0f))
