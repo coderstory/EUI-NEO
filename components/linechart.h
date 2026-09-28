@@ -68,6 +68,8 @@ public:
 
     LineChartBuilder& size(float width, float height) { width_ = width; height_ = height; return *this; }
     LineChartBuilder& title(const std::string& value) { title_ = value; return *this; }
+    // sparkline 模式：suppress 标题/底标签/tooltip（迷你图内嵌用法，勿漏 chrome）
+    LineChartBuilder& chromeless(bool v = true) { chromeless_ = v; return *this; }
     LineChartBuilder& values(std::vector<float> value) { values_ = std::move(value); return *this; }
     LineChartBuilder& labels(std::vector<std::string> value) { labels_ = std::move(value); return *this; }
     LineChartBuilder& style(const LineChartStyle& value) { style_ = value; return *this; }
@@ -116,6 +118,7 @@ public:
                     .shadow(style_.shadow)
                     .build();
 
+                if (!chromeless_) {
                 ui_.text(id_ + ".title")
                     .x(titleX)
                     .y(titleY)
@@ -125,6 +128,7 @@ public:
                     .lineHeight(metrics.typography.title + metrics.typography.lineGap)
                     .color(style_.title)
                     .build();
+                }
 
                 for (int line = 0; line < 4; ++line) {
                     const float y = plotY + static_cast<float>(line) * plotHeight / 3.0f;
@@ -197,12 +201,15 @@ public:
                 }
 
                 const float labelWidth = std::max(28.0f, std::min(42.0f, count > 1 ? stepX : plotWidth));
+                if (!chromeless_) {
                 for (int index = 0; index < count; ++index) {
                     const core::Vec2 point = displayPoints[static_cast<std::size_t>(index)];
                     const float labelX = std::clamp(point.x - labelWidth * 0.5f, 0.0f, std::max(0.0f, width_ - labelWidth));
                     label(id_ + ".label." + std::to_string(index), dataLabel(index), labelX, height_ - 34.0f, labelWidth);
                 }
+                }
 
+                if (!chromeless_) {
                 for (const TooltipItem& item : tooltips) {
                     components::tooltip(ui_, item.sourceId + ".tooltip")
                         .theme(tokens_)
@@ -212,6 +219,7 @@ public:
                         .bounds(width_, height_)
                         .style(tooltipStyle())
                         .build();
+                }
                 }
 
                 if (anim.animating) {
@@ -413,6 +421,7 @@ private:
     core::dsl::Ui& ui_;
     std::string id_;
     std::string title_ = "LineChart";
+    bool chromeless_ = false;
     std::vector<float> values_;
     std::vector<std::string> labels_ = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"};
     LineChartStyle style_;
