@@ -3,7 +3,6 @@
 // macOS 窗口本就不进 Dock（无「任务栏」概念）；「任务栏隐藏」的等价语义 =
 // 常驻全部 Space + 不参与 ⌘Tab 循环（mach 桌宠在换 Space / 应用循环时不可见）。
 #import <Cocoa/Cocoa.h>
-#include <GLFW/glfw3native.h>
 
 #include "window_style.h"
 
@@ -13,7 +12,11 @@ bool applyWindowStyleFlags(void* nativeHandle, const WindowStyleFlags& flags) {
     if (nativeHandle == nullptr) {
         return false;
     }
-    NSWindow* nsWindow = glfwGetCocoaWindow(static_cast<GLFWwindow*>(nativeHandle));
+    // 入参句柄在 __APPLE__ 下已由上游解析为 NSWindow*（glfw_app_main.cpp
+    // nativeWindowHandle / nativeWindowInfo().platformWindow），与
+    // window_effect_macos.mm 同一约定——禁止再按 GLFWwindow* 二次
+    // glfwGetCocoaWindow（会把 NSWindow 内存按 GLFW 窗口结构解引用）。
+    NSWindow* nsWindow = (__bridge NSWindow*)nativeHandle;
     if (nsWindow == nil) {
         return false;
     }

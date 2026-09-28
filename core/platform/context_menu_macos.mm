@@ -3,21 +3,19 @@
 // 桌宠右键菜单由自绘 contextMenu 组件升级为原生 NSMenu 弹出；
 // 命令 = 扁平命令路径表下标（对齐 context_menu.h / win 实现语义）。
 #import <Cocoa/Cocoa.h>
-#include <GLFW/glfw3native.h>
 
 #include <optional>
 #include <vector>
 
 #include "context_menu.h"
 
-namespace core::platform {
-
-namespace {
-
 // 弹出期间记录选中结果（popUp 同步返回，主线程使用安全）
-const std::vector<std::vector<int>>* g_popup_paths = nullptr;
-std::vector<int> g_selected_command_path;
-bool g_selected_any = false;
+// 注：ObjC 类只能在全局作用域声明（@implementation 方法体按文件作用域查名），
+// 故下列被回调访问的量一并放文件作用域；static 保持原匿名 namespace 的内部
+// 链接，语义不变。
+static const std::vector<std::vector<int>>* g_popup_paths = nullptr;
+static std::vector<int> g_selected_command_path;
+static bool g_selected_any = false;
 
 // 选中回调目标：action 必须是对象方法（C 函数不能作 selector），
 // 与 tray_bridge 的 EUITrayTarget 同模式
@@ -37,6 +35,10 @@ bool g_selected_any = false;
             : std::vector<int>{};
 }
 @end
+
+namespace core::platform {
+
+namespace {
 
 EUIContextMenuTarget* g_context_menu_target = nil;
 
@@ -83,7 +85,11 @@ std::optional<std::vector<int>> showContextMenu(
     if (nativeHandle == nullptr) {
         return std::nullopt;   // 句柄无效 → 调用方回退自绘菜单（与 stub 语义一致）
     }
-    NSWindow* nsWindow = glfwGetCocoaWindow(static_cast<GLFWwindow*>(nativeHandle));
+    // 入参句柄在 __APPLE__ 下已由上游解析为 NSWindow*（glfw_app_main.cpp
+    // nativeWindowHandle / nativeWindowInfo().platformWindow），与
+    // window_effect_macos.mm 同一约定——禁止再按 GLFWwindow* 二次
+    // glfwGetCocoaWindow（会把 NSWindow 内存按 GLFW 窗口结构解引用）。
+    NSWindow* nsWindow = (__bridge NSWindow*)nativeHandle;
     if (nsWindow == nil) {
         return std::nullopt;
     }
