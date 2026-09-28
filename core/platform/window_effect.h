@@ -67,4 +67,18 @@ inline WindowEffect degradedWindowEffect(WindowEffect /*desired*/, bool transpar
     return transparentFramebufferActive ? WindowEffect::Transparent : WindowEffect::None;
 }
 
+#if defined(__APPLE__)
+// macOS 专用：恢复/解除 AppKit 原生不透明窗口外观（setOpaque + 窗口背景色 +
+// 窗口阴影三件套）。透明帧缓冲 hint 是创建期属性不可逆（GLFW cocoa_window.m
+// 在 hint 生效时设 setOpaque:NO + 背景 clearColor + setHasShadow:NO），但
+// AppKit 侧这三项可逆：标题栏由 AppKit 绘制，只有不透明窗口才画标题栏背景，
+// 不恢复则「关」档整条标题栏透出桌面（Windows 侧由 DWM 代画非客户区，无此
+// 问题）。判据由调用方给（「关」档 clearColor alpha == 1 → true；半透/磨砂档
+// 必须保持非不透明，GL alpha 才能透出桌面/backdrop 材质 → false）——档位
+// 本身不足以判定：DevDesk 的「关」与「半透」都映射 WindowEffect::None。
+// 无边框窗（桌宠 sprite 窗）靠逐像素 alpha 透桌面，实现内按 styleMask 跳过。
+// 幂等、可运行时反复调用；返回是否实际应用（句柄无效/无标题栏/非 macOS → false）。
+bool applyWindowOpaqueAppearance(void* nativeWindowHandle, bool opaque);
+#endif
+
 } // namespace core::platform

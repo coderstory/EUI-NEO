@@ -4,6 +4,8 @@
 #include "core/dsl_runtime.h"
 #include "core/render/render_backend.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 namespace app {
@@ -75,6 +77,24 @@ public:
         logicalHeight /= configuredScale;
         bool changed = false;
         const auto composeFrame = [&] {
+#if defined(__APPLE__)
+            // compose 侧 screen.*（= framebuffer / dpiScale / uiScale）诊断
+            //（EUI_FX_DEBUG=1；非 Apple 平台预处理为空）：macOS 窗口尺寸折算链
+            // 的终点真值，布局缺陷取证用
+            if (const char* fxDbg = std::getenv("EUI_FX_DEBUG");
+                fxDbg != nullptr && *fxDbg != '\0') {
+                std::fprintf(stderr,
+                             "[layoutdiag] compose pageId=%s screen=(%.2f,%.2f) "
+                             "scale=%.4f dpiScale=%.4f uiScale=%.4f\n",
+                             request_.pageId.c_str(),
+                             static_cast<double>(logicalWidth),
+                             static_cast<double>(logicalHeight),
+                             static_cast<double>(effectiveScale),
+                             static_cast<double>(dpiScale),
+                             static_cast<double>(configuredScale));
+                std::fflush(stderr);
+            }
+#endif
             // effectiveScale 透传给 compose：Screen::scale（U1 尺度契约第一版）
             runtime_.compose(request_.pageId, logicalWidth, logicalHeight, effectiveScale,
                 [&](core::dsl::Ui& ui, const core::dsl::Screen& screen) {

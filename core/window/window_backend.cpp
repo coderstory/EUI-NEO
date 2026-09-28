@@ -776,11 +776,11 @@ Handle createWindow(const WindowCreateRequest& request) {
         // 窗口自身声明（transparentFramebuffer，桌宠等覆盖窗——不随全局档位
         // 回落 None 丢透明）。Vulkan 侧无对应能力（compositeAlpha 普遍
         // OPAQUE），直接不设。hint 会跨 glfwCreateWindow 残留，两态都显式设置。
+        const bool transparentHint =
+            request.windowEffect != platform::WindowEffect::None ||
+            request.transparentFramebuffer;
         glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER,
-                       request.windowEffect != platform::WindowEffect::None ||
-                               request.transparentFramebuffer
-                           ? GLFW_TRUE
-                           : GLFW_FALSE);
+                       transparentHint ? GLFW_TRUE : GLFW_FALSE);
         shareContext = static_cast<GLFWwindow*>(request.parent);
     }
     glfwWindowHint(GLFW_RESIZABLE, request.resizable ? GLFW_TRUE : GLFW_FALSE);
@@ -809,6 +809,52 @@ Handle createWindow(const WindowCreateRequest& request) {
     }
     // 透明 hint 回查（设计 §3.1.2）：桌面合成被禁用/老平台时 GLFW 静默降级为
     // 不透明。渲染侧（GL 后端）按同一属性自检走 straight blit，故此处只诊断。
+#if defined(__APPLE__)
+    // 创建期边界诊断（EUI_FX_DEBUG=1；非 Apple 平台预处理为空，翻译单元不变）：
+    // hint 请求值 / GLFW 回查值 / 尺寸与缩放折算链起点
+    if (const char* fxDebugEnv = std::getenv("EUI_FX_DEBUG");
+        fxDebugEnv != nullptr && *fxDebugEnv != '\0') {
+        int winW = 0;
+        int winH = 0;
+        int fbW = 0;
+        int fbH = 0;
+        float csX = 0.0f;
+        float csY = 0.0f;
+        glfwGetWindowSize(window, &winW, &winH);
+        glfwGetFramebufferSize(window, &fbW, &fbH);
+        glfwGetWindowContentScale(window, &csX, &csY);
+        std::fprintf(stderr,
+                     "[fxdiag] createWindow req.effect=%d req.transparentFb=%d hint=%d "
+                     "readback=%d window=%p title=%s\n",
+                     static_cast<int>(request.windowEffect),
+                     request.transparentFramebuffer ? 1 : 0,
+                     (request.windowEffect != platform::WindowEffect::None ||
+                      request.transparentFramebuffer)
+                         ? 1
+                         : 0,
+                     glfwGetWindowAttrib(window, GLFW_TRANSPARENT_FRAMEBUFFER),
+                     static_cast<void*>(window),
+                     request.title != nullptr ? request.title : "");
+        std::fprintf(stderr,
+                     "[layoutdiag] createWindow req.size=(%d,%d) req.min=(%d,%d) req.maximized=%d "
+                     "req.highDpi=%d -> windowSize=(%d,%d) framebuffer=(%d,%d) contentScale=(%.3f,%.3f) "
+                     "scaleToMonitor=%d\n",
+                     request.width,
+                     request.height,
+                     request.minWidth,
+                     request.minHeight,
+                     request.maximized ? 1 : 0,
+                     request.highDpi ? 1 : 0,
+                     winW,
+                     winH,
+                     fbW,
+                     fbH,
+                     static_cast<double>(csX),
+                     static_cast<double>(csY),
+                     glfwGetWindowAttrib(window, GLFW_SCALE_TO_MONITOR));
+        std::fflush(stderr);
+    }
+#endif
     if ((request.windowEffect != platform::WindowEffect::None ||
          request.transparentFramebuffer) &&
         glfwGetWindowAttrib(window, GLFW_TRANSPARENT_FRAMEBUFFER) != GLFW_TRUE) {

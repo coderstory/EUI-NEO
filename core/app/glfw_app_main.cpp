@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -259,13 +260,44 @@ void installWindowCallbacks(GLFWwindow* window, WindowState& windowState) {
 // ============ 标题栏外观联动（磨砂设计文档 Phase A）============
 // macOS 返回 NSWindow*（M0：macos-three-features 设计 §3）；
 // 其余平台返回 nullptr，core::platform::applyTitleBarAppearance 内部静默降级。
+
+// —— 窗口效果/布局诊断（仅 macOS 编译；EUI_FX_DEBUG=1 时输出 stderr）——
+// macOS 的窗口效果与布局折算没有单元测试可覆盖，只能靠运行时边界值取证：
+// 窗口创建 hint/回查、原生句柄、效果应用与降级真值、每秒一行的布局度量
+// （窗口/帧缓冲/缩放/逻辑尺寸/clearColor/生效档位）。非 Apple 平台预处理为
+// 空语句，翻译单元与加诊断前逐字一致（Windows 侧行为零变化）。
+#if defined(__APPLE__)
+static bool fxDebugEnabled() {
+    static const bool enabled = [] {
+        const char* v = std::getenv("EUI_FX_DEBUG");
+        return v != nullptr && *v != '\0';
+    }();
+    return enabled;
+}
+
+#define EUI_FX_DIAG(...)                        \
+    do {                                        \
+        if (fxDebugEnabled()) {                 \
+            std::fprintf(stderr, __VA_ARGS__);  \
+            std::fflush(stderr);                \
+        }                                       \
+    } while (0)
+#else
+#define EUI_FX_DIAG(...) \
+    do {                 \
+    } while (0)
+#endif
+
 void* nativeWindowHandle(GLFWwindow* window) {
 #if defined(_WIN32)
     return glfwGetWin32Window(window);
 #elif defined(__APPLE__)
     // GLFW 官方 macOS 原生窗口查询 API（返回 NSWindow*，见 3rd/glfw 的
     // glfwGetCocoaWindow）；M2 磨砂 applyWindowEffect 与标题栏外观消费此句柄
-    return glfwGetCocoaWindow(window);
+    void* handle = glfwGetCocoaWindow(window);
+    EUI_FX_DIAG("[fxdiag] nativeWindowHandle glfwWindow=%p nsWindow=%p\n",
+                static_cast<void*>(window), handle);
+    return handle;
 #else
     (void)window;
     return nullptr;
@@ -282,11 +314,20 @@ void applyTitleBarAppearanceToWindow(GLFWwindow* window) {
 // 返回该窗口实际生效的效果；主循环用它回写 app::activeWindowEffect()。
 core::platform::WindowEffect applyWindowEffectToWindow(GLFWwindow* window, core::platform::WindowEffect desired) {
     if (core::platform::applyWindowEffect(nativeWindowHandle(window), desired)) {
+        EUI_FX_DIAG("[fxdiag] applyWindowEffectToWindow window=%p desired=%d -> applied=%d\n",
+                    static_cast<void*>(window), static_cast<int>(desired),
+                    static_cast<int>(desired));
         return desired;
     }
     const bool transparentFramebuffer =
         glfwGetWindowAttrib(window, GLFW_TRANSPARENT_FRAMEBUFFER) == GLFW_TRUE;
-    return core::platform::degradedWindowEffect(desired, transparentFramebuffer);
+    const core::platform::WindowEffect degraded =
+        core::platform::degradedWindowEffect(desired, transparentFramebuffer);
+    EUI_FX_DIAG("[fxdiag] applyWindowEffectToWindow window=%p desired=%d platform=false "
+                "transparentFbAttrib=%d -> degraded=%d\n",
+                static_cast<void*>(window), static_cast<int>(desired),
+                transparentFramebuffer ? 1 : 0, static_cast<int>(degraded));
+    return degraded;
 }
 
 // 子窗口期望档位：显式覆盖（DslWindowConfig::windowEffect，桌宠 sprite 窗的
@@ -296,6 +337,23 @@ core::platform::WindowEffect desiredChildWindowEffect(const app::DslWindowReques
         return *request.windowEffectOverride;
     }
     return app::currentWindowEffect();
+}
+
+// 窗口不透明性（macOS 等价物）：窗口带透明帧缓冲 hint 创建后 GLFW 把 NSWindow
+// 置为非不透明 + 透明背景 + 无阴影（创建期属性，GLFW 侧不可逆），AppKit 侧三项
+// 可逆。判据是「窗口实际不透明度」= clearColor alpha == 1，而不是档位——DevDesk
+// 的「关」与「半透」都映射 WindowEffect::None，按档位分不出实色与半透（实色档
+// 需要不透明窗口，否则 AppKit 不画标题栏背景 → 标题栏全透明；半透/磨砂档必须
+// 保持非不透明，GL alpha 才能透出桌面/材质）。非 Apple 平台空实现（Windows 非
+// 客户区由 DWM 代画，无不透明性开关）。
+void applyWindowOpaqueAppearanceFor(GLFWwindow* window, const eui::Color& clearColor) {
+#if defined(__APPLE__)
+    core::platform::applyWindowOpaqueAppearance(nativeWindowHandle(window),
+                                                clearColor.a >= 1.0f);
+#else
+    (void)window;
+    (void)clearColor;
+#endif
 }
 
 std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& request,
@@ -359,6 +417,13 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     // 透明 hint 来源另有 transparentFramebuffer 声明（sprite 窗），backdrop
     // 档位尊重逐窗覆盖（None = 不叠系统材质，透明像素直出桌面）
     applyWindowEffectToWindow(childWindow, desiredChildWindowEffect(request));
+    EUI_FX_DIAG("[fxdiag] child window created glfwWindow=%p override=%d resolved=%d transparentFb=%d\n",
+                static_cast<void*>(childWindow),
+                request.windowEffectOverride.has_value()
+                    ? static_cast<int>(*request.windowEffectOverride)
+                    : -1,
+                static_cast<int>(desiredChildWindowEffect(request)),
+                request.transparentFramebuffer ? 1 : 0);
     // clearColor 运行时覆盖（app::setClearColor）对后续新开子窗口同样生效；
     // 自管背景的窗口（ignoreClearColorOverride，如桌宠 sprite 窗）除外
     if (request.followClearColorOverride) {
@@ -366,6 +431,9 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
             managed->content.setClearColor(*override_);
         }
     }
+    // 子窗不透明性跟随自身生效 clearColor（实色档的标题窗需要不透明窗口才有
+    // 标题栏背景；无边框 sprite 窗在平台层按 styleMask 跳过）
+    applyWindowOpaqueAppearanceFor(childWindow, managed->content.request().clearColor);
     // 任务栏/Alt+Tab 隐藏（桌宠设计 G5，Windows WS_EX_TOOLWINDOW）
     if (request.hideFromTaskbar) {
         core::platform::applyWindowStyleFlags(
@@ -558,11 +626,19 @@ int eui_app_run() {
     // 窗口效果启动应用（磨砂 Phase C）：透明 hint 已随 WindowCreateRequest 生效，
     // 这里补 backdrop 档位并回写实际生效值（降级真值，供 app::activeWindowEffect 回查）
     core::platform::WindowEffect appliedWindowEffectDesired = app::currentWindowEffect();
-    app::detail::setActiveWindowEffect(applyWindowEffectToWindow(window, appliedWindowEffectDesired));
+    const core::platform::WindowEffect appliedWindowEffectStartup =
+        applyWindowEffectToWindow(window, appliedWindowEffectDesired);
+    app::detail::setActiveWindowEffect(appliedWindowEffectStartup);
+    EUI_FX_DIAG("[fxdiag] startup: main window desired=%d active=%d\n",
+                static_cast<int>(appliedWindowEffectDesired),
+                static_cast<int>(appliedWindowEffectStartup));
     // clearColor 联动基线（app::setClearColor 变更后广播到子窗口；主窗口在
     // app::render 里直接读覆盖值）。基线取当前生效值：未覆盖时不会误伤
     // 子窗口自己的 DslWindowConfig clearColor。
     eui::Color appliedClearColor = app::currentClearColor();
+    // 不透明性基线（macOS）：与 clearColor 基线同源——宿主在 app::initialize()
+    // 里按档位 setClearColor/alpha 后，主循环的 clearColor 联动分支会补齐差值。
+    applyWindowOpaqueAppearanceFor(window, appliedClearColor);
 
     const auto cleanupMainWindow = [&] {
         core::releaseInputQueue(window);
@@ -712,11 +788,15 @@ int eui_app_run() {
         if (effectiveClearColor.r != appliedClearColor.r || effectiveClearColor.g != appliedClearColor.g ||
             effectiveClearColor.b != appliedClearColor.b || effectiveClearColor.a != appliedClearColor.a) {
             appliedClearColor = effectiveClearColor;
+            // 「关↔半透」两档都是 WindowEffect::None（档位不变、只有 alpha 变），
+            // 窗口不透明性只能在这条 alpha 联动分支上追随（macOS）
+            applyWindowOpaqueAppearanceFor(window, effectiveClearColor);
             childWindows.updateAll([&managedClearColor = appliedClearColor](ManagedWindow& managed) {
                 if (!managed.content.request().followClearColorOverride) {
                     return;
                 }
                 managed.content.setClearColor(managedClearColor);
+                applyWindowOpaqueAppearanceFor(managed.window, managedClearColor);
             });
         }
 
@@ -728,11 +808,16 @@ int eui_app_run() {
             appliedWindowEffectDesired = app::currentWindowEffect();
             const core::platform::WindowEffect effective =
                 applyWindowEffectToWindow(window, appliedWindowEffectDesired);
+            applyWindowOpaqueAppearanceFor(window, app::currentClearColor());
             childWindows.updateAll([](ManagedWindow& managed) {
                 applyWindowEffectToWindow(
                     managed.window, desiredChildWindowEffect(managed.content.request()));
+                applyWindowOpaqueAppearanceFor(managed.window,
+                                               managed.content.request().clearColor);
             });
             app::detail::setActiveWindowEffect(effective);
+            EUI_FX_DIAG("[fxdiag] runtime change: desired=%d mainActive=%d (after children sync)\n",
+                        static_cast<int>(appliedWindowEffectDesired), static_cast<int>(effective));
         }
 
         const double currentFrameTime = glfwGetTime();
@@ -753,6 +838,59 @@ int eui_app_run() {
         const float dpiScale = getDpiScale(window);
         const float pointerScale = getPointerScale(window);
         const bool mainInputEnabled = windowState.modalChildWindow == nullptr;
+
+        // 布局度量（每秒一行，EUI_FX_DEBUG=1）：屏幕尺寸折算链的各环节真值
+#if defined(__APPLE__)
+        if (fxDebugEnabled()) {
+            static double fxLastLayoutDump = -1.0;
+            if (fxLastLayoutDump < 0.0 || currentFrameTime - fxLastLayoutDump >= 1.0) {
+                fxLastLayoutDump = currentFrameTime;
+                int winW = 0;
+                int winH = 0;
+                float csX = 1.0f;
+                float csY = 1.0f;
+                float monX = 1.0f;
+                float monY = 1.0f;
+                glfwGetWindowSize(window, &winW, &winH);
+                glfwGetWindowContentScale(window, &csX, &csY);
+                GLFWmonitor* monitor = glfwGetWindowMonitor(window);
+                if (monitor == nullptr) {
+                    monitor = glfwGetPrimaryMonitor();
+                }
+                if (monitor != nullptr) {
+                    glfwGetMonitorContentScale(monitor, &monX, &monY);
+                }
+                const eui::Color fxClear = app::currentClearColor();
+                std::fprintf(
+                    stderr,
+                    "[layoutdiag] frame windowSize=(%d,%d) framebuffer=(%d,%d) contentScale=(%.3f,%.3f) "
+                    "monitorContentScale=(%.3f,%.3f) scaleToMonitor=%d dpiScale=%.4f pointerScale=%.4f "
+                    "uiScale=%.4f logical=(%.2f,%.2f) clearColor=(%.3f,%.3f,%.3f,%.3f) "
+                    "effectDesired=%d effectActive=%d\n",
+                    winW,
+                    winH,
+                    framebufferWidth,
+                    framebufferHeight,
+                    static_cast<double>(csX),
+                    static_cast<double>(csY),
+                    static_cast<double>(monX),
+                    static_cast<double>(monY),
+                    glfwGetWindowAttrib(window, GLFW_SCALE_TO_MONITOR),
+                    static_cast<double>(dpiScale),
+                    static_cast<double>(pointerScale),
+                    static_cast<double>(app::uiScale()),
+                    static_cast<double>(framebufferWidth) / dpiScale,
+                    static_cast<double>(framebufferHeight) / dpiScale,
+                    static_cast<double>(fxClear.r),
+                    static_cast<double>(fxClear.g),
+                    static_cast<double>(fxClear.b),
+                    static_cast<double>(fxClear.a),
+                    static_cast<int>(app::currentWindowEffect()),
+                    static_cast<int>(app::activeWindowEffect()));
+                std::fflush(stderr);
+            }
+        }
+#endif
 
         mainWindowRuntime.runFrame(
             window,
