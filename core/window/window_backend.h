@@ -35,6 +35,10 @@ void setImeCursorRect(Handle window, float x, float y, float width, float height
 // 运行时移动/读取窗口位置（屏幕坐标，GLFW 语义两平台一致为左上原点）
 void setWindowPos(Handle window, int x, int y);
 void getWindowPos(Handle window, int& x, int& y);
+// U3（2026-09-28 DevDesk UI 现代化）：运行期改窗客户区尺寸（物理像素，
+// 同 createWindow 的 request.width/height 口径）。styled 菜单组头折叠/
+// 展开时按实际行数即时回收/补高窗高（此前窗口尺寸创建期定死）。
+void setWindowSize(Handle window, int width, int height);
 // 请求关闭窗口（子窗口：主循环下一帧走正常 prune/destroy 路径；
 // 主窗口：等同用户点关闭按钮——托盘模式下走隐藏到托盘语义）
 void requestWindowClose(Handle window);

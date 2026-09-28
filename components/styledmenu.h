@@ -161,8 +161,9 @@ inline std::vector<StyledMenuRow> styledMenuFlatten(const std::vector<StyledMenu
 }
 
 // 全展开 flatten（忽略 collapsedByDefault，所有组展平）——用于开窗时按
-// 全展开行数预留高度/宽度，折叠态子行画进预留区不溢出窗外（窗口尺寸定死、
-// 无运行期 size setter，取"宁高勿叠"语义，对齐 petMenuFullHeight）。
+// 全展开行数预留**宽度**（折叠子行文本也要装得下）；高度改按当前折叠态
+// 行数（U3：收起态不空留，组头 toggle 时经 core::window::setWindowSize
+// 即时回收/补高，见 showStyledMenu）。
 inline std::vector<StyledMenuRow> styledMenuFlattenAllExpanded(const std::vector<StyledMenuItem>& items) {
     std::vector<StyledMenuRow> rows;
     styled_menu_detail::flattenRecursive(items, {}, 0, nullptr, rows);
@@ -313,6 +314,11 @@ struct StyledMenuRuntime {
     core::window::Handle handle = nullptr;
     int focusGraceFrames = 3;  // 创建初期焦点未稳，跳过失焦检查
     bool dismissed = false;
+    // U3（2026-09-28 DevDesk UI 现代化）：开窗时的面板逻辑宽与物理/逻辑
+    // 折算系数——组头 toggle 重算行后按最新行数重测窗高（styledMenuWindowSize
+    // 同口径），宽度不随折叠变化
+    float panelWidth = 0.0f;
+    float windowScale = 1.0f;
 };
 
 // 当前活跃的 styled 菜单（单实例；新开窗前关闭旧窗）
@@ -360,8 +366,9 @@ inline bool showStyledMenu(const std::string& id,
     if (currentRows.empty() || styledMenuSelectableCount(currentRows) == 0) {
         return false;
     }
-    // 全展开行（开窗高度/宽度预留——窗口尺寸定死无运行期 setter，按全展开
-    // 行数预留高度，折叠时组头下方留白，展开子行填进预留区不溢出窗外）
+    // 全展开行（开窗**宽度**预留——宽度按最宽文本项，折叠子行文本也要装得
+    // 下；高度改按当前折叠态行数，收起态不空留空白区，展开时经运行期
+    // setWindowSize 补高，见下方 toggle 回调）
     const std::vector<StyledMenuRow> fullRows = styledMenuFlattenAllExpanded(items);
 
     // 关旧开新（单实例）
@@ -382,13 +389,15 @@ inline bool showStyledMenu(const std::string& id,
                               textW + style.iconArea;
         panelWidth = std::max(panelWidth, rowNeed);
     }
-    const float panelHeight = styledMenuPanelHeight(fullRows, style);
+    // U3：高度按当前折叠态行数——收起态不空留（原按全展开预留，折叠时组头
+    // 下方留白一整块）；展开态经组头 toggle 运行时补高（窗口尺寸不再定死）
+    const float panelHeight = styledMenuPanelHeight(currentRows, style);
     // 逻辑单位 → 物理像素（显示器缩放 × 用户缩放）：窗尺寸是后端客户区物理
     // 像素，布局却按 framebuffer / (dpiScale × uiScale) 折算逻辑空间，不折算
     // 高 DPI 下窗比内容小一个缩放比。位置/工作区本身已是物理像素，不参与。
+    const float windowScale = core::window::windowScaleForPoint(screenX, screenY) * app::uiScale();
     const StyledMenuWindowSize windowSize = styledMenuWindowSize(
-        panelWidth, panelHeight, style.margin,
-        core::window::windowScaleForPoint(screenX, screenY) * app::uiScale());
+        panelWidth, panelHeight, style.margin, windowScale);
     const float windowWidth = windowSize.width;
     const float windowHeight = windowSize.height;
 
@@ -437,6 +446,8 @@ inline bool showStyledMenu(const std::string& id,
     runtime->rows = currentRows;        // 初始折叠态显示行
     runtime->style = style;
     runtime->onSelect = std::move(onSelect);
+    runtime->panelWidth = panelWidth;   // U3：toggle 重测窗高时复用
+    runtime->windowScale = windowScale; // U3：toggle 重测窗高时复用
     activeRuntime() = runtime;
 
     const std::string prefix = "styledMenu." + (id.empty() ? std::string("menu") : id);
@@ -566,6 +577,25 @@ inline bool showStyledMenu(const std::string& id,
                                                 }
                                                 runtime->rows = styledMenuFlatten(
                                                     runtime->items, runtime->expandedSet);
+                                                // U3：收起态高度回收——按最新行数重算
+                                                // 面板高并即时改窗尺寸（折叠回收、展开
+                                                // 补高，双向都重测；宽不随折叠变化）。
+                                                // 窗口 handle 未创建（headless/降级）时
+                                                // 跳过，布局仍按 screen 尺寸自动跟随。
+                                                if (runtime->handle != nullptr &&
+                                                    runtime->panelWidth > 0.0f) {
+                                                    const components::StyledMenuWindowSize compact =
+                                                        styledMenuWindowSize(
+                                                            runtime->panelWidth,
+                                                            styledMenuPanelHeight(
+                                                                runtime->rows, runtime->style),
+                                                            runtime->style.margin,
+                                                            runtime->windowScale);
+                                                    core::window::setWindowSize(
+                                                        runtime->handle,
+                                                        static_cast<int>(compact.width),
+                                                        static_cast<int>(compact.height));
+                                                }
                                                 app::requestUpdate();
                                             })
                                             .build();

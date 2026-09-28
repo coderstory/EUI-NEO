@@ -88,6 +88,15 @@ public:
         onCancel_ = std::move(callback);
         return *this;
     }
+    /** @brief 右键菜单回调透出（2026-09-28 DevDesk UI 现代化 U1）：
+     *  元素级 onContextMenu（core/dsl.h BuilderBase）此前 input 不透出，
+     *  消费方只能每帧 ui.find(".hit") 手工挂靠。挂接会把悬停光标置为
+     *  Hand（dsl.h onContextMenu 无条件赋值），input 悬停语义是箭头 →
+     *  组件内部显式恢复 CursorShape::Arrow（框架无文本光标）。 */
+    InputBuilder& onContextMenu(std::function<void(const core::PointerEvent&, const core::Rect&)> callback) {
+        onContextMenu_ = std::move(callback);
+        return *this;
+    }
     InputBuilder& onFocus(std::function<void(bool)> callback) {
         onFocus_ = std::move(callback);
         return *this;
@@ -125,6 +134,7 @@ public:
         const std::function<void()> onCancel = onCancel_;
         const std::function<void(bool)> onFocus = onFocus_;
         const std::function<bool(const core::KeyEvent&)> onKeyEvent = onKeyEvent_;
+        const std::function<void(const core::PointerEvent&, const core::Rect&)> onContextMenu = onContextMenu_;
         const float textLineHeight = fontSize * 1.2f;
         const float textY = multiline_ ? inset : std::max(0.0f, (height_ - textLineHeight) * 0.5f);
         const float textHeight = multiline_ ? std::max(0.0f, height_ - inset * 2.0f) : textLineHeight;
@@ -401,8 +411,13 @@ public:
                         if (changed && onChange) {
                             onChange(state.text);
                         }
-                    })
-                    .build();
+                    });
+                // U1：右键菜单透出——仅设置时挂接；onContextMenu 会把
+                // cursor 置 Hand，显式恢复 Arrow（input 悬停指针语义）
+                if (onContextMenu) {
+                    hit.onContextMenu(onContextMenu).cursor(core::CursorShape::Arrow);
+                }
+                hit.build();
 
                 ui_.stack(id_ + ".textViewport")
                     .position(inset, textY)
@@ -553,6 +568,7 @@ private:
     std::function<void()> onCancel_;
     std::function<void(bool)> onFocus_;
     std::function<bool(const core::KeyEvent&)> onKeyEvent_;
+    std::function<void(const core::PointerEvent&, const core::Rect&)> onContextMenu_;
     input_detail::LineStylesProvider lineStyles_;
     std::string text_;
     std::string placeholder_ = "Hello EUI-NEO 😉";

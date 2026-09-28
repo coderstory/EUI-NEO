@@ -56,6 +56,19 @@ inline float menuHeight(std::size_t itemCount, float itemHeight, float inset) {
     return itemHeight * static_cast<float>(itemCount) + inset * 2.0f;
 }
 
+// U2（2026-09-28 DevDesk UI 现代化）：菜单树最深一层的最宽文本实宽
+inline float measureWidestText(const std::vector<ContextMenuItem>& items,
+                               const theme::ThemeMetricTokens& metrics) {
+    float widest = 0.0f;
+    for (const ContextMenuItem& item : items) {
+        const float textW = core::TextPrimitive::measureTextWidth(
+            item.text, {}, metrics.typography.option);
+        widest = std::max(widest, textW);
+        widest = std::max(widest, measureWidestText(item.children, metrics));
+    }
+    return widest;
+}
+
 inline float clampMenuY(float desiredY, float height, float screenHeight) {
     return std::clamp(desiredY, 8.0f, std::max(8.0f, screenHeight - height - 8.0f));
 }
@@ -84,6 +97,14 @@ public:
     ContextMenuBuilder& screen(float width, float height) { screenWidth_ = width; screenHeight_ = height; return *this; }
     ContextMenuBuilder& position(float x, float y) { x_ = x; y_ = y; return *this; }
     ContextMenuBuilder& size(float width, float itemHeight) { width_ = width; itemHeight_ = itemHeight; return *this; }
+    /** @brief 宽度自适应（2026-09-28 DevDesk UI 现代化 U2）：按菜单树
+     *  最长项文本实宽（measureTextWidth，text.cpp:2197）+ 双侧 inset +
+     *  级联箭头预留区计算宽度，再走既有 X 钳兜底截断；默认关 = 行为与
+     *  未开启时完全一致（向后兼容）。 */
+    ContextMenuBuilder& autoWidth(bool value = true) {
+        autoWidth_ = value;
+        return *this;
+    }
     ContextMenuBuilder& items(std::vector<std::string> value) {
         items_.clear();
         items_.reserve(value.size());
@@ -115,7 +136,16 @@ public:
 
         const float inset = metrics_.spacing.small;
         const float itemHeight = resolvedItemHeight();
-        const float width = std::min(width_, std::max(0.0f, screenWidth_ - metrics_.spacing.section));
+        // U2 宽度自适应：autoWidth 时按最宽文本项实宽 + 双侧 inset +
+        // 级联箭头预留区（移植 styledmenu.h showStyledMenu 的 measureTextWidth
+        // 口径）；单行超长项交给下方既有 X 钳截断兜底
+        float targetWidth = width_;
+        if (autoWidth_) {
+            targetWidth = inset * 2.0f +
+                          context_menu_detail::measureWidestText(items_, metrics_) +
+                          metrics_.spacing.section;
+        }
+        const float width = std::min(targetWidth, std::max(0.0f, screenWidth_ - metrics_.spacing.section));
         const float xInset = metrics_.spacing.compact;
         const float height = context_menu_detail::menuHeight(items_.size(), itemHeight, inset);
         const float x = std::clamp(x_, xInset, std::max(xInset, screenWidth_ - width - xInset));
@@ -337,6 +367,7 @@ private:
     float width_ = 190.0f;
     float itemHeight_ = 0.0f;
     int zIndex_ = 1050;
+    bool autoWidth_ = false;
 };
 
 inline ContextMenuBuilder contextMenu(core::dsl::Ui& ui, const std::string& id) {

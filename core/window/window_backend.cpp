@@ -626,6 +626,12 @@ void setWindowPos(Handle window, int x, int y) {
     }
 }
 
+void setWindowSize(Handle window, int width, int height) {
+    if (window != nullptr) {
+        SDL_SetWindowSize(static_cast<SDL_Window*>(window), width, height);
+    }
+}
+
 void getWindowPos(Handle window, int& x, int& y) {
     x = 0;
     y = 0;
@@ -726,13 +732,6 @@ std::vector<MonitorWorkArea> getMonitorWorkAreas() {
 #endif
 #ifndef GLFW_EXPOSE_NATIVE_WIN32
 #define GLFW_EXPOSE_NATIVE_WIN32
-#endif
-#include <GLFW/glfw3native.h>
-#elif defined(__APPLE__)
-// macOS 路径（M0：macos-three-features 设计 §3）：glfwGetCocoaWindow
-// （NSWindow*）填 NativeWindowInfo.platformWindow，M3 桌宠三项消费
-#ifndef GLFW_EXPOSE_NATIVE_COCOA
-#define GLFW_EXPOSE_NATIVE_COCOA
 #endif
 #include <GLFW/glfw3native.h>
 #endif
@@ -845,13 +844,6 @@ NativeWindowInfo nativeWindowInfo(Handle window) {
     if (window != nullptr) {
         result.platformWindow = glfwGetWin32Window(static_cast<GLFWwindow*>(window));
     }
-#elif defined(__APPLE__)
-    // platformWindow = NSWindow*（M0：macos-three-features 设计 §3）：M3 的
-    // applyWindowStyleFlags / showContextMenu 经 nativeWindowInfo(handle)
-    // .platformWindow 取原生窗口（桌宠 pet_window.cpp → app::openWindow 链路）
-    if (window != nullptr) {
-        result.platformWindow = glfwGetCocoaWindow(static_cast<GLFWwindow*>(window));
-    }
 #endif
     return result;
 }
@@ -908,6 +900,12 @@ void setImeCursorRect(Handle window, float x, float y, float width, float height
 void setWindowPos(Handle window, int x, int y) {
     if (window != nullptr) {
         glfwSetWindowPos(static_cast<GLFWwindow*>(window), x, y);
+    }
+}
+
+void setWindowSize(Handle window, int width, int height) {
+    if (window != nullptr) {
+        glfwSetWindowSize(static_cast<GLFWwindow*>(window), width, height);
     }
 }
 
