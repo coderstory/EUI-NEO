@@ -491,6 +491,25 @@ inline void Runtime::setScrollOffset(const std::string& stateId, float offset) {
     }
 }
 
+// Ui::setScrollOffset() 的帧末取件口（Runtime::compose 帧末调用，与
+// Ui::consumePendingFocusId 同构）：先 move+clear 把挂起队列整份取走、清空
+// 成员，再遍历快照消费——onChange 回调内再调 setScrollOffset 时写进的是已
+// 清空的成员，不会迭代器失效也不会让队列无限增长（take-and-clear，审计
+// major）。raw id 在本帧元素树解析（与 requestFocus 消费同路径：
+// ui_.find，帧末 scope 上下文）；本帧没有该元素 → 丢弃请求（不排队跨帧，
+// 镜像 requestFocus dsl.h 注释语义）；找到 → 路由到既有
+// Runtime::setScrollOffset，入参是元素经 scrollState() 注册的 stateId
+// （element.scrollStateId，见 dsl.h BuilderBase::scrollState）。
+inline void Runtime::consumePendingScrollOffsets() {
+    auto snapshot = std::move(ui_.pendingScrollOffsets_);
+    ui_.pendingScrollOffsets_.clear();
+    for (auto& [id, offset] : snapshot) {
+        if (const Element* owner = ui_.find(id)) {
+            setScrollOffset(owner->scrollStateId, offset);
+        }
+    }
+}
+
 inline void Runtime::applyRuntimeScroll(const Element& element, float delta) {
     if (element.scrollStateId.empty()) {
         return;

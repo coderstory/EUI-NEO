@@ -32,6 +32,11 @@ inline void Runtime::compose(const std::string& pageId, float logicalWidth, floa
     ui_.layout(screen);
     elementStructure_ = collectElementStructure();
     syncScrollStateBindings();
+    // setScrollOffset() 帧末消费（core/dsl.h Ui::setScrollOffset）：在
+    // syncScrollStateBindings 之后（scroll state 实例已建好），与
+    // consumePendingFocusId 同级的帧末消费点；解析与下发见
+    // Runtime::consumePendingScrollOffsets（runtime_update.h）。
+    consumePendingScrollOffsets();
     for (const std::string& scope : ui_.consumeReleasedStateScopes()) {
         const std::string childPrefix = scope + ".";
         if (focusedId_ == scope || focusedId_.rfind(childPrefix, 0) == 0) {

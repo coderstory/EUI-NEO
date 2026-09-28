@@ -263,6 +263,8 @@ private:
 
     void setScrollOffset(const std::string& stateId, float offset);
 
+    void consumePendingScrollOffsets();
+
     void applyRuntimeScroll(const Element& element, float delta);
 
     void updateScrollMotion(float deltaSeconds);

@@ -1535,6 +1535,25 @@ public:
         pendingFocusId_ = id;
     }
 
+    // 编程式滚动跟随（如「caret 滚出安全区后把视口拉回来」）。id 用与
+    // scrollView/state() 一致的相对写法，**存 raw id**、不在请求时解析
+    // （scope 上下文错配时请求时 resolve 会静默 no-op，见 requestFocus
+    // 同款语义——审计 minor）；请求挂到帧末由 Runtime::compose 消费
+    // （Runtime::consumePendingScrollOffsets → Runtime::setScrollOffset）：
+    //   - 本帧元素树里没有该元素 → 请求丢弃（不排队等待后续帧）
+    //   - 同一帧内同 id 多次请求 → 只保留最后一个 offset（per-id 去重，
+    //     避免多次 onChange / 脏标 / 击穿一次性标志）
+    //   - 派发回调（onScrollOffsetChanged 等）与 compose 内调用均安全
+    void setScrollOffset(const std::string& id, float offset) {
+        for (auto& [pendingId, pendingOffset] : pendingScrollOffsets_) {
+            if (pendingId == id) {
+                pendingOffset = offset;  // 同 id 覆盖 offset，不新增条目
+                return;
+            }
+        }
+        pendingScrollOffsets_.emplace_back(id, offset);
+    }
+
     template <typename T>
     T& state(const std::string& id) {
         return stateStore_.get<T>(resolveId(id));
@@ -1852,6 +1871,8 @@ private:
     std::unordered_map<std::string, Element*> index_;
     std::string focusedId_;
     std::string pendingFocusId_;  // requestFocus() 挂起请求（Runtime 帧末取件）
+    // setScrollOffset() 挂起请求（Runtime 帧末取件；per-id 去重只留最后值）
+    std::vector<std::pair<std::string, float>> pendingScrollOffsets_;
     StateStore stateStore_;
     std::vector<std::string> releasedStateScopes_;
     std::size_t generatedId_ = 0;
