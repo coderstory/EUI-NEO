@@ -329,6 +329,11 @@ core::platform::WindowEffect applyWindowEffectToWindow(GLFWwindow* window, core:
         if (desired == core::platform::WindowEffect::None && transparentFramebuffer) {
             return core::platform::WindowEffect::Transparent;
         }
+#else
+        // ⚠️ Windows 侧存在**同一个不一致**（同一函数、同一判据缺口）：DWM backdrop
+        // 关成功时回写 desired=None，而宿主的半透档提示判据要求 active==Transparent
+        // → 理论上同样会误报降级。本批不改 Windows 分支（无实机可验证，盲改风险大），
+        // 待有 Windows 实机时按上面的同一折法处理并回归验证。
 #endif
         return desired;
     }
@@ -348,26 +353,6 @@ core::platform::WindowEffect desiredChildWindowEffect(const app::DslWindowReques
         return *request.windowEffectOverride;
     }
     return app::currentWindowEffect();
-}
-
-// 窗口 chrome 外观（macOS 等价物）：AppKit 只给不透明窗画标题栏背景，而窗口带
-// 透明帧缓冲 hint 时 GLFW 在 macOS 把它置为非不透明 —— 不自己铺标题栏条底则整条
-// 标题栏（含交通灯那行）透出桌面（Windows 侧由 DWM 代画非客户区，无此问题）。
-// 判据用宿主 clearColor（= 主题背景 + 档位 alpha）而不是档位：DevDesk 的「关」与
-// 「半透」都映射 WindowEffect::None，按档位分不出实色与半透；条底色因此天然跟随
-// 主题（主题切换 → setClearColor → 主循环 clearColor 联动分支重铺）。
-// 非 Apple 平台空实现（Windows 非客户区由 DWM 管）。
-void applyWindowChromeAppearanceFor(GLFWwindow* window, const eui::Color& clearColor) {
-#if defined(__APPLE__)
-    core::platform::applyWindowChromeAppearance(nativeWindowHandle(window),
-                                                clearColor.r,
-                                                clearColor.g,
-                                                clearColor.b,
-                                                clearColor.a);
-#else
-    (void)window;
-    (void)clearColor;
-#endif
 }
 
 std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& request,
@@ -445,9 +430,6 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
             managed->content.setClearColor(*override_);
         }
     }
-    // 子窗不透明性跟随自身生效 clearColor（实色档的标题窗需要不透明窗口才有
-    // 标题栏背景；无边框 sprite 窗在平台层按 styleMask 跳过）
-    applyWindowChromeAppearanceFor(childWindow, managed->content.request().clearColor);
     // 任务栏/Alt+Tab 隐藏（桌宠设计 G5，Windows WS_EX_TOOLWINDOW）
     if (request.hideFromTaskbar) {
         core::platform::applyWindowStyleFlags(
@@ -650,9 +632,6 @@ int eui_app_run() {
     // app::render 里直接读覆盖值）。基线取当前生效值：未覆盖时不会误伤
     // 子窗口自己的 DslWindowConfig clearColor。
     eui::Color appliedClearColor = app::currentClearColor();
-    // 不透明性基线（macOS）：与 clearColor 基线同源——宿主在 app::initialize()
-    // 里按档位 setClearColor/alpha 后，主循环的 clearColor 联动分支会补齐差值。
-    applyWindowChromeAppearanceFor(window, appliedClearColor);
 
     const auto cleanupMainWindow = [&] {
         core::releaseInputQueue(window);
@@ -802,15 +781,11 @@ int eui_app_run() {
         if (effectiveClearColor.r != appliedClearColor.r || effectiveClearColor.g != appliedClearColor.g ||
             effectiveClearColor.b != appliedClearColor.b || effectiveClearColor.a != appliedClearColor.a) {
             appliedClearColor = effectiveClearColor;
-            // 「关↔半透」两档都是 WindowEffect::None（档位不变、只有 alpha 变），
-            // 窗口不透明性只能在这条 alpha 联动分支上追随（macOS）
-            applyWindowChromeAppearanceFor(window, effectiveClearColor);
             childWindows.updateAll([&managedClearColor = appliedClearColor](ManagedWindow& managed) {
                 if (!managed.content.request().followClearColorOverride) {
                     return;
                 }
                 managed.content.setClearColor(managedClearColor);
-                applyWindowChromeAppearanceFor(managed.window, managedClearColor);
             });
         }
 
@@ -822,12 +797,9 @@ int eui_app_run() {
             appliedWindowEffectDesired = app::currentWindowEffect();
             const core::platform::WindowEffect effective =
                 applyWindowEffectToWindow(window, appliedWindowEffectDesired);
-            applyWindowChromeAppearanceFor(window, app::currentClearColor());
             childWindows.updateAll([](ManagedWindow& managed) {
                 applyWindowEffectToWindow(
                     managed.window, desiredChildWindowEffect(managed.content.request()));
-                applyWindowChromeAppearanceFor(managed.window,
-                                               managed.content.request().clearColor);
             });
             app::detail::setActiveWindowEffect(effective);
             EUI_FX_DIAG("[fxdiag] runtime change: desired=%d mainActive=%d (after children sync)\n",

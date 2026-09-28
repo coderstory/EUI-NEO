@@ -1,16 +1,26 @@
-// core/platform/window_effect_macos.mm —— macOS 窗口磨砂 / 标题栏实现
+// core/platform/window_effect_macos.mm —— macOS 窗口磨砂实现
 //（2026-09-28 macos-three-features 设计 §5.2；磨砂全链见
 // 2026-09-22-eui-window-frost-design.md）
 //
-// 视图结构（2026-09-28 真机缺陷修复后定版）：
-//   NSWindow
-//   └── contentView = 容器（NSView；标题窗开 FullSizeContentView 后覆盖整窗）
-//       ├── 材质视图（NSVisualEffectView，material 档；frame = 容器 bounds）
-//       ├── GLFWContentView（GL 视图；frame = 客户端矩形，任何档位切换都不变）
-//       └── 标题栏条底（NSView，frame = 整窗 − 客户端矩形；None 档铺主题色）
-// 三层职责：材质 = backdrop（磨砂）；GL 视图 = 应用内容（透明度由 clearColor alpha
-// 定）；条底 = 标题栏条底色（AppKit 只给不透明窗画标题栏背景，非不透明窗必须
-// 自己铺，且底色跟随宿主主题 —— 见 applyWindowChromeAppearance）。
+// 视图结构（2026-09-29 定版，**几何零位移优先**）：
+//   material 档：NSWindow.contentView = 材质视图，GL 视图（GLFWContentView）
+//                作为其子视图，frame 恒等于客户端矩形
+//   None/实色档：GL 视图仍是 contentView（GLFW 创建期结构，一字不动）
+// 这样 GLFW 的窗口/帧缓冲尺寸（都读 [window->ns.view frame]）与 compose 侧
+// logical 尺寸在任何档位下都不变；材质视图占的正是内容矩形，不会侵入标题栏。
+//
+// ⚠️ 标题栏（非客户区）**不做自绘**：曾尝试 `NSWindowStyleMaskFullSizeContentView`
+// + contentView 容器 + 标题栏条底（铺宿主主题色）—— AppKit 只给不透明窗画标题栏
+// 背景的缺口确实补上了，但**真机实测 FSCV 会把 GL surface 整体下移一个标题栏高
+// （32pt）**：应用内容随之位移、底部被窗口底边裁掉，标题栏与内容之间还留一条全透明
+// 空带（截图像素证据：内容亮段从 114/219pt 变成 143/244pt；空带 66..95pt 透出桌面）。
+// 该 AppKit/NSOpenGLContext 在 FSCV 下的 surface 定位行为无法从 EUI-NEO 侧可靠纠正
+// （容器重挂载本身不偏移——二分实测已验证），故本文件**不启用 FSCV**，标题栏交给
+// AppKit 自画材质（非不透明窗同样会被 AppKit 画上标题栏材质，真机截图实测可见：
+// 标题栏区 220,220,216，红黄绿交通灯与标题文字正常）。
+// 主题色标题栏（走 FSCV）与几何零位移**不可兼得**，取舍记录见
+// docs/平台能力.md「窗口效果 / 已知限制（macOS）」。
+//
 // 不引任何 vibrancy crate（设计 D-2）：ObjC++ 直挂 NSVisualEffectView。
 // Tahoe 风险门（设计 D-3）：挂载失败（异常/无效句柄）→ 返回 false → 上层既有
 // 降级链（glfw_app_main applyWindowEffectToWindow → degradedWindowEffect →
@@ -42,16 +52,13 @@ constexpr float kMaterialAlpha = 1.0f;
 // 关联对象键：状态按窗口各存一份（进程级单例会让多窗互抢同一视图——桌宠子窗
 // apply(None) 曾把主窗已挂的材质视图摘走，真机取证见提交说明）
 const void* kMaterialViewKey = &kMaterialViewKey;             // NSVisualEffectView
-const void* kContainerKey = &kContainerKey;                   // NSView（contentView）
 const void* kHostedContentViewKey = &kHostedContentViewKey;   // GLFWContentView
-const void* kStripViewKey = &kStripViewKey;                   // NSView（标题栏条底）
-const void* kChromeColorKey = &kChromeColorKey;               // NSColor（主题底色）
 
-// —— 诊断（EUI_FX_DEBUG=1 时输出 stderr；非 Apple 平台本文件不参与编译）——
-// macOS 窗口效果没有可断言的客观量可看（材质是否真挂上、窗口是否不透明、标题栏
-// 条是否铺了底、GL 视图几何是否位移），且 screencapture 常被 TCC 拦——诊断行即
-// 为验收手段：[fxdiag] 每行含不透明度/背景/标题栏透明位/styleMask/窗口 frame/
-// 客户端矩形/层容器与条底 frame/材质参数，可逐条判定「哪一层生效」。
+// —— 诊断（EUI_FX_DEBUG=1 时输出 stderr）——
+// macOS 窗口效果没有可断言的客观量可看（材质是否真挂上、几何是否位移），且
+// screencapture 曾长期被 TCC 拦——诊断行即为验收手段：[fxdiag] 每行含不透明度/
+// 背景/标题栏透明位/styleMask/窗口 frame/客户端矩形/内容视图与 GL 视图 frame/
+// 材质参数，可逐条判定「哪一层生效、几何有没有动」。
 bool fxDebug() {
     static const bool enabled = []() {
         const char* v = std::getenv("EUI_FX_DEBUG");
@@ -97,40 +104,32 @@ void fxDump(const char* tag, NSWindow* w) {
     if (!fxDebug()) {
         return;
     }
-    NSView* container = objc_getAssociatedObject(w, kContainerKey);
     NSVisualEffectView* material = objc_getAssociatedObject(w, kMaterialViewKey);
-    NSView* strip = objc_getAssociatedObject(w, kStripViewKey);
-    NSView* hosted = container != nil
-        ? objc_getAssociatedObject(container, kHostedContentViewKey)
+    NSView* content = [w contentView];
+    NSView* hosted = content != nil
+        ? objc_getAssociatedObject(content, kHostedContentViewKey)
         : nil;
     char winFrame[64];
     char contentRect[64];
     char layoutRect[64];
-    char contentViewFrame[64];
+    char contentFrame[64];
     char hostedFrame[64];
-    char stripFrame[64];
     char materialFrame[64];
     char bgDesc[96];
-    char stripDesc[96];
     fxRectTo(winFrame, sizeof(winFrame), [w frame]);
     fxRectTo(contentRect, sizeof(contentRect), [w contentRectForFrameRect:[w frame]]);
     fxRectTo(layoutRect, sizeof(layoutRect), [w contentLayoutRect]);
-    fxRectTo(contentViewFrame, sizeof(contentViewFrame), [[w contentView] frame]);
+    fxRectTo(contentFrame, sizeof(contentFrame), content != nil ? [content frame] : NSZeroRect);
     fxRectTo(hostedFrame, sizeof(hostedFrame), hosted != nil ? [hosted frame] : NSZeroRect);
-    fxRectTo(stripFrame, sizeof(stripFrame), strip != nil ? [strip frame] : NSZeroRect);
     fxRectTo(materialFrame, sizeof(materialFrame),
              material != nil ? [material frame] : NSZeroRect);
     fxColorDescTo(bgDesc, sizeof(bgDesc), [w backgroundColor]);
-    fxColorDescTo(stripDesc, sizeof(stripDesc),
-                  (strip != nil && [[strip layer] backgroundColor] != nullptr)
-                      ? [NSColor colorWithCGColor:[[strip layer] backgroundColor]]
-                      : nil);
     std::fprintf(
         stderr,
         "[fxdiag] %s win=%p isOpaque=%d bg=%s bgIsClear=%d tbTransparent=%d styleMask=0x%lx "
-        "frame=%s contentRect=%s layoutRect=%s | contentView=%s frame=%s container=%s "
-        "hosted=%s frame=%s strip=%s frame=%s stripColor=%s | material=%p alpha=%.2f "
-        "onWindow=%d sv=%s frame=%s materialValue=%ld blending=%ld state=%ld\n",
+        "frame=%s contentRect=%s layoutRect=%s | contentView=%s frame=%s hosted=%s frame=%s | "
+        "material=%p alpha=%.2f onWindow=%d sv=%s frame=%s materialValue=%ld blending=%ld "
+        "state=%ld\n",
         tag,
         (void*)w,
         [w isOpaque] ? 1 : 0,
@@ -141,14 +140,10 @@ void fxDump(const char* tag, NSWindow* w) {
         winFrame,
         contentRect,
         layoutRect,
-        fxCls([w contentView]),
-        contentViewFrame,
-        fxCls(container),
+        fxCls(content),
+        contentFrame,
         fxCls(hosted),
         hostedFrame,
-        fxCls(strip),
-        stripFrame,
-        stripDesc,
         (void*)material,
         material != nil ? (double)[material alphaValue] : 0.0,
         (material != nil && [material window] == w) ? 1 : 0,
@@ -180,182 +175,56 @@ NSVisualEffectView* materialViewFor(NSWindow* nsWindow, bool create) {
     return view;
 }
 
-// —— 容器：把窗口 contentView 换成我们的容器（幂等）——
-// 标题窗额外开 FullSizeContentView + titlebarAppearsTransparent：容器随之覆盖
-// 整窗，标题栏条区域才归我们画（AppKit 只给不透明窗画标题栏背景，窗口带透明
-// 帧缓冲 hint 时恒为非不透明 → 不自己铺底则整条标题栏含交通灯透出桌面）。
-//
-// 几何不变量（glfw_app_layout 零位移的依据）：GL 视图 frame 任何时候都等于
-// 「客户端矩形」= 切换前的 contentView frame。GLFW 的
-// _glfwGetWindowSizeCocoa / _glfwGetFramebufferSizeCocoa 都读
-// [window->ns.view frame]，故窗口尺寸 / 帧缓冲尺寸 / compose 侧 logical 尺寸
-// 与容器化之前逐项一致；标题栏条只是容器内一条新增视图，不占内容区。
-// 缩放时靠 autoresizing 维持：GL 视图高度伸缩而上下边距固定（上边距 = 条高），
-// 条底高度与顶边距固定、底边距伸缩。
-NSView* ensureContainer(NSWindow* nsWindow) {
-    if (nsWindow == nil) {
-        return nil;
-    }
-    NSView* container = objc_getAssociatedObject(nsWindow, kContainerKey);
-    NSView* content = [nsWindow contentView];
-    if (container != nil && content == container) {
-        return container;   // 已就位
-    }
-    if (container != nil) {
-        // contentView 被外部换掉（异常路径）：弃旧容器重建，避免把窗口留在半装状态
-        objc_setAssociatedObject(nsWindow, kContainerKey, nil, OBJC_ASSOCIATION_ASSIGN);
-        container = nil;
-    }
-    if (content == nil) {
-        return nil;
-    }
-    const NSRect clientRect = [content frame];   // 客户端矩形（= GL 视图应有 frame）
-    const NSRect frameRect = [nsWindow frame];
-    const bool titled = ([nsWindow styleMask] & NSWindowStyleMaskTitled) != 0;
-    const CGFloat stripHeight =
-        titled ? MAX(0.0, NSHeight(frameRect) - NSHeight(clientRect)) : 0.0;
-
-    container = [[NSView alloc] initWithFrame:clientRect];
-    [container setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-    objc_setAssociatedObject(nsWindow, kContainerKey, container,
-                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if (titled) {
-        [nsWindow setStyleMask:([nsWindow styleMask] | NSWindowStyleMaskFullSizeContentView)];
-        [nsWindow setTitlebarAppearsTransparent:YES];
-        // ⚠️ FullSizeContentView 会改变 AppKit 的 frame/contentRect 语义：开启瞬间
-        // contentRectForFrameRect: 退化为恒等，AppKit 会保持「原内容矩形」而把窗口
-        // frame 缩掉标题栏高度（真机实测 833→801，客户区顶边下移 32pt → 应用顶部
-        // 被标题栏盖住）。这里把 frame 原样恢复：客户区绝对位置/尺寸与开启前逐项
-        // 相同，多出的 32pt 正好是标题栏条（容器内 y=clientH 起的那条）。
-        [nsWindow setFrame:frameRect display:YES];
-    }
-    // 容器成为 contentView（AppKit 会按整窗尺寸重排它）
-    [nsWindow setContentView:container];
-    // GL 视图搬进容器（frame 保持客户端矩形；GLFW 的窗口/帧缓冲尺寸都读
-    // [window->ns.view frame] → 窗口、帧缓冲、compose 逻辑尺寸零位移）
-    [content removeFromSuperview];
-    [content setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-    [container addSubview:content];
-    objc_setAssociatedObject(container, kHostedContentViewKey, content,
-                             OBJC_ASSOCIATION_ASSIGN);
-    [content setFrame:clientRect];
-
-    NSView* strip = nil;
-    if (stripHeight > 0.0) {
-        strip = [[NSView alloc] initWithFrame:NSMakeRect(0.0,
-                                                         NSHeight(clientRect),
-                                                         NSWidth([container bounds]),
-                                                         stripHeight)];
-        // 宽度伸缩 + 底边距伸缩 → 条高与顶边距恒定（窗口缩放时条底贴顶、等厚）
-        [strip setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
-        [strip setWantsLayer:YES];
-        [container addSubview:strip];
-        objc_setAssociatedObject(nsWindow, kStripViewKey, strip,
-                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    return container;
-}
-
-// —— 标题栏条底颜色 ——
-// 有材质（material 档）时材质本身覆盖整窗（含标题栏条）→ 条底透明；无材质
-//（None 档：关 / 半透）时条底铺宿主主题色，alpha 取 clearColor alpha —— 半透档
-// 条与内容区同透明度「贯通」，关档为实色条。
-void updateStripColor(NSWindow* nsWindow) {
-    NSView* strip = objc_getAssociatedObject(nsWindow, kStripViewKey);
-    if (strip == nil) {
-        return;
-    }
-    NSVisualEffectView* material = objc_getAssociatedObject(nsWindow, kMaterialViewKey);
-    const bool materialVisible = material != nil && [material superview] != nil;
-    NSColor* color = materialVisible
-        ? [NSColor clearColor]
-        : objc_getAssociatedObject(nsWindow, kChromeColorKey);
-    if (color == nil) {
-        color = [NSColor clearColor];
-    }
-    [strip setWantsLayer:YES];
-    [[strip layer] setBackgroundColor:[color CGColor]];
-}
-
-// 材质挂载/摘除（enabled=false 时只摘材质，容器与标题栏条底保留 —— None 档的
-// 标题栏照样要有底色）。返回是否成功。
+// 材质挂载/摘除。挂载结构：材质视图成为 contentView（占内容矩形，不侵入标题栏），
+// 原 contentView（GL 视图）降为其子视图、frame 保持客户端矩形 —— GLFW 的
+// _glfwGetWindowSizeCocoa/_glfwGetFramebufferSizeCocoa 都读 [window->ns.view frame]，
+// 故窗口/帧缓冲/compose 逻辑尺寸零位移。摘除时逐字段回滚（GL 视图复位为 contentView）。
 bool attachMaterialView(NSWindow* nsWindow, bool enabled, float alpha) {
     if (nsWindow == nil) {
         return false;
     }
+    NSVisualEffectView* material = materialViewFor(nsWindow, enabled);
     if (!enabled) {
-        NSVisualEffectView* material = objc_getAssociatedObject(nsWindow, kMaterialViewKey);
-        if (material != nil) {
+        // 「关掉 backdrop」本身是受支持操作（已挂则还原窗口视图结构，未挂则无操作）
+        if (material != nil && [nsWindow contentView] == material) {
+            NSView* hosted = objc_getAssociatedObject(material, kHostedContentViewKey);
+            if (hosted != nil) {
+                [hosted removeFromSuperview];
+                [nsWindow setContentView:hosted];
+                objc_setAssociatedObject(material, kHostedContentViewKey, nil,
+                                         OBJC_ASSOCIATION_ASSIGN);
+            } else {
+                [material removeFromSuperview];
+            }
+        } else if (material != nil) {
             [material removeFromSuperview];
         }
-        updateStripColor(nsWindow);
         fxDump("material:off", nsWindow);
         return true;
     }
-    NSView* container = ensureContainer(nsWindow);
-    if (container == nil) {
-        // 无 contentView（异常窗口形态）：挂不上 → false → 走既有降级链
-        return false;
+    NSView* content = [nsWindow contentView];
+    if (material == nil || content == nil) {
+        return false;   // 异常窗口形态 → false → 走既有降级链
     }
-    NSVisualEffectView* material = materialViewFor(nsWindow, true);
-    if (material == nil) {
-        return false;
+    if (content == material) {
+        // 已挂（幂等重复 apply）：只更新透明度
+        [material setAlphaValue:alpha];
+        fxDump("material:on:update", nsWindow);
+        return true;
     }
+    const NSRect clientRect = [content frame];
     [material setAlphaValue:alpha];
-    [material setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-    if ([material superview] != container) {
-        [material removeFromSuperview];
-        // 垫底：必须位于 GL 视图之下（GL 侧带 alpha 的像素才能透出材质）
-        [container addSubview:material positioned:NSWindowBelow relativeTo:nil];
-    }
-    [material setFrame:NSMakeRect(0.0, 0.0,
-                                  NSWidth([container bounds]),
-                                  NSHeight([container bounds]))];
-    updateStripColor(nsWindow);
+    [nsWindow setContentView:material];       // 材质视图占内容矩形（含标题栏？不含）
+    [content setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    [content setFrame:NSMakeRect(0.0, 0.0, NSWidth(clientRect), NSHeight(clientRect))];
+    [material addSubview:content];
+    objc_setAssociatedObject(material, kHostedContentViewKey, content,
+                             OBJC_ASSOCIATION_ASSIGN);
     fxDump("material:on", nsWindow);
     return true;
 }
 
 } // namespace
-
-// 窗口 chrome 外观（头文件声明）：不透明性/阴影 + 标题栏条底主题色。
-bool applyWindowChromeAppearance(void* nativeHandle, float r, float g, float b, float a) {
-    if (nativeHandle == nullptr) {
-        return false;
-    }
-    NSWindow* nsWindow = (__bridge NSWindow*)nativeHandle;
-    if (nsWindow == nil) {
-        return false;
-    }
-    // 无标题栏窗（桌宠 sprite 窗）：没有标题栏条，且必须保持非不透明
-    //（逐像素 alpha 透桌面；置不透明会出黑底/灰底回归）
-    if (([nsWindow styleMask] & NSWindowStyleMaskTitled) == 0) {
-        return false;
-    }
-    @autoreleasepool {
-        NSColor* color = [NSColor colorWithSRGBRed:r green:g blue:b alpha:a];
-        objc_setAssociatedObject(nsWindow, kChromeColorKey, color,
-                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        // ⚠️ 不动 isOpaque / backgroundColor：GLFW 在 macOS 上把
-        // GLFW_TRANSPARENT_FRAMEBUFFER 定义为 !([nsWindow isOpaque])（cocoa_window.m
-        // _glfwFramebufferTransparentCocoa），而 GL 后端的 straight/premultiply blit
-        // 自检把该属性**缓存在首个渲染帧**（opengl_backend.cpp outputUsesTransparentFramebuffer）
-        // —— 这里若按档位改 isOpaque（曾如此：实色档 setOpaque:YES 想换回原生标题栏），
-        // 会把「透明帧缓冲可用」这一会话级真值带偏，切到半透/磨砂后 blit 路径仍是
-        // 不透明路径（alpha 合成错）。标题栏底色改由容器内条底承担后，窗口无需在
-        // 不透明性上做文章：全档保持非不透明，透明帧缓冲属性恒为真。
-        // 阴影例外：GLFW 因透明 hint 关掉了阴影（cocoa_window.m 创建期
-        // setHasShadow:NO），实色档（alpha >= 1）恢复成原生窗观感；阴影不参与
-        // 上述属性判定。
-        [nsWindow setHasShadow:(a >= 1.0f) ? YES : NO];
-        if (ensureContainer(nsWindow) == nil) {
-            return false;
-        }
-        updateStripColor(nsWindow);
-        fxDump("chrome", nsWindow);
-        return true;
-    }
-}
 
 bool applyWindowEffect(void* nativeHandle, WindowEffect effect) {
     if (fxDebug()) {
@@ -378,8 +247,7 @@ bool applyWindowEffect(void* nativeHandle, WindowEffect effect) {
         @try {
             switch (effect) {
             case WindowEffect::None:
-                // 实色/半透档共用 None（backdrop 关掉，透明/实色由 clearColor 定）：
-                // 只摘材质，窗口不透明性与标题栏条底由 applyWindowChromeAppearance 管
+                // 实色/半透档共用 None（backdrop 关掉，透明/实色由 clearColor alpha 定）
                 return attachMaterialView(nsWindow, false, kMaterialAlpha);
             case WindowEffect::Transparent:
                 // 半透档材质视图整体半透明（kTranslucentMaterialAlpha；DevDesk 当前
@@ -408,13 +276,12 @@ bool applyWindowEffect(void* nativeHandle, WindowEffect effect) {
 
 bool applyTitleBarAppearance(void* /*nativeHandle*/,
                              const TitleBarAppearance& /*appearance*/) {
-    // macOS 标题栏深浅由系统深色模式自动联动（NSWindow 无独立 API）；
+    // macOS 标题栏由系统（AppKit）自画材质，深浅跟随系统深色模式，无独立 API；
     // customColor/titlebarAppearsTransparent 联动设计 §9 明确不做
     // → 恒 false（静默不刷日志，与既有 stub 语义一致）。
-    // 2026-09-28 口径变更：§9 那条「不做标题栏联动」的前提是当时不做窗口效果
-    //（标题栏底色无所谓）；现在窗口效果三档要标题栏可见且底色跟随宿主主题，
-    // 该联动改由 applyWindowChromeAppearance（macOS 专用，带 clearColor 主题色）
-    // 承担——本函数仍保持恒 false，避免两条路径同时写标题栏。
+    // 2026-09-29 补记：本条曾被要求「按新需求做」，实作（FullSizeContentView +
+    // 主题色条底）真机实测会把 GL surface 下移一个标题栏高（见文件头），与
+    // 「内容区几何零位移」硬约束冲突 → 撤回，标题栏继续交给 AppKit。
     return false;
 }
 

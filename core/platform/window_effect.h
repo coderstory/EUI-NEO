@@ -67,24 +67,14 @@ inline WindowEffect degradedWindowEffect(WindowEffect /*desired*/, bool transpar
     return transparentFramebufferActive ? WindowEffect::Transparent : WindowEffect::None;
 }
 
-#if defined(__APPLE__)
-// macOS 专用：窗口 chrome 外观（标题栏条底 + 阴影），由宿主 clearColor 驱动。
-// 背景：窗口带 GLFW_TRANSPARENT_FRAMEBUFFER 时 AppKit 侧被置为 setOpaque:NO +
-// 背景 clearColor + 无阴影（GLFW cocoa_window.m 创建期三连），而 AppKit **只给
-// 不透明窗口画标题栏背景**，非不透明窗的标题栏整条（含红黄绿交通灯那行）透出
-// 桌面——Windows 侧由 DWM 代画非客户区，故无此问题。
-// 实现不作为：**不改窗口不透明性/背景色**（GLFW 在 macOS 把
-// GLFW_TRANSPARENT_FRAMEBUFFER 定义为 !isOpaque，而 GL 后端把该属性缓存在首个
-// 渲染帧用于选 blit 路径——改 isOpaque 会把「透明帧缓冲可用」这个会话级真值带偏，
-// 切档后 blit 走错路径、alpha 合成出错）。改为在窗口内容视图内铺一条「标题栏条底」：
-//  - 磨砂档：材质视图覆盖整窗（含条区）→ 材质贯通标题栏；
-//  - 关 / 半透档：条底铺 (r,g,b,a) = 宿主 clearColor（主题背景 + 档位 alpha）
-//    → 关档实色条、半透档与内容区同透明度贯通；
-//  - 阴影按 alpha 恢复（alpha >= 1 视为实色档，恢复原生窗观感；阴影不参与上述
-//    属性判定）。
-// 无边框窗（桌宠 sprite 窗）整体跳过：无标题栏条，且靠逐像素 alpha 透桌面，
-// 返回 false。幂等、可运行时反复调用；返回是否实际应用（句柄无效/非 macOS → false）。
-bool applyWindowChromeAppearance(void* nativeWindowHandle, float r, float g, float b, float a);
-#endif
+// macOS 侧补充说明（2026-09-29）：
+// 标题栏（非客户区）**不由本平台层自绘**。曾试 `NSWindowStyleMaskFullSizeContentView`
+// + contentView 容器 + 标题栏条底（铺宿主主题色）补「AppKit 只给不透明窗画标题栏
+// 背景」的缺口，真机实测 FSCV 会把 GL surface 整体下移一个标题栏高（32pt，内容随之
+// 位移、底部被裁、标题栏与内容间留一条全透明空带），与「内容区几何零位移」冲突 →
+// 撤回。现由 AppKit 自画标题栏材质（非不透明窗同样会画，真机截图实测可见）；主题色
+// 标题栏属已知未解需求，取舍与证据见 docs/平台能力.md「窗口效果 / 已知限制（macOS）」。
+// 另注：macOS 上 `GLFW_TRANSPARENT_FRAMEBUFFER` 由 `![NSWindow isOpaque]` 推导，而
+// GL 后端把该属性缓存在首帧选 blit 路径 —— 平台层不得在运行期改 `isOpaque`。
 
 } // namespace core::platform
