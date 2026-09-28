@@ -313,14 +313,25 @@ void applyTitleBarAppearanceToWindow(GLFWwindow* window) {
 // 透明帧缓冲是否实际开启（GLFW 创建期 hint 回查的真值）折到 Transparent/None。
 // 返回该窗口实际生效的效果；主循环用它回写 app::activeWindowEffect()。
 core::platform::WindowEffect applyWindowEffectToWindow(GLFWwindow* window, core::platform::WindowEffect desired) {
+    const bool transparentFramebuffer =
+        glfwGetWindowAttrib(window, GLFW_TRANSPARENT_FRAMEBUFFER) == GLFW_TRUE;
     if (core::platform::applyWindowEffect(nativeWindowHandle(window), desired)) {
         EUI_FX_DIAG("[fxdiag] applyWindowEffectToWindow window=%p desired=%d -> applied=%d\n",
                     static_cast<void*>(window), static_cast<int>(desired),
                     static_cast<int>(desired));
+#if defined(__APPLE__)
+        // None 档回写也要按「实际视觉状态」折（与下面失败路径的 degradedWindowEffect
+        // 同一判据，两条路径对同一视觉状态必须给出同一个值）：透明帧缓冲生效的窗口
+        // 即便关掉 backdrop 也不是实色窗——WindowEffect::None 的文档语义是「实色
+        // 窗口」，半透档 = None backdrop + clearColor alpha<1。不折的话 active 会
+        // 停在 None，宿主的半透档降级提示（判据 active == Transparent）恒误报
+        //「当前系统不支持窗口半透，已回退为不透明」（真机缺陷：半透档常显该警告）。
+        if (desired == core::platform::WindowEffect::None && transparentFramebuffer) {
+            return core::platform::WindowEffect::Transparent;
+        }
+#endif
         return desired;
     }
-    const bool transparentFramebuffer =
-        glfwGetWindowAttrib(window, GLFW_TRANSPARENT_FRAMEBUFFER) == GLFW_TRUE;
     const core::platform::WindowEffect degraded =
         core::platform::degradedWindowEffect(desired, transparentFramebuffer);
     EUI_FX_DIAG("[fxdiag] applyWindowEffectToWindow window=%p desired=%d platform=false "
@@ -339,17 +350,20 @@ core::platform::WindowEffect desiredChildWindowEffect(const app::DslWindowReques
     return app::currentWindowEffect();
 }
 
-// 窗口不透明性（macOS 等价物）：窗口带透明帧缓冲 hint 创建后 GLFW 把 NSWindow
-// 置为非不透明 + 透明背景 + 无阴影（创建期属性，GLFW 侧不可逆），AppKit 侧三项
-// 可逆。判据是「窗口实际不透明度」= clearColor alpha == 1，而不是档位——DevDesk
-// 的「关」与「半透」都映射 WindowEffect::None，按档位分不出实色与半透（实色档
-// 需要不透明窗口，否则 AppKit 不画标题栏背景 → 标题栏全透明；半透/磨砂档必须
-// 保持非不透明，GL alpha 才能透出桌面/材质）。非 Apple 平台空实现（Windows 非
-// 客户区由 DWM 代画，无不透明性开关）。
-void applyWindowOpaqueAppearanceFor(GLFWwindow* window, const eui::Color& clearColor) {
+// 窗口 chrome 外观（macOS 等价物）：AppKit 只给不透明窗画标题栏背景，而窗口带
+// 透明帧缓冲 hint 时 GLFW 在 macOS 把它置为非不透明 —— 不自己铺标题栏条底则整条
+// 标题栏（含交通灯那行）透出桌面（Windows 侧由 DWM 代画非客户区，无此问题）。
+// 判据用宿主 clearColor（= 主题背景 + 档位 alpha）而不是档位：DevDesk 的「关」与
+// 「半透」都映射 WindowEffect::None，按档位分不出实色与半透；条底色因此天然跟随
+// 主题（主题切换 → setClearColor → 主循环 clearColor 联动分支重铺）。
+// 非 Apple 平台空实现（Windows 非客户区由 DWM 管）。
+void applyWindowChromeAppearanceFor(GLFWwindow* window, const eui::Color& clearColor) {
 #if defined(__APPLE__)
-    core::platform::applyWindowOpaqueAppearance(nativeWindowHandle(window),
-                                                clearColor.a >= 1.0f);
+    core::platform::applyWindowChromeAppearance(nativeWindowHandle(window),
+                                                clearColor.r,
+                                                clearColor.g,
+                                                clearColor.b,
+                                                clearColor.a);
 #else
     (void)window;
     (void)clearColor;
@@ -433,7 +447,7 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     }
     // 子窗不透明性跟随自身生效 clearColor（实色档的标题窗需要不透明窗口才有
     // 标题栏背景；无边框 sprite 窗在平台层按 styleMask 跳过）
-    applyWindowOpaqueAppearanceFor(childWindow, managed->content.request().clearColor);
+    applyWindowChromeAppearanceFor(childWindow, managed->content.request().clearColor);
     // 任务栏/Alt+Tab 隐藏（桌宠设计 G5，Windows WS_EX_TOOLWINDOW）
     if (request.hideFromTaskbar) {
         core::platform::applyWindowStyleFlags(
@@ -638,7 +652,7 @@ int eui_app_run() {
     eui::Color appliedClearColor = app::currentClearColor();
     // 不透明性基线（macOS）：与 clearColor 基线同源——宿主在 app::initialize()
     // 里按档位 setClearColor/alpha 后，主循环的 clearColor 联动分支会补齐差值。
-    applyWindowOpaqueAppearanceFor(window, appliedClearColor);
+    applyWindowChromeAppearanceFor(window, appliedClearColor);
 
     const auto cleanupMainWindow = [&] {
         core::releaseInputQueue(window);
@@ -790,13 +804,13 @@ int eui_app_run() {
             appliedClearColor = effectiveClearColor;
             // 「关↔半透」两档都是 WindowEffect::None（档位不变、只有 alpha 变），
             // 窗口不透明性只能在这条 alpha 联动分支上追随（macOS）
-            applyWindowOpaqueAppearanceFor(window, effectiveClearColor);
+            applyWindowChromeAppearanceFor(window, effectiveClearColor);
             childWindows.updateAll([&managedClearColor = appliedClearColor](ManagedWindow& managed) {
                 if (!managed.content.request().followClearColorOverride) {
                     return;
                 }
                 managed.content.setClearColor(managedClearColor);
-                applyWindowOpaqueAppearanceFor(managed.window, managedClearColor);
+                applyWindowChromeAppearanceFor(managed.window, managedClearColor);
             });
         }
 
@@ -808,11 +822,11 @@ int eui_app_run() {
             appliedWindowEffectDesired = app::currentWindowEffect();
             const core::platform::WindowEffect effective =
                 applyWindowEffectToWindow(window, appliedWindowEffectDesired);
-            applyWindowOpaqueAppearanceFor(window, app::currentClearColor());
+            applyWindowChromeAppearanceFor(window, app::currentClearColor());
             childWindows.updateAll([](ManagedWindow& managed) {
                 applyWindowEffectToWindow(
                     managed.window, desiredChildWindowEffect(managed.content.request()));
-                applyWindowOpaqueAppearanceFor(managed.window,
+                applyWindowChromeAppearanceFor(managed.window,
                                                managed.content.request().clearColor);
             });
             app::detail::setActiveWindowEffect(effective);
@@ -866,7 +880,7 @@ int eui_app_run() {
                     "[layoutdiag] frame windowSize=(%d,%d) framebuffer=(%d,%d) contentScale=(%.3f,%.3f) "
                     "monitorContentScale=(%.3f,%.3f) scaleToMonitor=%d dpiScale=%.4f pointerScale=%.4f "
                     "uiScale=%.4f logical=(%.2f,%.2f) clearColor=(%.3f,%.3f,%.3f,%.3f) "
-                    "effectDesired=%d effectActive=%d\n",
+                    "effectDesired=%d effectActive=%d transparentFbAttrib=%d\n",
                     winW,
                     winH,
                     framebufferWidth,
@@ -886,7 +900,8 @@ int eui_app_run() {
                     static_cast<double>(fxClear.b),
                     static_cast<double>(fxClear.a),
                     static_cast<int>(app::currentWindowEffect()),
-                    static_cast<int>(app::activeWindowEffect()));
+                    static_cast<int>(app::activeWindowEffect()),
+                    glfwGetWindowAttrib(window, GLFW_TRANSPARENT_FRAMEBUFFER));
                 std::fflush(stderr);
             }
         }

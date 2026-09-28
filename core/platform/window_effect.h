@@ -68,17 +68,23 @@ inline WindowEffect degradedWindowEffect(WindowEffect /*desired*/, bool transpar
 }
 
 #if defined(__APPLE__)
-// macOS 专用：恢复/解除 AppKit 原生不透明窗口外观（setOpaque + 窗口背景色 +
-// 窗口阴影三件套）。透明帧缓冲 hint 是创建期属性不可逆（GLFW cocoa_window.m
-// 在 hint 生效时设 setOpaque:NO + 背景 clearColor + setHasShadow:NO），但
-// AppKit 侧这三项可逆：标题栏由 AppKit 绘制，只有不透明窗口才画标题栏背景，
-// 不恢复则「关」档整条标题栏透出桌面（Windows 侧由 DWM 代画非客户区，无此
-// 问题）。判据由调用方给（「关」档 clearColor alpha == 1 → true；半透/磨砂档
-// 必须保持非不透明，GL alpha 才能透出桌面/backdrop 材质 → false）——档位
-// 本身不足以判定：DevDesk 的「关」与「半透」都映射 WindowEffect::None。
-// 无边框窗（桌宠 sprite 窗）靠逐像素 alpha 透桌面，实现内按 styleMask 跳过。
-// 幂等、可运行时反复调用；返回是否实际应用（句柄无效/无标题栏/非 macOS → false）。
-bool applyWindowOpaqueAppearance(void* nativeWindowHandle, bool opaque);
+// macOS 专用：窗口 chrome 外观（标题栏条底 + 阴影），由宿主 clearColor 驱动。
+// 背景：窗口带 GLFW_TRANSPARENT_FRAMEBUFFER 时 AppKit 侧被置为 setOpaque:NO +
+// 背景 clearColor + 无阴影（GLFW cocoa_window.m 创建期三连），而 AppKit **只给
+// 不透明窗口画标题栏背景**，非不透明窗的标题栏整条（含红黄绿交通灯那行）透出
+// 桌面——Windows 侧由 DWM 代画非客户区，故无此问题。
+// 实现不作为：**不改窗口不透明性/背景色**（GLFW 在 macOS 把
+// GLFW_TRANSPARENT_FRAMEBUFFER 定义为 !isOpaque，而 GL 后端把该属性缓存在首个
+// 渲染帧用于选 blit 路径——改 isOpaque 会把「透明帧缓冲可用」这个会话级真值带偏，
+// 切档后 blit 走错路径、alpha 合成出错）。改为在窗口内容视图内铺一条「标题栏条底」：
+//  - 磨砂档：材质视图覆盖整窗（含条区）→ 材质贯通标题栏；
+//  - 关 / 半透档：条底铺 (r,g,b,a) = 宿主 clearColor（主题背景 + 档位 alpha）
+//    → 关档实色条、半透档与内容区同透明度贯通；
+//  - 阴影按 alpha 恢复（alpha >= 1 视为实色档，恢复原生窗观感；阴影不参与上述
+//    属性判定）。
+// 无边框窗（桌宠 sprite 窗）整体跳过：无标题栏条，且靠逐像素 alpha 透桌面，
+// 返回 false。幂等、可运行时反复调用；返回是否实际应用（句柄无效/非 macOS → false）。
+bool applyWindowChromeAppearance(void* nativeWindowHandle, float r, float g, float b, float a);
 #endif
 
 } // namespace core::platform
