@@ -275,26 +275,34 @@ else()
     list(APPEND CORE_SOURCES core/platform/window_effect_stub.cpp)
 endif()
 
-# 窗口样式属性（桌宠设计 §2.6 G5：任务栏隐藏等）。macOS/Linux 走 stub
+# 窗口样式属性（桌宠设计 §2.6 G5：任务栏隐藏等）。Windows 走 WS_EX_TOOLWINDOW；
+# macOS 走 NSWindowCollectionBehavior（macos-three-features 设计 §6.1）；其余走 stub
 if(WIN32)
     list(APPEND CORE_SOURCES core/platform/window_style_win.cpp)
+elseif(APPLE)
+    list(APPEND CORE_SOURCES core/platform/window_style_macos.mm)
 else()
     list(APPEND CORE_SOURCES core/platform/window_style_stub.cpp)
 endif()
 
 # 原生右键菜单（小尺寸覆盖窗自绘菜单被窗口 bounds 裁剪——桌宠右键菜单）。
-# macOS/Linux 走 stub（nullopt，调用方回退自绘）
+# Windows 走 TrackPopupMenu；macOS 走 NSMenu popUp（macos-three-features 设计
+# §6.2）；其余平台走 stub（nullopt，调用方回退自绘）
 if(WIN32)
     list(APPEND CORE_SOURCES core/platform/context_menu_win.cpp)
+elseif(APPLE)
+    list(APPEND CORE_SOURCES core/platform/context_menu_macos.mm)
 else()
     list(APPEND CORE_SOURCES core/platform/context_menu_stub.cpp)
 endif()
 
 # 系统电源事件（睡眠/唤醒通知宿主——DevDesk 桌宠 M2「Sleep 零渲染」）。
-# Windows 走 WM_POWERBROADCAST WndProc 子类链；macOS/Linux 走 stub（回调
-# 永不触发，宿主功能安全降级为不启用）
+# Windows 走 WM_POWERBROADCAST WndProc 子类链；macOS 走 NSWorkspace 通知
+#（macos-three-features 设计 §6.3）；其余平台走 stub（回调永不触发，宿主安全降级）
 if(WIN32)
     list(APPEND CORE_SOURCES core/platform/power_events_win.cpp)
+elseif(APPLE)
+    list(APPEND CORE_SOURCES core/platform/power_events_macos.mm)
 else()
     list(APPEND CORE_SOURCES core/platform/power_events_stub.cpp)
 endif()
