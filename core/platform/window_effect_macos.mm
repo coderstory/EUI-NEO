@@ -2,12 +2,15 @@
 //（2026-09-28 macos-three-features 设计 §5.2；磨砂全链见
 // 2026-09-22-eui-window-frost-design.md）
 //
-// 视图结构（2026-09-29 定版，**几何零位移优先**）：
-//   material 档：NSWindow.contentView = 材质视图，GL 视图（GLFWContentView）
-//                作为其子视图，frame 恒等于客户端矩形
-//   None/实色档：GL 视图仍是 contentView（GLFW 创建期结构，一字不动）
+// 视图结构（2026-09-29 二版，**材质贯通标题栏 + 几何零位移**）：
+//   material 档：① 内容区 = 一版结构（contentView 换成材质视图，GL 视图降为其子
+//                  视图、frame 恒等于客户端矩形，一字不动）
+//                ② 标题栏 = 额外一条同材质的 NSVisualEffectView，作为内容区材质的
+//                  子视图顶出内容矩形那一条 —— 让标题栏与内容区走同一套合成
+//   None/实色档：两处材质视图都摘除；GL 视图始终是 contentView（GLFW 创建期结构）
 // 这样 GLFW 的窗口/帧缓冲尺寸（都读 [window->ns.view frame]）与 compose 侧
-// logical 尺寸在任何档位下都不变；材质视图占的正是内容矩形，不会侵入标题栏。
+// logical 尺寸在任何档位下都不变；标题栏条只占非客户区那一条，不碰 GL 几何。
+//（为什么需要标题栏条、挂哪儿、两次失败的结构尝试：见 attachMaterialView 注释。）
 //
 // 标题栏（非客户区）**不由本层自绘**，靠三处窗口属性让 AppKit 把标题栏画对
 //（真机取证定案，详证见 docs/平台能力.md「macOS 标题栏底机制」）：
@@ -18,7 +21,8 @@
 //     没给就退回「全透明但非 clear」的具体色（alpha=0，不引入任何着色）。
 //  2. 给了自定义底色时另把 `titlebarAppearsTransparent` 设为 YES：AppKit 不画自画
 //     标题栏材质 → 标题栏区域直接透出上面的窗口背景色（= 内容区底色）；未给自定义
-//     色时该位为 NO，标题栏由 AppKit 材质画出。
+//     色时该位为 NO，标题栏由 AppKit 材质画出。二版起标题栏底下还垫着本层的
+//     NSVisualEffectView（material 档），故标题栏观感 = 材质叠窗口背景色，与内容区同源。
 //  3. `applyTitleBarAppearance` 落到窗口 `NSAppearance`（浅 Aqua / 深 DarkAqua）：
 //     标题栏材质/交通灯默认只跟随**系统外观**，应用浅色 + 系统深色时标题栏发暗，
 //     同样像「全透明」；设窗口外观后即跟随宿主主题（Windows 侧同语义 =
@@ -27,7 +31,8 @@
 // 贯通标题栏 —— 真机实测 **FSCV 会把 GL surface 整体下移一个标题栏高（32pt）**：内容
 // 位移、底部被裁、标题栏与内容间留全透明空带（亮段 114/219pt → 143/244pt；空带
 // 66..95pt）。二分实测容器重挂载本身不偏移 → 偏移由 FSCV 引入且无法从本侧可靠纠正，
-// 故**不启用 FSCV**（几何零位移优先）。材质贯通标题栏属未解需求，候选替代见上述文档。
+// 故**不启用 FSCV**（几何零位移优先）。二版改用「材质视图当 NSThemeFrame 底层兄弟」
+// 达成同一目的，不碰 FSCV、不碰 GL 视图（见 attachMaterialView 注释）。
 //
 // 不引任何 vibrancy crate（设计 D-2）：ObjC++ 直挂 NSVisualEffectView。
 // Tahoe 风险门（设计 D-3）：挂载失败（异常/无效句柄）→ 返回 false → 上层既有
@@ -40,6 +45,21 @@
 
 #include <cstdio>
 #include <cstdlib>
+
+// 标题栏条材质视图必须**事件透明**：它铺在红绿灯/标题底下，一旦参与命中判定就会
+// 吃掉标题栏拖拽、双击缩放与按钮点击（命中判定落到它下面的 NSThemeFrame / 按钮视图
+// 才是 AppKit 原生行为）。视图本身只负责画，不需要接收任何事件。
+// ⚠ 只给标题栏条用：内容区材质是 contentView（GL 视图的父视图），覆写它的 hitTest
+// 会让整棵内容区子树收不到鼠标事件（真机实测侧边栏点击全失效）。
+@interface EUIPassthroughMaterialView : NSVisualEffectView
+@end
+
+@implementation EUIPassthroughMaterialView
+- (NSView*)hitTest:(NSPoint)point {
+    (void)point;
+    return nil;
+}
+@end
 
 namespace core::platform {
 
@@ -59,8 +79,9 @@ constexpr float kMaterialAlpha = 1.0f;
 
 // 关联对象键：状态按窗口各存一份（进程级单例会让多窗互抢同一视图——桌宠子窗
 // apply(None) 曾把主窗已挂的材质视图摘走，真机取证见提交说明）
-const void* kMaterialViewKey = &kMaterialViewKey;             // NSVisualEffectView
+const void* kMaterialViewKey = &kMaterialViewKey;             // 内容区材质 NSVisualEffectView
 const void* kHostedContentViewKey = &kHostedContentViewKey;   // GLFWContentView
+const void* kTitleBarMaterialKey = &kTitleBarMaterialKey;     // 标题栏条材质视图
 const void* kTitleBarColorKey = &kTitleBarColorKey;           // NSNumber(BOOL) 已设自定义底色
 
 // —— 诊断（EUI_FX_DEBUG=1 时输出 stderr）——
@@ -114,31 +135,33 @@ void fxDump(const char* tag, NSWindow* w) {
         return;
     }
     NSVisualEffectView* material = objc_getAssociatedObject(w, kMaterialViewKey);
+    NSVisualEffectView* tbMaterial = objc_getAssociatedObject(w, kTitleBarMaterialKey);
     NSView* content = [w contentView];
-    NSView* hosted = content != nil
-        ? objc_getAssociatedObject(content, kHostedContentViewKey)
-        : nil;
+    NSView* glSuper = content != nil ? [content superview] : nil;
     char winFrame[64];
     char contentRect[64];
     char layoutRect[64];
     char contentFrame[64];
-    char hostedFrame[64];
+    char glSuperFrame[64];
     char materialFrame[64];
+    char tbMaterialFrame[64];
     char bgDesc[96];
     fxRectTo(winFrame, sizeof(winFrame), [w frame]);
     fxRectTo(contentRect, sizeof(contentRect), [w contentRectForFrameRect:[w frame]]);
     fxRectTo(layoutRect, sizeof(layoutRect), [w contentLayoutRect]);
     fxRectTo(contentFrame, sizeof(contentFrame), content != nil ? [content frame] : NSZeroRect);
-    fxRectTo(hostedFrame, sizeof(hostedFrame), hosted != nil ? [hosted frame] : NSZeroRect);
+    fxRectTo(glSuperFrame, sizeof(glSuperFrame), glSuper != nil ? [glSuper frame] : NSZeroRect);
     fxRectTo(materialFrame, sizeof(materialFrame),
              material != nil ? [material frame] : NSZeroRect);
+    fxRectTo(tbMaterialFrame, sizeof(tbMaterialFrame),
+             tbMaterial != nil ? [tbMaterial frame] : NSZeroRect);
     fxColorDescTo(bgDesc, sizeof(bgDesc), [w backgroundColor]);
     std::fprintf(
         stderr,
         "[fxdiag] %s win=%p isOpaque=%d bg=%s bgIsClear=%d tbTransparent=%d styleMask=0x%lx "
         "appearance=%s frame=%s contentRect=%s layoutRect=%s | contentView=%s frame=%s "
-        "hosted=%s frame=%s | material=%p alpha=%.2f onWindow=%d sv=%s frame=%s materialValue=%ld "
-        "blending=%ld state=%ld\n",
+        "glSuper=%s frame=%s | material=%p alpha=%.2f onWindow=%d sv=%s frame=%s materialValue=%ld "
+        "blending=%ld state=%ld | tbMaterial=%p alpha=%.2f sv=%s frame=%s\n",
         tag,
         (void*)w,
         [w isOpaque] ? 1 : 0,
@@ -152,8 +175,8 @@ void fxDump(const char* tag, NSWindow* w) {
         layoutRect,
         fxCls(content),
         contentFrame,
-        fxCls(hosted),
-        hostedFrame,
+        fxCls(glSuper),
+        glSuperFrame,
         (void*)material,
         material != nil ? (double)[material alphaValue] : 0.0,
         (material != nil && [material window] == w) ? 1 : 0,
@@ -161,7 +184,11 @@ void fxDump(const char* tag, NSWindow* w) {
         materialFrame,
         material != nil ? (long)[material material] : 0,
         material != nil ? (long)[material blendingMode] : 0,
-        material != nil ? (long)[material state] : 0);
+        material != nil ? (long)[material state] : 0,
+        (void*)tbMaterial,
+        tbMaterial != nil ? (double)[tbMaterial alphaValue] : 0.0,
+        fxCls(tbMaterial != nil ? [tbMaterial superview] : nil),
+        tbMaterialFrame);
     std::fflush(stderr);
 }
 
@@ -202,6 +229,10 @@ NSVisualEffectView* materialViewFor(NSWindow* nsWindow, bool create) {
     }
     NSVisualEffectView* view = objc_getAssociatedObject(nsWindow, kMaterialViewKey);
     if (view == nil && create) {
+        // ⚠ 内容区材质**必须用普通 NSVisualEffectView**（默认 hitTest）：它同时是
+        // contentView（GL 视图的父视图），一旦 hitTest 返回 nil，整棵内容区子树
+        // （含 GL 视图）就不再接收鼠标事件——真机实测：侧边栏点击全失效。
+        // 事件透明只对「标题栏条」那一份有意义（见 EUIPassthroughMaterialView）。
         view = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
         // classic 材质组合（设计 §5.2；⚠️ 材质观感待 Mac 实机定，spec §13-2）：
         // HUDWindow 深色高对比 / UnderWindowBackground 通用背景二选一（可换）
@@ -215,18 +246,73 @@ NSVisualEffectView* materialViewFor(NSWindow* nsWindow, bool create) {
     return view;
 }
 
-// 材质挂载/摘除。挂载结构：材质视图成为 contentView（占内容矩形，不侵入标题栏），
-// 原 contentView（GL 视图）降为其子视图、frame 保持客户端矩形 —— GLFW 的
-// _glfwGetWindowSizeCocoa/_glfwGetFramebufferSizeCocoa 都读 [window->ns.view frame]，
-// 故窗口/帧缓冲/compose 逻辑尺寸零位移。摘除时逐字段回滚（GL 视图复位为 contentView）。
+// 标题栏条材质视图（2026-09-29 二版新增）：与内容区材质**同材质/同混合/同 state**，
+// 单独一份（frame 只有标题栏那一条），按窗口各存一份（关联对象）。
+NSVisualEffectView* titleBarMaterialViewFor(NSWindow* nsWindow, bool create) {
+    if (nsWindow == nil) {
+        return nil;
+    }
+    NSVisualEffectView* view = objc_getAssociatedObject(nsWindow, kTitleBarMaterialKey);
+    if (view == nil && create) {
+        view = [[EUIPassthroughMaterialView alloc] initWithFrame:NSZeroRect];
+        [view setMaterial:NSVisualEffectMaterialHUDWindow];
+        [view setBlendingMode:NSVisualEffectBlendingModeWithinWindow];
+        [view setState:NSVisualEffectStateActive];
+        // 贴在标题栏那一条：宽度跟随窗口、下边距弹性 → 窗口变高时留在顶部
+        [view setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+        objc_setAssociatedObject(nsWindow, kTitleBarMaterialKey, view,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return view;
+}
+
+// 材质挂载/摘除。
+//
+// 内容区（一版结构保持不动）：材质视图成为 contentView，原 contentView（GL 视图）
+// 降为其子视图、frame 保持客户端矩形 —— GLFW 的 _glfwGetWindowSizeCocoa /
+// _glfwGetFramebufferSizeCocoa 都读 [window->ns.view frame]，故窗口/帧缓冲/compose
+// 逻辑尺寸零位移。摘除时逐字段回滚（GL 视图复位为 contentView）。
+//
+// 标题栏条（二版新增，**为什么必须加**）：标题栏（非客户区）在二版之前
+// **没有任何材质**，它的观感 = 窗口背景色一层（theme×alpha）叠在壁纸上；而内容区
+// = clearColor 纱 + 材质 + 窗口背景色三层。alpha 一压低（磨砂档 0.30）两者立刻
+// 劈叉：黑壁纸实测标题栏 (75,75,74) vs 内容区 (180,181,179)，差 105/255 —— 观感上
+// 标题栏像另一块面板（用户原始投诉）。补上这一条材质后，标题栏与内容区走同一套
+// 合成（材质 + 窗口背景色），差值只剩 clearColor 纱那一层（α×|主题色 − 材质输出|），
+// 可用两处 alpha 分别标定压到 ≤ 20/255（DevDesk 侧实测 8.7）。
+//
+// 挂哪儿（2026-09-29 真机取证，两次失败尝试记录在案，勿重走）：
+//   ① 不用 FSCV：实测把 GL surface 整体下移 32pt（撤回，见文件头）。
+//   ② 不用「把材质视图挂到 NSThemeFrame 上（铺满整窗或只盖标题栏）」：真机实测
+//      **AppKit 把窗口标题画到最左缘、与红绿灯重叠**——全窗 / 条状两种 frame ×
+//      relativeTo:nil / relativeTo:contentView 两种插入点 × 含/不含 hitTest 覆写，
+//      四组合全复现 → 该路线整体弃用。
+//   最终采用：内容区那份一字不动（contentView 结构，几何零位移已验收），标题栏条
+//   作为**内容区材质的子视图**挂在内容矩形之上（frame.y = 内容高，顶出去那一条，
+//   由窗口自身的绘制边界裁剪）→ 不往 NSThemeFrame 里加任何视图，标题布局正常。
+//
+// 事件：标题栏条铺在红绿灯/标题底下，必须事件透明（EUIPassthroughMaterialView
+// 的 hitTest 恒 nil），否则标题栏拖拽会被它吃掉；它 z 序在 GL 视图之上、但在
+// titlebar 容器之下 → 按钮与标题仍压在它上面。
 bool attachMaterialView(NSWindow* nsWindow, bool enabled, float alpha) {
     if (nsWindow == nil) {
         return false;
     }
     NSVisualEffectView* material = materialViewFor(nsWindow, enabled);
+    if (material == nil) {
+        if (!enabled) {
+            fxDump("material:off", nsWindow);
+            return true;   // 未挂且本次要关：无操作（关 backdrop 是受支持操作）
+        }
+        return false;      // 分配失败 → false → 走既有降级链
+    }
+    NSVisualEffectView* strip = titleBarMaterialViewFor(nsWindow, enabled);
     if (!enabled) {
-        // 「关掉 backdrop」本身是受支持操作（已挂则还原窗口视图结构，未挂则无操作）
-        if (material != nil && [nsWindow contentView] == material) {
+        // 摘除两处：标题栏条 + 内容区材质（后者要把 GL 视图复位为 contentView）
+        if (strip != nil && [strip superview] != nil) {
+            [strip removeFromSuperview];
+        }
+        if ([nsWindow contentView] == material) {
             NSView* hosted = objc_getAssociatedObject(material, kHostedContentViewKey);
             if (hosted != nil) {
                 [hosted removeFromSuperview];
@@ -236,30 +322,49 @@ bool attachMaterialView(NSWindow* nsWindow, bool enabled, float alpha) {
             } else {
                 [material removeFromSuperview];
             }
-        } else if (material != nil) {
+        } else {
             [material removeFromSuperview];
         }
         fxDump("material:off", nsWindow);
         return true;
     }
     NSView* content = [nsWindow contentView];
-    if (material == nil || content == nil) {
+    if (content == nil || strip == nil) {
         return false;   // 异常窗口形态 → false → 走既有降级链
     }
     if (content == material) {
-        // 已挂（幂等重复 apply）：只更新透明度
+        // 已挂（幂等重复 apply）：只更新两处透明度
         [material setAlphaValue:alpha];
+        [strip setAlphaValue:alpha];
         fxDump("material:on:update", nsWindow);
         return true;
     }
+    // —— 内容区：一版结构 ——
     const NSRect clientRect = [content frame];
     [material setAlphaValue:alpha];
-    [nsWindow setContentView:material];       // 材质视图占内容矩形（含标题栏？不含）
+    [nsWindow setContentView:material];       // 材质视图占内容矩形，不侵入标题栏
     [content setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [content setFrame:NSMakeRect(0.0, 0.0, NSWidth(clientRect), NSHeight(clientRect))];
     [material addSubview:content];
     objc_setAssociatedObject(material, kHostedContentViewKey, content,
                              OBJC_ASSOCIATION_ASSIGN);
+    // —— 标题栏条：材质视图挂在内容区材质之上（子视图），frame 顶出内容矩形 ——
+    // ⚠ 不挂 NSThemeFrame：真机实测**任何**额外挂在 NSThemeFrame 上的子视图都会让
+    // AppKit 把窗口标题画到最左缘、与红绿灯重叠（全窗矩形 / 只盖标题栏 两种 frame、
+    // relativeTo:nil / relativeTo:contentView 两种插入点、含/不含 hitTest 覆写，
+    // 四种组合全复现）→ 该路线弃用。改为挂在内容区材质下：不动 titlebar 视图层级，
+    // 标题布局恢复正常（真机复验）；材质铺到 y = 内容高..内容高+标题栏高 那一条，
+    // 由窗口自身的绘制边界裁剪。
+    const CGFloat contentHeight = NSHeight(clientRect);
+    const NSRect windowFrame = [nsWindow frame];
+    const NSRect contentRect = [nsWindow contentRectForFrameRect:windowFrame];
+    const CGFloat barHeight = NSHeight(windowFrame) - NSHeight(contentRect);
+    if (barHeight > 0.0) {
+        [strip setAlphaValue:alpha];
+        [strip setFrame:NSMakeRect(0.0, contentHeight, NSWidth(windowFrame), barHeight)];
+        [strip setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+        [material addSubview:strip];
+    }
     fxDump("material:on", nsWindow);
     return true;
 }
