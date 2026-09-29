@@ -224,6 +224,11 @@ struct Element {
     bool subtreeHasDependentVisuals = false;
     bool subtreeHasBackdropBlur = false;
     bool subtreeBlocksRetainedLayer = true;
+    // 子树 zIndex 上界（含自身）：兄弟排序键。让嵌套弹层（dropdown/contextmenu
+    // 等设了高 zIndex 的组件）能把整个所在子树抬到后续兄弟之上——弹层不必
+    // 强制渲染在 UI 根层也能盖住后面绘制的兄弟内容（CSS 非 stacking context
+    // 的 z-index 逃逸同款语义）。非重叠布局下排序结果与旧行为一致
+    int subtreeMaxZIndex = 0;
 
     LayoutType layoutType() const {
         if (kind == ElementKind::Row) {
@@ -1673,7 +1678,7 @@ private:
             hasBackdropBlur_ = hasBackdropBlur_ || root->subtreeHasBackdropBlur;
         }
         std::stable_sort(orderedRoots_.begin(), orderedRoots_.end(), [](const Element* a, const Element* b) {
-            return a->zIndex < b->zIndex;
+            return a->subtreeMaxZIndex < b->subtreeMaxZIndex;
         });
     }
 
@@ -1684,6 +1689,8 @@ private:
         element.subtreeHasDependentVisuals = elementHasDependentVisuals(element);
         element.subtreeHasBackdropBlur = elementHasBackdropBlur(element);
         element.subtreeBlocksRetainedLayer = elementBlocksRetainedLayer(element);
+        // 自身 zIndex 起步，逐子树取上界（子树已先算好——递归在后序完成）
+        element.subtreeMaxZIndex = element.zIndex;
         for (const auto& child : element.children) {
             element.orderedChildren.push_back(child.get());
             rebuildOrderedChildren(*child);
@@ -1691,9 +1698,11 @@ private:
             element.subtreeHasDependentVisuals = element.subtreeHasDependentVisuals || child->subtreeHasDependentVisuals;
             element.subtreeHasBackdropBlur = element.subtreeHasBackdropBlur || child->subtreeHasBackdropBlur;
             element.subtreeBlocksRetainedLayer = element.subtreeBlocksRetainedLayer || child->subtreeBlocksRetainedLayer;
+            element.subtreeMaxZIndex = std::max(element.subtreeMaxZIndex, child->subtreeMaxZIndex);
         }
+        // 兄弟排序用子树上界（弹层逃逸）；稳定排序保持 DOM 顺序平局语义
         std::stable_sort(element.orderedChildren.begin(), element.orderedChildren.end(), [](const Element* a, const Element* b) {
-            return a->zIndex < b->zIndex;
+            return a->subtreeMaxZIndex < b->subtreeMaxZIndex;
         });
     }
 
