@@ -57,6 +57,15 @@ int eui_tray_is_initialized(void);
 void eui_tray_poll(int blocking);
 int eui_tray_consume_show_requested(void);
 int eui_tray_consume_exit_requested(void);
+/*
+ * 应用级「带回前台」（macOS Dock reopen 复原主窗用）：
+ * - AppKit 后端：应用隐藏态（Cmd+H）先 unhideWithoutActivation 解除隐藏，
+ *   再 activateIgnoringOtherApps:YES 抢焦点——GLFW 的 show/focus 不解除
+ *   应用隐藏，Dock 点击期望无论哪一态都把应用带回前台。
+ * - 其余后端 / 无后端：空操作（Windows/Linux 无对应应用级语义）。
+ * 未初始化托盘也可调用（只动 NSApp，不触碰托盘对象）。
+ */
+void eui_tray_activate_app(void);
 void eui_tray_shutdown(void);
 
 #ifdef __cplusplus

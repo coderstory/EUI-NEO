@@ -83,6 +83,13 @@ void setTrayMenuRequestedHandler(TrayMenuRequestedHandler handler);
 void pollTray(bool blocking = false);
 bool consumeTrayShowRequested();
 bool consumeTrayExitRequested();
+/**
+ * @brief 应用级「带回前台」（macOS Dock reopen 复原主窗用）。
+ *
+ * macOS：Cmd+H 隐藏态先 unhideWithoutActivation，再 activateIgnoringOtherApps
+ * 抢焦点（GLFW 的 show/focus 不解除应用隐藏）。其他平台为空操作。
+ */
+void activateApp();
 void shutdownTray();
 
 /**

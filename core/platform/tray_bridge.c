@@ -347,6 +347,17 @@ int eui_tray_consume_exit_requested(void) {
     return requested;
 }
 
+/* Dock reopen（applicationShouldHandleReopen）复原主窗的应用级前置：
+ * Cmd+H 隐藏态 GLFW show/focus 不可见，必须先解除应用隐藏再抢焦点。
+ * 只动 NSApp，与托盘初始化状态无关（与 3rd/tray tray_init 的
+ * activateIgnoringOtherApps 用法一致）。 */
+void eui_tray_activate_app(void) {
+    if ([NSApp isHidden]) {
+        [NSApp unhideWithoutActivation];
+    }
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
 void eui_tray_shutdown(void) {
     if (!g_initialized) {
         return;
@@ -1090,6 +1101,10 @@ int eui_tray_consume_exit_requested(void) {
     return requested;
 }
 
+/* Linux 无应用级「带回前台」等价语义，Dock reopen 也无对应事件：空操作。 */
+void eui_tray_activate_app(void) {
+}
+
 void eui_tray_shutdown(void) {
     if (!g_initialized) {
         return;
@@ -1207,6 +1222,11 @@ int eui_tray_consume_exit_requested(void) {
     return requested;
 }
 
+/* Win32：无应用级 activate 等价需求（glfwFocusWindow 已带前台语义）：
+ * 空操作，签名与 AppKit/SNI 后端保持一致。 */
+void eui_tray_activate_app(void) {
+}
+
 void eui_tray_shutdown(void) {
     if (!g_initialized) {
         return;
@@ -1244,6 +1264,9 @@ int eui_tray_consume_show_requested(void) {
 
 int eui_tray_consume_exit_requested(void) {
     return 0;
+}
+
+void eui_tray_activate_app(void) {
 }
 
 void eui_tray_shutdown(void) {

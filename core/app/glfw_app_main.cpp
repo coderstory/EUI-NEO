@@ -209,6 +209,23 @@ void restoreWindowFromTray(GLFWwindow* window, WindowState& windowState) {
     windowState.nextFrameTime = glfwGetTime();
 }
 
+// 主窗恢复共用路径（托盘 Show / macOS Dock reopen / app::requestShow）：
+// hiddenToTray → 完整 restore；最小化 → restore；可见 → show + focus。
+// activateApp 仅 macOS 有实效：Cmd+H 应用隐藏态先解除隐藏，Dock 点击才能
+// 真正把应用带回前台（GLFW 的 show/focus 不解除应用隐藏）；其余平台空操作。
+void showMainWindow(GLFWwindow* window, WindowState& windowState) {
+    core::platform::activateApp();
+    if (windowState.hiddenToTray) {
+        restoreWindowFromTray(window, windowState);
+        return;
+    }
+    if (windowState.iconified) {
+        glfwRestoreWindow(window);
+    }
+    glfwShowWindow(window);
+    glfwFocusWindow(window);
+}
+
 void installWindowCallbacks(GLFWwindow* window, WindowState& windowState) {
     glfwSetWindowUserPointer(window, &windowState);
     glfwSetFramebufferSizeCallback(window, [](GLFWwindow* currentWindow, int w, int h) {
@@ -728,21 +745,17 @@ int eui_app_run() {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
             break;
         }
+        // 托盘 Show 与 macOS Dock reopen（applicationShouldHandleReopen →
+        // consumeTrayShowRequested）同一恢复路径：旧实现只调
+        // restoreWindowFromTray，其 !hiddenToTray 早退使最小化/被遮挡/
+        // 其它 Space/Cmd+H 态的 Dock 点击全部空转
         if (windowState.consumeTrayShowRequested()) {
-            restoreWindowFromTray(window, windowState);
+            showMainWindow(window, windowState);
         }
         // app::requestShow（自定义托盘菜单「显示主窗口」项等）：与托盘 Show
         // 同一恢复路径；主窗可见但最小化/失焦时也要还原 + 聚焦
         if (app::detail::consumeShowRequest()) {
-            if (windowState.hiddenToTray) {
-                restoreWindowFromTray(window, windowState);
-            } else {
-                if (windowState.iconified) {
-                    glfwRestoreWindow(window);
-                }
-                glfwShowWindow(window);
-                glfwFocusWindow(window);
-            }
+            showMainWindow(window, windowState);
         }
         pruneClosedWindows(childWindows);
         windowState.modalChildWindow = findModalChildWindow(childWindows);

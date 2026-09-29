@@ -803,6 +803,10 @@ bool consumeTrayExitRequested() {
     return eui_tray_consume_exit_requested() != 0;
 }
 
+void activateApp() {
+    eui_tray_activate_app();
+}
+
 void shutdownTray() {
     TrayState& state = trayState();
     if (state.initialized) {
