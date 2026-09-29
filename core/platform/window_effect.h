@@ -26,9 +26,14 @@ struct TitleBarAppearance {
     bool dark = false;
     bool customColor = false;     // true 时把 colorAbgr 设为标题栏底色
     std::uint32_t colorAbgr = 0;  // COLORREF（0x00BBGGRR）；0xFFFFFFFF 复位系统默认
+    // 自定义底色的 alpha（0..1，缺省 1 = 不透明）。Windows 的 DWMWA_CAPTION_COLOR
+    // 没有 alpha 概念（忽略本字段）；macOS 用它把标题栏底做到与内容区**同透明度**
+    //（宿主窗口效果档：实色 1.0 / 半透 0.90 / 磨砂 0.55，即窗口 clearColor 的 alpha）。
+    float colorAlpha = 1.0f;
 
     friend bool operator==(const TitleBarAppearance& a, const TitleBarAppearance& b) {
-        return a.dark == b.dark && a.customColor == b.customColor && a.colorAbgr == b.colorAbgr;
+        return a.dark == b.dark && a.customColor == b.customColor &&
+               a.colorAbgr == b.colorAbgr && a.colorAlpha == b.colorAlpha;
     }
     friend bool operator!=(const TitleBarAppearance& a, const TitleBarAppearance& b) {
         return !(a == b);
@@ -70,18 +75,27 @@ inline WindowEffect degradedWindowEffect(WindowEffect /*desired*/, bool transpar
 // macOS 侧补充说明（2026-09-29 真机取证定案）：
 // 1. `applyTitleBarAppearance` 在 macOS 有实现（不再是恒 false）：appearance.dark →
 //    `[NSWindow setAppearance: Aqua/DarkAqua]`，与 Windows 侧 `DWMWA_USE_IMMERSIVE_
-//    DARK_MODE` 同语义（标题栏深浅跟随**宿主主题**而非系统外观）；customColor 在
-//    macOS 无对应 API，忽略且不影响 dark 主开关。调用方 `applyTitleBarAppearanceToWindow`
-//    是 void、丢弃返回值，故返回值语义变化无调用方需要改。
-// 2. 标题栏（非客户区）**不由本平台层自绘**，但 `applyWindowEffect` 会把标题窗的窗口
-//    背景从 `[NSColor clearColor]` 换成「全透明但非 clear」色 —— AppKit 对背景为
-//    clearColor 的非不透明窗不画标题栏底，整条标题栏会透出桌面/下层窗口（黑壁纸下与
-//    「全透明」无异，用户原始投诉即此）；alpha=0 不引入着色，内容区像素实测不变。
+//    DARK_MODE` 同语义（标题栏深浅跟随**宿主主题**而非系统外观）。customColor 在
+//    macOS 同样生效（不再是「无对应 API、忽略」）：窗口背景 = 该色（含 colorAlpha）
+//    + `titlebarAppearsTransparent=YES` → 标题栏区域透出窗口背景色 = 宿主主题底色，
+//    与内容区同色（DevDesk 需求「标题栏和 content 融为一体」）。
+//    调用方 `applyTitleBarAppearanceToWindow` 是 void、丢弃返回值，故返回值语义变化
+//    无调用方需要改。
+// 2. 标题栏（非客户区）**不由本平台层自绘**，窗口背景色有两条互斥取值（见
+//    window_effect_macos.mm 的 applyFallbackTitleBarBackground 注释）：宿主给了
+//    customColor → 用它（标题栏 = 内容区底色）；没给 → 「全透明但非 clear」色，让
+//    AppKit 恢复画自画标题栏材质 —— AppKit 对背景为 clearColor 的非不透明窗不画
+//    标题栏底，整条标题栏会透出桌面/下层窗口（黑壁纸下与「全透明」无异，用户原始
+//    投诉即此）。两条取值下标题栏都不再是「恒纯白」。
 // 3. 曾试 `NSWindowStyleMaskFullSizeContentView` + 容器 + 主题色条底让材质贯通标题栏，
 //    真机实测 FSCV 把 GL surface 整体下移一个标题栏高（32pt，内容位移/底部被裁/留
 //    全透明空带），与「内容区几何零位移」冲突 → 撤回；材质贯通标题栏属已知未解需求，
 //    证据与候选方案见 docs/平台能力.md「窗口效果」。
 // 4. macOS 上 `GLFW_TRANSPARENT_FRAMEBUFFER` 由 `![NSWindow isOpaque]` 推导，而 GL
 //    后端把该属性缓存在首帧选 blit 路径 —— 平台层不得在运行期改 `isOpaque`。
+// 5. 已知残差（真机实测，详见 docs/平台能力.md）：窗口背景同时位于 GL 内容之后，
+//    故内容区不透明度 = 1−(1−clearAlpha)(1−colorAlpha) ≥ 标题栏（半透档 0.99 vs
+//    0.90）；磨砂档内容区的 NSVisualEffectView 材质本身不透明（1.00）而标题栏取
+//    clearAlpha=0.55。三档中最贴合的仍是实色档（标题栏与内容区逐项相同）。
 
 } // namespace core::platform

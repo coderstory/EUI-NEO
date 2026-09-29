@@ -305,8 +305,29 @@ void* nativeWindowHandle(GLFWwindow* window) {
 }
 
 void applyTitleBarAppearanceToWindow(GLFWwindow* window) {
-    core::platform::applyTitleBarAppearance(nativeWindowHandle(window),
-                                            app::currentTitleBarAppearance());
+    core::platform::TitleBarAppearance appearance = app::currentTitleBarAppearance();
+#if defined(__APPLE__)
+    // macOS：标题栏底的来源是**窗口背景色**（平台层用 setBackgroundColor +
+    // titlebarAppearsTransparent 让标题栏透出它），宿主没显式给 customColor 时
+    // 这里用当前 clearColor（= 内容区底色，含窗口效果档的 alpha）兜底 ——
+    // DevDesk 只调 app::setClearColor，不直接设 customColor，标题栏「跟随主题、
+    // 与 content 融为一体」全靠这一步推导。Windows 侧不推导：DWMWA_CAPTION_COLOR
+    // 与窗口背景色不是一回事（改了标题栏会与内容不同色），保持原语义不动。
+    if (!appearance.customColor) {
+        const eui::Color background = app::currentClearColor();
+        const auto channel = [](float value) -> std::uint32_t {
+            const float clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+            return static_cast<std::uint32_t>(clamped * 255.0f + 0.5f);
+        };
+        appearance.customColor = true;
+        // TitleBarAppearance::colorAbgr 沿用 Windows 的 COLORREF 布局（0x00BBGGRR）
+        appearance.colorAbgr = (channel(background.b) << 16) |
+                               (channel(background.g) << 8) |
+                               channel(background.r);
+        appearance.colorAlpha = background.a;
+    }
+#endif
+    core::platform::applyTitleBarAppearance(nativeWindowHandle(window), appearance);
 }
 
 // 窗口效果应用 + 降级（磨砂 Phase C）：backdrop 档位交给平台层，失败时按
@@ -787,6 +808,16 @@ int eui_app_run() {
                 }
                 managed.content.setClearColor(managedClearColor);
             });
+#if defined(__APPLE__)
+            // macOS 标题栏底 = 内容区底色（见 applyTitleBarAppearanceToWindow）：clearColor
+            // 变更（主题深浅切换 / 窗口效果切档改 alpha）**必须**重刷标题栏，否则标题栏停在
+            // 上一档的颜色与透明度。上面那条 titleBarAppearance 变更检测看不出这种情况——
+            // 宿主切窗口效果档只改 clearColor 的 alpha，TitleBarAppearance 的值一字未变。
+            applyTitleBarAppearanceToWindow(window);
+            childWindows.updateAll([](ManagedWindow& managed) {
+                applyTitleBarAppearanceToWindow(managed.window);
+            });
+#endif
         }
 
         // 窗口效果联动（磨砂 Phase C）：app::setWindowEffect 的变更在下一帧应用到

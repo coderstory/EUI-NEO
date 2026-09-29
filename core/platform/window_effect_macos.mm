@@ -9,15 +9,20 @@
 // 这样 GLFW 的窗口/帧缓冲尺寸（都读 [window->ns.view frame]）与 compose 侧
 // logical 尺寸在任何档位下都不变；材质视图占的正是内容矩形，不会侵入标题栏。
 //
-// 标题栏（非客户区）**不铺自定义条底**，但要做两件事让 AppKit 把标题栏画出来
-//（真机取证定案，两条都要，详证见 docs/平台能力.md「macOS 标题栏底机制」）：
-//  1. 窗口背景从 `[NSColor clearColor]` 换成「全透明但非 clear」的具体色（alpha=0）：
-//     AppKit 对背景为 clearColor 的非不透明窗**不画标题栏底**，整条标题栏（含交通灯
-//     那行）透出桌面/下层窗口，黑壁纸下与「全透明」无异 —— 用户原始投诉即此。
-//     alpha=0 不引入任何着色，实测内容区像素与不设时逐项相同。
-//  2. `applyTitleBarAppearance` 落到窗口 `NSAppearance`（浅 Aqua / 深 DarkAqua）：
-//     标题栏材质默认只跟随**系统外观**，应用浅色 + 系统深色时标题栏发暗，同样像
-//     「全透明」；设窗口外观后即跟随宿主主题（Windows 侧同语义 = USE_IMMERSIVE_DARK_MODE）。
+// 标题栏（非客户区）**不由本层自绘**，靠三处窗口属性让 AppKit 把标题栏画对
+//（真机取证定案，详证见 docs/平台能力.md「macOS 标题栏底机制」）：
+//  1. 窗口背景不能是 `[NSColor clearColor]`：AppKit 对背景为 clearColor 的非不透明窗
+//     **不画标题栏底**，整条标题栏（含交通灯那行）透出桌面/下层窗口，黑壁纸下与
+//     「全透明」无异 —— 用户原始投诉即此。两种取值：宿主给了自定义底色（customColor）
+//     就用它（含 alpha，标题栏与内容区同色同透明度，DevDesk 需求「和 content 融为一体」）；
+//     没给就退回「全透明但非 clear」的具体色（alpha=0，不引入任何着色）。
+//  2. 给了自定义底色时另把 `titlebarAppearsTransparent` 设为 YES：AppKit 不画自画
+//     标题栏材质 → 标题栏区域直接透出上面的窗口背景色（= 内容区底色）；未给自定义
+//     色时该位为 NO，标题栏由 AppKit 材质画出。
+//  3. `applyTitleBarAppearance` 落到窗口 `NSAppearance`（浅 Aqua / 深 DarkAqua）：
+//     标题栏材质/交通灯默认只跟随**系统外观**，应用浅色 + 系统深色时标题栏发暗，
+//     同样像「全透明」；设窗口外观后即跟随宿主主题（Windows 侧同语义 =
+//     USE_IMMERSIVE_DARK_MODE）。
 // 曾尝试 `NSWindowStyleMaskFullSizeContentView` + contentView 容器 + 主题色条底让材质
 // 贯通标题栏 —— 真机实测 **FSCV 会把 GL surface 整体下移一个标题栏高（32pt）**：内容
 // 位移、底部被裁、标题栏与内容间留全透明空带（亮段 114/219pt → 143/244pt；空带
@@ -56,6 +61,7 @@ constexpr float kMaterialAlpha = 1.0f;
 // apply(None) 曾把主窗已挂的材质视图摘走，真机取证见提交说明）
 const void* kMaterialViewKey = &kMaterialViewKey;             // NSVisualEffectView
 const void* kHostedContentViewKey = &kHostedContentViewKey;   // GLFWContentView
+const void* kTitleBarColorKey = &kTitleBarColorKey;           // NSNumber(BOOL) 已设自定义底色
 
 // —— 诊断（EUI_FX_DEBUG=1 时输出 stderr）——
 // macOS 窗口效果没有可断言的客观量可看（材质是否真挂上、几何是否位移），且
@@ -159,7 +165,37 @@ void fxDump(const char* tag, NSWindow* w) {
     std::fflush(stderr);
 }
 
-// —— 材质视图：按窗口各一份（关联对象挂 NSWindow，随窗口释放）——
+// —— 标题栏底（真机取证 2026-09-29）——
+// 窗口带透明帧缓冲 hint 时 GLFW 把窗口背景设成 `[NSColor clearColor]`，而 AppKit
+// **对背景为 clearColor 的非不透明窗不画标题栏底** → 整条标题栏（含交通灯那行）
+// 透出下层窗口/桌面；在黑壁纸下与「全透明」无法区分（用户原始投诉）。
+// 两套取值，二者互斥，由 applyTitleBarAppearance 决定：
+//   a) 宿主给了自定义底色（customColor）→ 窗口背景 = 该色（含 alpha），标题栏
+//      `titlebarAppearsTransparent=YES` → 标题栏区域直接透出窗口背景色，与内容区
+//      同色同透明度（DevDesk 需求：三档窗口效果下标题栏都要和 content 融为一体）。
+//   b) 宿主没给 → 全透明但非 clearColor 的具体色（alpha=0，不引入任何着色）+ 标题栏
+//      恢复 AppKit 自画材质（深浅随窗口 NSAppearance = 宿主主题深浅）。alpha=0 组
+//      内容区像素与不设时逐项相同（242,242,238 / 250,249,245）。
+// 判据证据（同一构建，磨砂档）：不设时标题栏行 = 下层窗口颜色（浅色窗 250,249,245 /
+// 深色窗 59,58,56 随背景变），设 alpha=0 后 = (255,255,255) 恒定（浅色外观）；用
+// 半透明红@0.5 做对照时内容区被染成 (242,217,210) → 故兜底必须 alpha=0。
+void applyFallbackTitleBarBackground(NSWindow* nsWindow) {
+    [nsWindow setBackgroundColor:[NSColor colorWithSRGBRed:0.0
+                                                     green:0.0
+                                                      blue:0.0
+                                                     alpha:0.0]];
+}
+
+// 是否已由 applyTitleBarAppearance 挂了宿主自定义标题栏底色（按窗口存，理由同上方
+// 材质视图的关联对象）。设了就不许 applyWindowEffect 的 alpha=0 兜底覆盖——那会把
+// 底色抹掉退回 AppKit 自画材质（= 本批要修的「标题栏恒纯白、不跟主题」）。
+// 两条路径在启动期与运行时都会走（glfw_app_main：先 applyTitleBarAppearanceToWindow
+// 再 applyWindowEffectToWindow，标题栏外观变更也早于窗口效果变更块）。
+bool hasCustomTitleBarColor(NSWindow* nsWindow) {
+    return objc_getAssociatedObject(nsWindow, kTitleBarColorKey) != nil;
+}
+
+// 材质视图：按窗口各一份（关联对象挂 NSWindow，随窗口释放）——
 NSVisualEffectView* materialViewFor(NSWindow* nsWindow, bool create) {
     if (nsWindow == nil) {
         return nil;
@@ -231,18 +267,6 @@ bool attachMaterialView(NSWindow* nsWindow, bool enabled, float alpha) {
 } // namespace
 
 bool applyWindowEffect(void* nativeHandle, WindowEffect effect) {
-    // 标题栏底（真机取证 2026-09-29）：窗口带透明帧缓冲 hint 时 GLFW 把背景设成
-    // `[NSColor clearColor]`，而 AppKit **对背景为 clearColor 的非不透明窗不画标题栏
-    // 底** → 整条标题栏（含交通灯那行）透出下层窗口/桌面；在黑壁纸下与「全透明」
-    // 完全无法区分（用户原始投诉）。把背景换成「全透明但非 clearColor」的具体颜色
-    // （alpha=0，不引入任何着色）即可让 AppKit 恢复画标题栏底，且实测对内容区
-    // **零影响**（内容区像素与不设时逐项相同：242,242,238 / 250,249,245），窗口结构、
-    // GL 视图 frame、窗口/帧缓冲尺寸一概不动（几何零风险）。
-    // 判据证据（同一构建，磨砂档）：设前标题栏行 = 下层窗口颜色（浅色窗 250,249,245 /
-    // 深色窗 59,58,56 随背景变），设后 = (255,255,255) 恒定（浅色外观）；用半透明
-    // 红@0.5 做对照时内容区被染成 (242,217,210) → 故必须 alpha=0。
-    // 只对标题窗生效：无边框 sprite 窗（桌宠）保持 GLFW 的 clearColor，避免影响其
-    // 逐像素透明。
     if (fxDebug()) {
         std::fprintf(stderr, "[fxdiag] applyWindowEffect enter handle=%p effect=%d\n",
                      nativeHandle, static_cast<int>(effect));
@@ -259,23 +283,14 @@ bool applyWindowEffect(void* nativeHandle, WindowEffect effect) {
     if (nsWindow == nil) {
         return false;
     }
-    // 标题栏底（真机取证 2026-09-29）：窗口带透明帧缓冲 hint 时 GLFW 把窗口背景设成
-    // `[NSColor clearColor]`，而 AppKit **对背景为 clearColor 的非不透明窗不画标题栏
-    // 底** → 整条标题栏（含交通灯那行）透出下层窗口/桌面；在黑壁纸（用户环境）下与
-    // 「全透明」完全无法区分（用户原始投诉）。把背景换成「全透明但非 clearColor」的
-    // 具体颜色（alpha=0，不引入任何着色）即可让 AppKit 恢复画标题栏底，标题栏深浅随
-    // applyTitleBarAppearance 设的 NSAppearance 走（从而跟随 DevDesk 主题）。
-    // 真机对照（同一构建、磨砂档）：设前标题栏行 = 下层窗口的颜色（浅色窗
-    // 250,249,245 / 深色窗 59,58,56 随背景变，即无底）；设后 = (255,255,255) 恒定；
-    // 半透明红@0.5 的对照组把内容区染成 (242,217,210) → 必须 alpha=0 才不影响内容区
-    //（alpha=0 组内容区像素与不设时逐项相同：242,242,238 / 250,249,245）。
-    // 窗口结构、GL 视图 frame、窗口/帧缓冲尺寸一概不动（几何零风险）；只对标题窗生效，
+    // 标题栏底兜底（见 applyFallbackTitleBarBackground 上方注释）：宿主未给自定义
+    // 底色时才铺「全透明非 clear」色；已给则由 applyTitleBarAppearance 全权决定窗口
+    // 背景（本函数不得覆盖，否则标题栏退回 AppKit 自画材质）。只对标题窗生效：
     // 无边框 sprite 窗（桌宠）保持 GLFW 的 clearColor，避免影响其逐像素透明。
-    if (([nsWindow styleMask] & NSWindowStyleMaskTitled) != 0) {
-        [nsWindow setBackgroundColor:[NSColor colorWithSRGBRed:0.0
-                                                         green:0.0
-                                                          blue:0.0
-                                                         alpha:0.0]];
+    // 窗口结构、GL 视图 frame、窗口/帧缓冲尺寸一概不动（几何零风险）。
+    if (([nsWindow styleMask] & NSWindowStyleMaskTitled) != 0 &&
+        !hasCustomTitleBarColor(nsWindow)) {
+        applyFallbackTitleBarBackground(nsWindow);
     }
     @autoreleasepool {
         @try {
@@ -320,10 +335,10 @@ bool applyTitleBarAppearance(void* nativeHandle,
     @autoreleasepool {
         // 与 Windows 侧 applyTitleBarAppearance 语义对齐：Windows 用 appearance.dark
         // → DWMWA_USE_IMMERSIVE_DARK_MODE（标题栏深浅跟**应用主题**），macOS 的等价物
-        // 是给窗口设 NSAppearance —— AppKit 自画的标题栏材质随之取浅/深两套
-        //（Aqua / DarkAqua）。customColor 在 macOS 无对应 API（标题栏底色由材质决定），
-        // 与 Windows 侧「customColor 是可选增强、失败不影响 dark 主开关」一致：忽略，
-        // 且不因此返回 false。
+        // 是给窗口设 NSAppearance —— 标题栏的深浅/交通灯随宿主主题取浅/深两套
+        //（Aqua / DarkAqua）。customColor 两平台都属**可选增强**：Windows 走
+        // DWMWA_CAPTION_COLOR、macOS 走「窗口背景色 + titlebarAppearsTransparent」
+        //（见下），失败/未给时不影响 dark 主开关，也不因此返回 false。
         //
         // 口径变更（2026-09-29，设计 §9「不做 titlebarAppearsTransparent 联动」解禁）：
         // 当时「不做」的前提是「本批不做窗口效果，标题栏无所谓」；现在用户明确要求
@@ -337,10 +352,54 @@ bool applyTitleBarAppearance(void* nativeHandle,
         NSAppearanceName name = appearance.dark ? NSAppearanceNameDarkAqua
                                                : NSAppearanceNameAqua;
         [nsWindow setAppearance:[NSAppearance appearanceNamed:name]];
+
+        // 标题栏底色（2026-09-29 真机取证，DevDesk 需求「标题栏与 content 融为一体」）：
+        // customColor 在 macOS **有**对应物（不再是「无对应 API、忽略」）——窗口背景色
+        // 就是标题栏区域在 `titlebarAppearsTransparent=YES` 下透出的那一层：
+        //   setBackgroundColor(宿主主题底色, alpha) + setTitlebarAppearsTransparent(YES)
+        // → 标题栏 = 宿主主题底色，三档窗口效果都取到该档的 alpha
+        //（实色 1.0 / 半透 0.90 / 磨砂 0.55，由宿主把 clearColor 的 alpha 传下来）。
+        // 真机实测残差（实色档标题栏与内容区逐项相同，另两档见 docs/平台能力.md
+        //「已知限制」）：内容区的实际不透明度 = 1−(1−clearAlpha)(1−colorAlpha) ≥ 标题栏
+        //（半透档 0.99 vs 0.90），磨砂档内容区的材质本身不透明（1.00）而标题栏取 0.55。
+        // 只碰窗口属性：不动 contentView / GL 视图 / FullSizeContentView → 几何零风险
+        //（对照：FSCV 方案实测把 GL surface 下移 32pt，已撤回）。
+        // 宿主没给自定义色时**必须**回到 alpha=0 兜底 + 关掉 titlebarAppearsTransparent，
+        // 否则「标题栏整条透出桌面」的老缺陷会被这段代码重新引入。
+        // 只对标题窗生效：无边框 sprite 窗（桌宠）的逐像素透明不能被窗口背景污染。
+        if (([nsWindow styleMask] & NSWindowStyleMaskTitled) != 0) {
+            if (appearance.customColor) {
+                // COLORREF(0x00BBGGRR) → sRGB 分量（低字节是 R，别写反）；alpha 来自宿主
+                //（窗口效果档）。真机取证：写反会把 #FAF9F5 渲染成 (246,249,250)，肉眼
+                // 极难分辨、只有取像素均值才看得出。
+                const CGFloat red = (appearance.colorAbgr & 0xFFu) / 255.0;
+                const CGFloat green = ((appearance.colorAbgr >> 8) & 0xFFu) / 255.0;
+                const CGFloat blue = ((appearance.colorAbgr >> 16) & 0xFFu) / 255.0;
+                const CGFloat alpha = appearance.colorAlpha < 0.0f
+                    ? 0.0
+                    : (appearance.colorAlpha > 1.0f ? 1.0 : (CGFloat)appearance.colorAlpha);
+                [nsWindow setBackgroundColor:[NSColor colorWithSRGBRed:red
+                                                                 green:green
+                                                                  blue:blue
+                                                                 alpha:alpha]];
+                // 关掉 AppKit 自画的标题栏材质 → 标题栏区域直接透出上面的窗口背景色
+                [nsWindow setTitlebarAppearsTransparent:YES];
+                objc_setAssociatedObject(nsWindow, kTitleBarColorKey, @YES,
+                                         OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            } else {
+                [nsWindow setTitlebarAppearsTransparent:NO];
+                applyFallbackTitleBarBackground(nsWindow);
+                objc_setAssociatedObject(nsWindow, kTitleBarColorKey, nil,
+                                         OBJC_ASSOCIATION_ASSIGN);
+            }
+        }
     }
     if (fxDebug()) {
-        std::fprintf(stderr, "[fxdiag] titlebar appearance dark=%d -> %s\n",
+        std::fprintf(stderr, "[fxdiag] titlebar appearance dark=%d custom=%d abgr=0x%06x alpha=%.2f -> %s\n",
                      appearance.dark ? 1 : 0,
+                     appearance.customColor ? 1 : 0,
+                     (unsigned)(appearance.colorAbgr & 0xFFFFFFu),
+                     (double)appearance.colorAlpha,
                      appearance.dark ? "DarkAqua" : "Aqua");
         std::fflush(stderr);
     }

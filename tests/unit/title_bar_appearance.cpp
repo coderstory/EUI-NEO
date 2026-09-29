@@ -31,6 +31,7 @@ int main() {
     assert(!defaults.dark);
     assert(!defaults.customColor);
     assert(defaults.colorAbgr == 0);
+    assert(defaults.colorAlpha == 1.0f);   // 缺省不透明（macOS 标题栏底 alpha）
 
     // 无运行时覆盖时：跟随 dslAppConfig 启动快照（darkTitleBar(true)）
     assert(app::currentTitleBarAppearance().dark);
@@ -52,6 +53,13 @@ int main() {
     assert(dark == TitleBarAppearance{true});
     assert(dark != TitleBarAppearance{false});
     assert(darkNoCustom != darkCustom);
+    // colorAlpha 参与相等性：帧内变更检测靠它发现「同一底色、窗口效果档位改了透明度」
+    //（宿主 DevDesk 切半透/磨砂只改 clearColor 的 alpha，dark/customColor/colorAbgr 一字未变）
+    const TitleBarAppearance opaqueCustom{true, true, 0x00F5F9FA, 1.0f};
+    const TitleBarAppearance translucentCustom{true, true, 0x00F5F9FA, 0.9f};
+    const TitleBarAppearance opaqueCustomCopy{true, true, 0x00F5F9FA, 1.0f};
+    assert(opaqueCustom != translucentCustom);
+    assert(opaqueCustom == opaqueCustomCopy);
 
     std::printf("title_bar_appearance: all checks passed\n");
     return 0;
