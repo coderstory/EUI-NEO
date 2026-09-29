@@ -75,7 +75,7 @@ namespace {
 // 由 clearColor alpha 决定（要更不透明只能改 DevDesk 侧那个数）。此值仅在宿主
 // 显式请求 WindowEffect::Transparent 档时生效。
 constexpr float kTranslucentMaterialAlpha = 0.4f;
-constexpr float kMaterialAlpha = 1.0f;
+constexpr float kMaterialAlpha = 0.95f;
 
 // 关联对象键：状态按窗口各存一份（进程级单例会让多窗互抢同一视图——桌宠子窗
 // apply(None) 曾把主窗已挂的材质视图摘走，真机取证见提交说明）
