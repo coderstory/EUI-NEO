@@ -3,6 +3,7 @@
 // 应把所在子树在兄弟排序中抬到后续兄弟之上，而不是被困在父容器内部。
 // 需求来源：DevDesk 设置页 scrollView 内卡片里的皮肤下拉弹层被后续卡片
 // 遮挡（zIndex 此前只作用于同父兄弟，弹层无法跨越卡片边界）。
+#include "components/dropdown.h"
 #include "core/dsl.h"
 
 #include <iostream>
@@ -127,11 +128,10 @@ int main() {
     }
 
     // 场景 4（等值 z 碰撞）：两个纵向相邻 dropdown（DevDesk settings 桌宠卡
-    // 「皮肤」「大小」行，2026-09-30）。组件结构：wrap(z0) > dropdown 根
-    // stack(z20) > popup。修复前 popup 无自档，两个 ddwrap 子树上界同为 20 →
-    // 稳定排序保持 DOM 序 → 后绘 wrap.b 的字段盖住 wrap.a 展开的弹层。
-    // 修复后 open 态 popup 自带 kPopupOpenZIndex（components/dropdown.h），
-    // wrap.a 子树上界 900 > wrap.b 20 → wrap.a 排到其后，弹层绘制在最上。
+    // 「皮肤」「大小」行，2026-09-30）。用真实 components::dropdown 构造
+    // （wrap.a 内展开态、wrap.b 内关闭态），断言 popup 子树自带档位把 wrap.a
+    // 子树上界抬到等值兄弟 wrap.b 之上——dropdown.h 的弹层档常量被改时本用例
+    // 随组件真实行为回归，而非手写 z 值自证。
     {
         Ui ui;
         ui.begin("equalz");
@@ -141,24 +141,21 @@ int main() {
                 ui.stack("wrap.a")
                     .size(200.0f, 40.0f)
                     .content([&] {
-                        ui.stack("dd.a")
+                        components::dropdown(ui, "dd.a")
                             .size(200.0f, 40.0f)
-                            .zIndex(20)
-                            .content([&] {
-                                ui.stack("dd.a.popup")
-                                    .size(200.0f, 100.0f)
-                                    .zIndex(900)  // open 态 kPopupOpenZIndex
-                                    .build();
-                            })
+                            .items({"Skin", "Size"})
+                            .selected(0)
+                            .open()
                             .build();
                     })
                     .build();
                 ui.stack("wrap.b")
                     .size(200.0f, 40.0f)
                     .content([&] {
-                        ui.stack("dd.b")
+                        components::dropdown(ui, "dd.b")
                             .size(200.0f, 40.0f)
-                            .zIndex(20)
+                            .items({"Skin", "Size"})
+                            .selected(0)
                             .build();
                     })
                     .build();
@@ -171,18 +168,23 @@ int main() {
         if (!check(page != nullptr, "page element missing (equalz)")) return g_failures;
         const auto* wrapA = ui.find("wrap.a");
         const auto* wrapB = ui.find("wrap.b");
-        if (!check(wrapA && wrapB, "wraps missing (equalz)")) return g_failures;
-        check(wrapA->subtreeMaxZIndex == 900,
-              "open popup z=900 must lift wrap.a subtree (got " +
-                  std::to_string(wrapA->subtreeMaxZIndex) + ")");
-        const int idxA = orderIndex(page, wrapA);
-        const int idxB = orderIndex(page, wrapB);
-        check(idxA > idxB,
+        const auto* popupA = ui.find("dd.a.popup");
+        if (!check(wrapA && wrapB && popupA, "dropdown subtree missing (equalz)")) return g_failures;
+        check(popupA->zIndex == wrapA->subtreeMaxZIndex,
+              "open popup must carry the wrap.a subtree upper bound (got " +
+                  std::to_string(wrapA->subtreeMaxZIndex) + ", popup z=" +
+                  std::to_string(popupA->zIndex) + ")");
+        check(wrapA->subtreeMaxZIndex > wrapB->subtreeMaxZIndex,
+              "open popup must lift wrap.a above equal-z sibling wrap.b (" +
+                  std::to_string(wrapA->subtreeMaxZIndex) + " vs " +
+                  std::to_string(wrapB->subtreeMaxZIndex) + ")");
+        check(orderIndex(page, wrapA) > orderIndex(page, wrapB),
               "open-dropdown wrap.a must sort after equal-z later sibling wrap.b");
     }
 
-    // 场景 5（场景 4 的关闭态回归）：popup 归 0 后 dd.a 子树上界回到字段档
-    // 20，与 dd.b 等值 → DOM 序保持（修复不改变关闭态行为）
+    // 场景 5（场景 4 的关闭态回归）：真实 dropdown 关闭态 popup 不占独立档，
+    // wrap.a 子树上界回到字段档、与同构兄弟 wrap.b 等值 → DOM 序保持
+    // （修复不改变关闭态行为）
     {
         Ui ui;
         ui.begin("equalz-closed");
@@ -192,24 +194,20 @@ int main() {
                 ui.stack("wrap.a")
                     .size(200.0f, 40.0f)
                     .content([&] {
-                        ui.stack("dd.a")
+                        components::dropdown(ui, "dd.a")
                             .size(200.0f, 40.0f)
-                            .zIndex(20)
-                            .content([&] {
-                                ui.stack("dd.a.popup")
-                                    .size(200.0f, 100.0f)
-                                    .zIndex(0)  // 关闭态
-                                    .build();
-                            })
+                            .items({"Skin", "Size"})
+                            .selected(0)
                             .build();
                     })
                     .build();
                 ui.stack("wrap.b")
                     .size(200.0f, 40.0f)
                     .content([&] {
-                        ui.stack("dd.b")
+                        components::dropdown(ui, "dd.b")
                             .size(200.0f, 40.0f)
-                            .zIndex(20)
+                            .items({"Skin", "Size"})
+                            .selected(0)
                             .build();
                     })
                     .build();
@@ -221,11 +219,17 @@ int main() {
         const auto* page = ui.find("page");
         if (!check(page != nullptr, "page element missing (equalz-closed)")) return g_failures;
         const auto* wrapA = ui.find("wrap.a");
-        if (!check(wrapA != nullptr, "wrap.a missing (equalz-closed)")) return g_failures;
-        check(wrapA->subtreeMaxZIndex == 20,
-              "closed popup must keep field-tier subtree bound 20 (got " +
-                  std::to_string(wrapA->subtreeMaxZIndex) + ")");
-        check(orderIndex(page, ui.find("wrap.a")) < orderIndex(page, ui.find("wrap.b")),
+        const auto* wrapB = ui.find("wrap.b");
+        const auto* popupA = ui.find("dd.a.popup");
+        if (!check(wrapA && wrapB && popupA, "dropdown subtree missing (equalz-closed)")) return g_failures;
+        check(popupA->zIndex == 0,
+              "closed popup must not carry its own z tier (got " +
+                  std::to_string(popupA->zIndex) + ")");
+        check(wrapA->subtreeMaxZIndex == wrapB->subtreeMaxZIndex,
+              "closed dropdowns keep equal field-tier subtree bounds (" +
+                  std::to_string(wrapA->subtreeMaxZIndex) + " vs " +
+                  std::to_string(wrapB->subtreeMaxZIndex) + ")");
+        check(orderIndex(page, wrapA) < orderIndex(page, wrapB),
               "closed dropdowns keep DOM order (no behavior change)");
     }
 

@@ -390,6 +390,24 @@ void restoreFromTray(SDL_Window* window, WindowState& state) {
     state.resetTiming(core::window::timeSeconds());
 }
 
+// 主窗恢复共用路径（托盘 Show / macOS Dock reopen / app::requestShow）：
+// 与 GLFW 后端 showMainWindow 同语义——hiddenToTray → 完整 restore；
+// 最小化 → 还原；可见 → 抬到前台。activateApp 仅 macOS 有实效：Cmd+H
+// 应用隐藏态先解除隐藏，Dock 点击才能真正把应用带回前台（SDL 的
+// show/raise 不解除应用隐藏）；其余平台空操作。
+void showMainWindow(SDL_Window* window, WindowState& state) {
+    core::platform::activateApp();
+    if (state.hiddenToTray) {
+        restoreFromTray(window, state);
+        return;
+    }
+    if ((SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) != 0) {
+        SDL_RestoreWindow(window);
+    }
+    SDL_ShowWindow(window);
+    SDL_RaiseWindow(window);
+}
+
 void requestClose(WindowState& state) {
     if (state.trayAvailable) {
         state.hideToTrayRequested = true;
@@ -707,8 +725,17 @@ int eui_app_run() {
         if (app::detail::consumeExitRequest()) {
             break;
         }
+        // 托盘 Show 与 macOS Dock reopen（applicationShouldHandleReopen →
+        // consumeTrayShowRequested）同一恢复路径：旧实现只调
+        // restoreFromTray，其 !hiddenToTray 早退使最小化/被遮挡/
+        // 其它 Space/Cmd+H 态的 Dock 点击全部空转
         if (state.consumeTrayShowRequested()) {
-            restoreFromTray(window, state);
+            showMainWindow(window, state);
+        }
+        // app::requestShow（自定义托盘菜单「显示主窗口」项等）：与托盘 Show
+        // 同一恢复路径（GLFW 后端同构）
+        if (app::detail::consumeShowRequest()) {
+            showMainWindow(window, state);
         }
         if (state.hiddenToTray) {
             SDL_Event event{};

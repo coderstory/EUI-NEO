@@ -145,10 +145,12 @@ public:
                 ui_.stack(id_ + ".popup")
                     .y(openUp_ ? -(popupGap + popupHeight) : height + popupGap)
                     .size(width_, popupHeight)
-                    // 弹层展开档位：open 时把 popup 子树抬到全部常规内容档
-                    // 之上（sidebar 60 / 应用卡片 30-40 / 其它 dropdown 字段
-                    // 20），仍在 dialog(1000)/contextmenu(1050)/toast(1100)
-                    // 之下——模态层照常盖住展开的下拉。等值 z 碰撞背景：两个
+                    // 弹层展开档位：open 时把 popup 子树抬到常规内容档之上
+                    // （sidebar 60 / card_slider 信息层 250 / 其它 dropdown
+                    // 字段 20 等；与 card_slider 输入层 900 等值，等值时退化
+                    // 为 DOM 序），仍在 dialog(1000)/colorpicker、datepicker、
+                    // timepicker(1000)/contextmenu(1050)/toast(1100) 之下——
+                    // 模态层照常盖住展开的下拉。等值 z 碰撞背景：两个
                     // 纵向相邻 dropdown 的子树上界同为默认 zIndex_=20，兄弟
                     // 稳定排序（core/dsl.h rebuildOrderedChildren）保持 DOM
                     // 序 → 后绘的下方字段盖住上方展开弹层（DevDesk settings
@@ -242,9 +244,12 @@ private:
     int zIndex_ = 20;
 
     // 弹层展开态的 z 档位（挂在 id+".popup" 子树，经 subtreeMaxZIndex 把整个
-    // dropdown 抬到后续兄弟之上）。900：高于全部常规内容档（最高 sidebar 60
-    // 与应用侧卡片抬层），低于 dialog 1000 / contextmenu 1050 / toast 1100，
-    // 模态层不被穿。见 build() 内 popup.stack 注释。
+    // dropdown 抬到后续兄弟之上）。900：高于常规内容档（sidebar 60、
+    // card_slider 信息层 250、其它 dropdown 字段 20 等），与 card_slider
+    // 输入层（components/workshop/card_slider.h 的 mouseArea 900）为等值档、
+    // 等值时退化为 DOM 序；低于 dialog/colorpicker/datepicker/timepicker
+    // 1000 / contextmenu 1050 / toast 1100，模态层不被穿。
+    // 见 build() 内 popup.stack 注释。
     static constexpr int kPopupOpenZIndex = 900;
 };
 
