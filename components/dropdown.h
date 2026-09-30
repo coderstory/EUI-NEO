@@ -145,6 +145,19 @@ public:
                 ui_.stack(id_ + ".popup")
                     .y(openUp_ ? -(popupGap + popupHeight) : height + popupGap)
                     .size(width_, popupHeight)
+                    // 弹层展开档位：open 时把 popup 子树抬到全部常规内容档
+                    // 之上（sidebar 60 / 应用卡片 30-40 / 其它 dropdown 字段
+                    // 20），仍在 dialog(1000)/contextmenu(1050)/toast(1100)
+                    // 之下——模态层照常盖住展开的下拉。等值 z 碰撞背景：两个
+                    // 纵向相邻 dropdown 的子树上界同为默认 zIndex_=20，兄弟
+                    // 稳定排序（core/dsl.h rebuildOrderedChildren）保持 DOM
+                    // 序 → 后绘的下方字段盖住上方展开弹层（DevDesk settings
+                    // 桌宠卡「皮肤」弹层被新增「大小」行遮挡，2026-09-30）。
+                    // subtreeMaxZIndex 逃逸只解决「高 z 盖低 z」，等值档位
+                    // 必须由 open 态升档；关闭态归 0，子树上界回到字段档 20，
+                    // DOM 序与既有行为逐位一致。已知边界：两个 dropdown 同时
+                    // open 时同为 900，仍按 DOM 序（宿主侧普遍单开互斥）。
+                    .zIndex(open_ ? kPopupOpenZIndex : 0)
                     .opacity(visible)
                     .translateY(popupOffsetY)
                     .scale(popupScale)
@@ -227,6 +240,12 @@ private:
     float height_ = -1.0f;
     float itemHeight_ = 0.0f;
     int zIndex_ = 20;
+
+    // 弹层展开态的 z 档位（挂在 id+".popup" 子树，经 subtreeMaxZIndex 把整个
+    // dropdown 抬到后续兄弟之上）。900：高于全部常规内容档（最高 sidebar 60
+    // 与应用侧卡片抬层），低于 dialog 1000 / contextmenu 1050 / toast 1100，
+    // 模态层不被穿。见 build() 内 popup.stack 注释。
+    static constexpr int kPopupOpenZIndex = 900;
 };
 
 inline DropdownBuilder dropdown(core::dsl::Ui& ui, const std::string& id) {
