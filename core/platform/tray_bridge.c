@@ -186,9 +186,13 @@ static NSMenu* g_menu = nil;
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication*)sender hasVisibleWindows:(BOOL)hasVisibleWindows {
     (void)sender;
-    if (!hasVisibleWindows) {
-        g_show_requested = 1;
-    }
+    (void)hasVisibleWindows;
+    // 无条件置位：hasVisibleWindows 把常驻可见子窗（桌宠/borderless 工具窗）也算进去，
+    // 多窗应用下恒为 YES，用它做守卫会让 g_show_requested 永不置位、最小化态 Dock
+    // reopen 完全失效（2026-10-01 真机实证）。下游 showMainWindow 本来就分态处理：
+    // hiddenToTray→完整恢复、iconified→restore、可见→show+focus（可见态 Dock 点击
+    // = 前置聚焦，macOS 标准行为），无需这里再拦。
+    g_show_requested = 1;
     return YES;
 }
 @end
