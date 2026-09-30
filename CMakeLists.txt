@@ -399,6 +399,28 @@ if(EUI_WINDOW_BACKEND STREQUAL "sdl2")
     if(NOT TARGET SDL2::SDL2)
         find_package(SDL2 CONFIG REQUIRED)
     endif()
+    # sdl2-compat 的头文件会谎报版本号：如 brew sdl2-compat 2.32.72 的 SDL_version.h
+    # 报 2.32.x（≥2.26），但头里并未声明 SDL_SetWindowMousePassthrough，
+    # 源码里用 SDL_VERSION_ATLEAST(2,26,0) 做编译期守卫必然撞
+    # "use of undeclared identifier"。改为 configure 期符号探测（2026-09-30）：
+    # 探测成功才给消费方定义 EUI_SDL_HAS_MOUSE_PASSTHROUGH=1；失败时不定义，
+    # 源码侧走静默无操作 fallback。
+    # 注意：check_cxx_symbol_exists 的结果缓存在 CMakeCache 里，
+    # 本机 SDL 升级/降级后需重新 configure（或清 build 目录）才会重探。
+    include(CheckCXXSymbolExists)
+    get_target_property(EUI_SDL2_PROBE_INCLUDES SDL2::SDL2 INTERFACE_INCLUDE_DIRECTORIES)
+    set(CMAKE_REQUIRED_INCLUDES "${EUI_SDL2_PROBE_INCLUDES}")
+    set(CMAKE_REQUIRED_LIBRARIES SDL2::SDL2)
+    set(CMAKE_REQUIRED_QUIET ON)
+    check_cxx_symbol_exists(SDL_SetWindowMousePassthrough "SDL.h" EUI_SDL_HAS_MOUSE_PASSTHROUGH)
+    set(CMAKE_REQUIRED_INCLUDES "")
+    set(CMAKE_REQUIRED_LIBRARIES "")
+    unset(CMAKE_REQUIRED_QUIET)
+    unset(EUI_SDL2_PROBE_INCLUDES)
+    message(STATUS "EUI SDL2 mouse passthrough: ${EUI_SDL_HAS_MOUSE_PASSTHROUGH}")
+    if(EUI_SDL_HAS_MOUSE_PASSTHROUGH)
+        target_compile_definitions(eui_neo PUBLIC EUI_SDL_HAS_MOUSE_PASSTHROUGH=1)
+    endif()
     target_compile_definitions(eui_neo PUBLIC EUI_WINDOW_BACKEND_SDL2=1)
     target_link_libraries(eui_neo PUBLIC SDL2::SDL2)
     set(EUI_APP_MAIN_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/core/app/sdl2_app_main.cpp")

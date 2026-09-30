@@ -641,8 +641,14 @@ void getWindowPos(Handle window, int& x, int& y) {
 }
 
 void setWindowMousePassthrough(Handle window, bool enabled) {
-    // SDL2 2.26+ 才有 SDL_SetWindowMousePassthrough；老版本静默无操作
-#if SDL_VERSION_ATLEAST(2, 26, 0)
+    // SDL2 2.26+ 才有 SDL_SetWindowMousePassthrough；缺失时静默无操作。
+    // 不能用 SDL_VERSION_ATLEAST(2,26,0) 守卫：brew 的 sdl2-compat 头谎报版本
+    // （SDL_version.h 报 2.32.72 ≥ 2.26），但全部头文件里都没有声明该符号，
+    // 编译期直接 use of undeclared identifier。改用 configure 期
+    // check_cxx_symbol_exists 探测（根 CMakeLists.txt，2026-09-30）：
+    // 探测通过才定义 EUI_SDL_HAS_MOUSE_PASSTHROUGH=1；探测失败时该宏
+    // 不定义（或缓存残留为 0），两种情况都落到这里的无操作 fallback。
+#if defined(EUI_SDL_HAS_MOUSE_PASSTHROUGH) && EUI_SDL_HAS_MOUSE_PASSTHROUGH
     if (window != nullptr) {
         SDL_SetWindowMousePassthrough(static_cast<SDL_Window*>(window),
                                       enabled ? SDL_TRUE : SDL_FALSE);
