@@ -735,6 +735,7 @@ inline std::uint64_t RuntimeRenderer::retainedElementPaintSignature(const Elemen
     seed = mix(seed, quant(element.maxWidth));
     seed = mix(seed, quant(element.lineHeight));
     seed = mix(seed, element.wrap ? 1u : 0u);
+    seed = mix(seed, static_cast<std::uint64_t>(element.overflow));
     seed = mix(seed, static_cast<std::uint64_t>(element.horizontalAlign));
     seed = mix(seed, static_cast<std::uint64_t>(element.verticalAlign));
     seed = mix(seed, static_cast<std::uint64_t>(element.imageFit));
@@ -1029,6 +1030,7 @@ inline void RuntimeRenderer::prepareText(
     instance.primitive->setFontWeight(instance.fontWeight);
     instance.primitive->setMaxWidth(maxWidth);
     instance.primitive->setWrap(instance.wrap);
+    instance.primitive->setOverflow(instance.overflow);
     instance.primitive->setHorizontalAlign(instance.horizontalAlign);
     instance.primitive->setVerticalAlign(instance.verticalAlign);
     instance.primitive->setLineHeight(lineHeight);
@@ -1082,6 +1084,7 @@ inline void RuntimeRenderer::renderText(
     instance.primitive->setFontWeight(instance.fontWeight);
     instance.primitive->setMaxWidth(maxWidth);
     instance.primitive->setWrap(instance.wrap);
+    instance.primitive->setOverflow(instance.overflow);
     instance.primitive->setHorizontalAlign(instance.horizontalAlign);
     instance.primitive->setVerticalAlign(instance.verticalAlign);
     instance.primitive->setLineHeight(lineHeight);

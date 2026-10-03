@@ -927,6 +927,7 @@ inline void Runtime::updateText(
         instance.fontWeight != element.fontWeight ||
         instance.maxWidth != element.maxWidth ||
         instance.wrap != element.wrap ||
+        instance.overflow != element.overflow ||
         instance.horizontalAlign != element.horizontalAlign ||
         instance.verticalAlign != element.verticalAlign ||
         instance.lineHeight != element.lineHeight ||
@@ -944,6 +945,7 @@ inline void Runtime::updateText(
         instance.fontWeight = element.fontWeight;
         instance.maxWidth = element.maxWidth;
         instance.wrap = element.wrap;
+        instance.overflow = element.overflow;
         instance.horizontalAlign = element.horizontalAlign;
         instance.verticalAlign = element.verticalAlign;
         instance.lineHeight = element.lineHeight;

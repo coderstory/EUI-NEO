@@ -115,6 +115,9 @@ struct TextSizeCacheKey {
     float lineHeight = 0.0f;
     int fontWeight = 0;
     bool wrap = false;
+    /// overflow 必须进 key：Ellipsis 会改变测量宽度，漏了就命中旧条目拿到错尺寸。
+    /// 与本字段的构造、operator==、hash 三处必须同步。
+    TextOverflow overflow = TextOverflow::Clip;
 
     bool operator==(const TextSizeCacheKey& other) const {
         return text == other.text &&
@@ -123,7 +126,8 @@ struct TextSizeCacheKey {
                maxWidth == other.maxWidth &&
                lineHeight == other.lineHeight &&
                fontWeight == other.fontWeight &&
-               wrap == other.wrap;
+               wrap == other.wrap &&
+               overflow == other.overflow;
     }
 };
 
@@ -139,6 +143,7 @@ struct TextSizeCacheKeyHash {
         combine(std::hash<float>{}(key.lineHeight));
         combine(std::hash<int>{}(key.fontWeight));
         combine(std::hash<bool>{}(key.wrap));
+        combine(std::hash<int>{}(static_cast<int>(key.overflow)));
         return value;
     }
 };
@@ -1061,6 +1066,35 @@ TextPrimitive::TextMetrics makeTextMetrics(const std::string& text,
     return metrics;
 }
 
+/// U+2026 HORIZONTAL ELLIPSIS，UTF-8 = E2 80 A6。省略号与正文同字体同字号、
+/// 走同一条 fallback，所以它的 advance 也用 measureTextWidth 量出来。
+constexpr const char* kEllipsisText = "\xE2\x80\xA6";
+constexpr int kEllipsisByteLength = 3;   // kEllipsisText 的 UTF-8 字节数（不含 NUL）
+
+/// 单行省略号截断：返回可保留的字形数——满足 prefixAdvance(keep) + ellipsisAdvance
+/// <= maxWidth 的最大 keep。省略号的 advance 已从预算里预扣，所以返回值直接就是
+/// 「该行保留几个原字形」。advanceAt(i) 给第 i 个字形的 advance：渲染路径传
+/// ShapedGlyph::advance，测量路径传 caretX 差分（makeTextMetrics 里 caretX 就是
+/// 逐字累加的，两条路径同源，因此同一套算术给出同一答案）。
+template <typename AdvanceAt>
+std::size_t ellipsisKeepCount(std::size_t glyphCount,
+                              float maxWidth,
+                              float ellipsisAdvance,
+                              AdvanceAt advanceAt) {
+    const float budget = maxWidth - ellipsisAdvance;
+    float width = 0.0f;
+    std::size_t keep = 0;
+    for (std::size_t index = 0; index < glyphCount; ++index) {
+        const float next = width + advanceAt(index);
+        if (next > budget) {
+            break;
+        }
+        width = next;
+        ++keep;
+    }
+    return keep;
+}
+
 bool appendToAtlas(AtlasPage& page,
                    const unsigned char* pixels,
                    int width,
@@ -1244,6 +1278,7 @@ struct TextPrimitive::Impl {
     void setColor(const Color& color);
     void setMaxWidth(float maxWidth);
     void setWrap(bool wrap);
+    void setOverflow(TextOverflow overflow);
     void setHorizontalAlign(HorizontalAlign align);
     void setVerticalAlign(VerticalAlign align);
     void setLineHeight(float lineHeight);
@@ -1280,6 +1315,7 @@ struct TextPrimitive::Impl {
     void rebuildVertices();
     std::vector<ShapedGlyph> shapeText(const std::string& text);
     void appendShapedGlyphToLine(Line& line, const ShapedGlyph& shaped, float& cursorX, int paragraphOffset);
+    void appendEllipsisToLine(Line& line, float& cursorX, int paragraphOffset, int paragraphByteEnd);
 
     static unsigned int readCodepoint(const std::string& text, size_t& index);
     static std::string resolveFontPath(const std::string& fontFamily, int fontWeight);
@@ -1417,6 +1453,14 @@ void TextPrimitive::Impl::setWrap(bool wrap) {
         return;
     }
     style_.wrap = wrap;
+    invalidateLayout();
+}
+
+void TextPrimitive::Impl::setOverflow(TextOverflow overflow) {
+    if (style_.overflow == overflow) {
+        return;
+    }
+    style_.overflow = overflow;
     invalidateLayout();
 }
 
@@ -1570,14 +1614,17 @@ TextPrimitive::TextMetrics TextPrimitive::Impl::measureTextMetrics(const std::st
 
 Vec2 TextPrimitive::Impl::measureTextSize(const TextStyle& style) {
     TextSizeCache& cache = sharedTextSizeCache();
+    // Ellipsis 下即使 wrap == false，maxWidth 也参与测量（Clip 保持旧语义）。
+    const bool ellipsisActive = style.overflow == TextOverflow::Ellipsis && !style.wrap && style.maxWidth > 0.0f;
     TextSizeCacheKey cacheKey{
         style.text,
         style.fontFamily,
         style.fontSize,
-        style.wrap ? style.maxWidth : 0.0f,
+        (style.wrap || ellipsisActive) ? style.maxWidth : 0.0f,
         style.lineHeight,
         style.fontWeight,
-        style.wrap
+        style.wrap,
+        style.overflow
     };
     const auto cached = cache.entries.find(cacheKey);
     if (cached != cache.entries.end()) {
@@ -1586,7 +1633,8 @@ Vec2 TextPrimitive::Impl::measureTextSize(const TextStyle& style) {
     }
 
     const float lineHeight = style.lineHeight > 0.0f ? style.lineHeight : style.fontSize * 1.2f;
-    const float maxWidth = style.wrap && style.maxWidth > 0.0f ? style.maxWidth : 0.0f;
+    const bool constrainWidth = style.wrap || ellipsisActive;
+    const float maxWidth = constrainWidth && style.maxWidth > 0.0f ? style.maxWidth : 0.0f;
     float measuredWidth = 0.0f;
     int lineCount = 0;
 
@@ -1602,14 +1650,27 @@ Vec2 TextPrimitive::Impl::measureTextSize(const TextStyle& style) {
         const TextMetrics metrics = measureTextMetrics(paragraph, style.fontFamily, style.fontSize, style.fontWeight);
         float lineWidth = 0.0f;
         ++lineCount;
-        for (size_t index = 1; index < metrics.caretX.size(); ++index) {
-            const float advance = metrics.caretX[index] - metrics.caretX[index - 1];
-            if (maxWidth > 0.0f && lineWidth > 0.0f && lineWidth + advance > maxWidth) {
-                measuredWidth = std::max(measuredWidth, lineWidth);
-                lineWidth = 0.0f;
-                ++lineCount;
+        const std::size_t glyphCount = metrics.caretX.empty() ? 0u : metrics.caretX.size() - 1u;
+        // 恰好等于 maxWidth 不加省略号。与 rebuildLayout 共用 ellipsisKeepCount，
+        // 且 caretX 就是 shaped glyph 的逐字 advance 累加，因此测量宽度与渲染
+        // 宽度逐位一致。
+        if (ellipsisActive && !metrics.caretX.empty() && metrics.caretX.back() > maxWidth) {
+            const float ellipsisWidth =
+                measureTextWidth(kEllipsisText, style.fontFamily, style.fontSize, style.fontWeight);
+            const std::size_t keep = ellipsisKeepCount(
+                glyphCount, maxWidth, ellipsisWidth,
+                [&](std::size_t index) { return metrics.caretX[index + 1] - metrics.caretX[index]; });
+            lineWidth = metrics.caretX[keep] + ellipsisWidth;
+        } else {
+            for (size_t index = 1; index < metrics.caretX.size(); ++index) {
+                const float advance = metrics.caretX[index] - metrics.caretX[index - 1];
+                if (maxWidth > 0.0f && lineWidth > 0.0f && lineWidth + advance > maxWidth) {
+                    measuredWidth = std::max(measuredWidth, lineWidth);
+                    lineWidth = 0.0f;
+                    ++lineCount;
+                }
+                lineWidth += advance;
             }
-            lineWidth += advance;
         }
         measuredWidth = std::max(measuredWidth, lineWidth);
 
@@ -1855,6 +1916,8 @@ void TextPrimitive::Impl::rebuildLayout() {
     float cursorX = 0.0f;
     const float lineHeight = style_.lineHeight > 0.0f ? style_.lineHeight : style_.fontSize * 1.2f;
     const float maxWidth = style_.maxWidth > 0.0f ? style_.maxWidth : 0.0f;
+    // 省略号是单行语义：wrap == true 时不开，多行截断按 CSS 的形状是另一套规则。
+    const bool ellipsisActive = style_.overflow == TextOverflow::Ellipsis && !style_.wrap && maxWidth > 0.0f;
 
     size_t paragraphStart = 0;
     while (paragraphStart <= style_.text.size()) {
@@ -1866,7 +1929,28 @@ void TextPrimitive::Impl::rebuildLayout() {
         }
 
         const std::vector<ShapedGlyph> shaped = shapeText(paragraph);
-        for (const ShapedGlyph& glyph : shaped) {
+        std::size_t keepCount = shaped.size();
+        bool truncated = false;
+        if (ellipsisActive) {
+            float totalWidth = 0.0f;
+            for (const ShapedGlyph& glyph : shaped) {
+                totalWidth += glyph.advance;
+            }
+            // 恰好等于 maxWidth 不加省略号，差一个字形才加。
+            if (totalWidth > maxWidth) {
+                keepCount = ellipsisKeepCount(shaped.size(),
+                                              maxWidth,
+                                              measureTextWidth(kEllipsisText, style_.fontFamily,
+                                                               style_.fontSize, style_.fontWeight),
+                                              [&](std::size_t index) { return shaped[index].advance; });
+                truncated = true;
+            }
+        }
+        for (std::size_t index = 0; index < shaped.size(); ++index) {
+            if (index >= keepCount) {
+                break;
+            }
+            const ShapedGlyph& glyph = shaped[index];
             const float advance = glyph.advance;
             if (style_.wrap && maxWidth > 0.0f && cursorX > 0.0f && cursorX + advance > maxWidth) {
                 measuredSize_.x = std::max(measuredSize_.x, currentLine.width);
@@ -1876,6 +1960,10 @@ void TextPrimitive::Impl::rebuildLayout() {
             }
 
             appendShapedGlyphToLine(currentLine, glyph, cursorX, static_cast<int>(paragraphStart));
+        }
+        if (truncated) {
+            appendEllipsisToLine(currentLine, cursorX, static_cast<int>(paragraphStart),
+                                 static_cast<int>(paragraph.size()));
         }
 
         if (newline == std::string::npos) {
@@ -2080,6 +2168,22 @@ void TextPrimitive::Impl::appendShapedGlyphToLine(Line& line,
     line.width = cursorX;
 }
 
+void TextPrimitive::Impl::appendEllipsisToLine(Line& line,
+                                               float& cursorX,
+                                               int paragraphOffset,
+                                               int paragraphByteEnd) {
+    const std::vector<ShapedGlyph> shaped = shapeText(kEllipsisText);
+    if (shaped.empty()) {
+        return;
+    }
+    ShapedGlyph glyph = shaped.front();
+    // 省略号取代的是被截掉的那个位置，所以字节偏移落在段落末尾——run 着色
+    // 按「截断处所在位置」归类，而不是按段落开头。
+    glyph.byteStart = paragraphByteEnd;
+    glyph.byteEnd = paragraphByteEnd + kEllipsisByteLength;
+    appendShapedGlyphToLine(line, glyph, cursorX, paragraphOffset);
+}
+
 unsigned int TextPrimitive::Impl::readCodepoint(const std::string& text, size_t& index) {
     return readUtf8Codepoint(text, index);
 }
@@ -2182,6 +2286,8 @@ void TextPrimitive::setFontWeight(int fontWeight) { impl_->setFontWeight(fontWei
 void TextPrimitive::setColor(const Color& color) { impl_->setColor(color); }
 void TextPrimitive::setMaxWidth(float maxWidth) { impl_->setMaxWidth(maxWidth); }
 void TextPrimitive::setWrap(bool wrap) { impl_->setWrap(wrap); }
+
+void TextPrimitive::setOverflow(TextOverflow overflow) { impl_->setOverflow(overflow); }
 void TextPrimitive::setHorizontalAlign(HorizontalAlign align) { impl_->setHorizontalAlign(align); }
 void TextPrimitive::setVerticalAlign(VerticalAlign align) { impl_->setVerticalAlign(align); }
 void TextPrimitive::setLineHeight(float lineHeight) { impl_->setLineHeight(lineHeight); }

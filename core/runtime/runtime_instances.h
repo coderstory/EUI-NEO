@@ -85,6 +85,7 @@ struct TextInstance {
     int fontWeight = 400;
     float maxWidth = 0.0f;
     bool wrap = false;
+    TextOverflow overflow = TextOverflow::Clip;
     HorizontalAlign horizontalAlign = HorizontalAlign::Left;
     VerticalAlign verticalAlign = VerticalAlign::Top;
     float lineHeight = 0.0f;

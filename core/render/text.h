@@ -61,6 +61,8 @@ public:
     void setColor(const Color& color);
     void setMaxWidth(float maxWidth);
     void setWrap(bool wrap);
+    /// 单行溢出行为。Ellipsis 只在 wrap == false 且 maxWidth > 0 时生效。
+    void setOverflow(TextOverflow overflow);
     void setHorizontalAlign(HorizontalAlign align);
     void setVerticalAlign(VerticalAlign align);
     void setLineHeight(float lineHeight);

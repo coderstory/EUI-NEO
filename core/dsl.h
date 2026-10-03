@@ -147,6 +147,9 @@ struct Element {
     Color textColor = {1.0f, 1.0f, 1.0f, 1.0f};
     float maxWidth = 0.0f;
     bool wrap = false;
+    /// 单行溢出行为。默认 Clip（不截断）；Ellipsis 只在 wrap == false 且
+    /// maxWidth > 0 时把行尾换成 U+2026。
+    TextOverflow overflow = TextOverflow::Clip;
     HorizontalAlign horizontalAlign = HorizontalAlign::Left;
     VerticalAlign verticalAlign = VerticalAlign::Top;
     float lineHeight = 0.0f;
@@ -1200,6 +1203,12 @@ public:
         return *this;
     }
 
+    /// 单行溢出行为。默认 Clip；Ellipsis 需要 wrap(false) + maxWidth > 0。
+    TextBuilder& overflow(TextOverflow value) {
+        element_->overflow = value;
+        return *this;
+    }
+
     TextBuilder& horizontalAlign(HorizontalAlign value) {
         element_->horizontalAlign = value;
         return *this;
@@ -1725,6 +1734,7 @@ private:
             style.fontWeight = element.fontWeight;
             style.maxWidth = element.maxWidth;
             style.wrap = element.wrap;
+            style.overflow = element.overflow;
             style.lineHeight = element.lineHeight;
             const Vec2 intrinsicSize = TextPrimitive::measureTextSize(style);
             node->setIntrinsicSize(intrinsicSize.x, intrinsicSize.y);
