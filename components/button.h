@@ -192,7 +192,7 @@ public:
                                 .fontSize(font)
                                 .lineHeight(font)
                                 .color(textColor)
-                                .horizontalAlign(hasIcon ? core::HorizontalAlign::Left : core::HorizontalAlign::Center)
+                                .horizontalAlign(core::HorizontalAlign::Center)
                                 .verticalAlign(core::VerticalAlign::Center)
                                 .transition(transition_)
                                 .build();
