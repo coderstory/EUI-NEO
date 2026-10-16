@@ -37,6 +37,9 @@ public:
     SwitchBuilder(core::dsl::Ui& ui, std::string id)
         : ui_(ui), id_(std::move(id)) {}
 
+    SwitchBuilder& x(float value) { x_ = value; hasX_ = true; return *this; }
+    SwitchBuilder& y(float value) { y_ = value; hasY_ = true; return *this; }
+    SwitchBuilder& position(float xValue, float yValue) { return x(xValue).y(yValue); }
     SwitchBuilder& size(float width, float height) { width_ = width; height_ = height; return *this; }
     SwitchBuilder& checked(bool value) { checked_ = value; return *this; }
     SwitchBuilder& bind(eui::Signal<bool>& signal) {
@@ -86,55 +89,60 @@ public:
         const bool nextChecked = !checked_;
         const std::function<void(bool)> onChange = onChange_;
 
-        ui_.stack(id_)
-            .size(width_, height_)
-            .content([&] {
-                ui_.rect(id_ + ".hit")
-                    .size(hitWidth, height_)
-                    .states(theme::color(0.0f, 0.0f, 0.0f, 0.0f), style_.rowHover, style_.rowPressed)
-                    .radius(std::max(metrics_.radius.small, height_ * 0.20f))
-                    .transition(transition_)
-                    .onClick([onChange, nextChecked] {
-                        if (onChange) {
-                            onChange(nextChecked);
-                        }
-                    })
-                    .build();
+        auto root = ui_.stack(id_)
+            .size(width_, height_);
+        if (hasX_) {
+            root.x(x_);
+        }
+        if (hasY_) {
+            root.y(y_);
+        }
+        root.content([&] {
+            ui_.rect(id_ + ".hit")
+                .size(hitWidth, height_)
+                .states(theme::color(0.0f, 0.0f, 0.0f, 0.0f), style_.rowHover, style_.rowPressed)
+                .radius(std::max(metrics_.radius.small, height_ * 0.20f))
+                .transition(transition_)
+                .onClick([onChange, nextChecked] {
+                    if (onChange) {
+                        onChange(nextChecked);
+                    }
+                })
+                .build();
 
-                ui_.rect(id_ + ".track")
-                    .x(contentX)
-                    .y(trackY)
-                    .size(trackWidth, trackHeight)
-                    .color(checked_ ? style_.on : style_.off)
-                    .radius(trackHeight * 0.5f)
-                    .transition(transition_)
-                    .animate(core::AnimProperty::Color)
-                    .build();
+            ui_.rect(id_ + ".track")
+                .x(contentX)
+                .y(trackY)
+                .size(trackWidth, trackHeight)
+                .color(checked_ ? style_.on : style_.off)
+                .radius(trackHeight * 0.5f)
+                .transition(transition_)
+                .animate(core::AnimProperty::Color)
+                .build();
 
-                ui_.rect(id_ + ".knob")
-                    .x(contentX + knobX)
-                    .y(trackY + margin)
-                    .size(knobSize, knobSize)
-                    .color(style_.knob)
-                    .radius(knobSize * 0.5f)
-                    .transition(transition_)
-                    .animate(core::AnimProperty::Frame | core::AnimProperty::Color)
-                    .build();
+            ui_.rect(id_ + ".knob")
+                .x(contentX + knobX)
+                .y(trackY + margin)
+                .size(knobSize, knobSize)
+                .color(style_.knob)
+                .radius(knobSize * 0.5f)
+                .transition(transition_)
+                .animate(core::AnimProperty::Frame | core::AnimProperty::Color)
+                .build();
 
-                if (!label_.empty()) {
-                    ui_.text(id_ + ".label")
-                        .x(contentX + labelX)
-                        .y(labelY)
-                        .size(labelWidth, labelLineHeight)
-                        .text(label_)
-                        .fontSize(fontSize)
-                        .lineHeight(labelLineHeight)
-                        .color(style_.text)
-                        .verticalAlign(core::VerticalAlign::Top)
-                        .build();
-                }
-            })
-            .build();
+            if (!label_.empty()) {
+                ui_.text(id_ + ".label")
+                    .x(contentX + labelX)
+                    .y(labelY)
+                    .size(labelWidth, labelLineHeight)
+                    .text(label_)
+                    .fontSize(fontSize)
+                    .lineHeight(labelLineHeight)
+                    .color(style_.text)
+                    .verticalAlign(core::VerticalAlign::Top)
+                    .build();
+            }
+        }).build();
     }
 
 private:
@@ -156,6 +164,10 @@ private:
     float trackHeight_ = 0.0f;
     float gap_ = 0.0f;
     float fontSize_ = 0.0f;
+    float x_ = 0.0f;
+    float y_ = 0.0f;
+    bool hasX_ = false;
+    bool hasY_ = false;
 };
 
 inline SwitchBuilder toggleSwitch(core::dsl::Ui& ui, const std::string& id) {
