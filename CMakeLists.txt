@@ -125,6 +125,17 @@ function(eui_apply_compile_options target_name)
     if("NO_SIZE_OPT" IN_LIST ARGN)
         set(_eui_size_opt FALSE)
     endif()
+    # Exception/RTTI policy: the framework compiles without exceptions or RTTI
+    # and its own targets keep that. But this policy is also applied to the
+    # *consumer* app target (via eui_neo_configure_app), and a consumer's own
+    # sources may legitimately need host-language exceptions and RTTI —
+    # catching std::system_error from <filesystem>/<thread>, or dynamic_cast.
+    # Consumers pass KEEP_EXCEPTIONS_RTTI to opt out; EUI's own targets are
+    # unaffected either way.
+    set(_eui_no_exc_rtti TRUE)
+    if("KEEP_EXCEPTIONS_RTTI" IN_LIST ARGN)
+        set(_eui_no_exc_rtti FALSE)
+    endif()
     if(MSVC)
         target_compile_options(${target_name} PRIVATE
             /utf-8
@@ -137,14 +148,14 @@ function(eui_apply_compile_options target_name)
     elseif(APPLE)
         target_compile_options(${target_name} PRIVATE
             $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>,$<BOOL:${_eui_size_opt}>>:-Os>
-            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>,$<NOT:$<STREQUAL:${target_name},vcd_viewer>>,$<NOT:$<STREQUAL:${target_name},gpu_image_probe>>>:-fno-exceptions>
-            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>>:-fno-rtti>
+            $<$<AND:$<BOOL:${_eui_no_exc_rtti}>,$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>,$<NOT:$<STREQUAL:${target_name},vcd_viewer>>,$<NOT:$<STREQUAL:${target_name},gpu_image_probe>>>:-fno-exceptions>
+            $<$<AND:$<BOOL:${_eui_no_exc_rtti}>,$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>>:-fno-rtti>
         )
     else()
         target_compile_options(${target_name} PRIVATE
             $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>,$<BOOL:${_eui_size_opt}>>:-Os>
-            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>,$<NOT:$<STREQUAL:${target_name},vcd_viewer>>,$<NOT:$<STREQUAL:${target_name},gpu_image_probe>>>:-fno-exceptions>
-            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>>:-fno-rtti>
+            $<$<AND:$<BOOL:${_eui_no_exc_rtti}>,$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>,$<NOT:$<STREQUAL:${target_name},vcd_viewer>>,$<NOT:$<STREQUAL:${target_name},gpu_image_probe>>>:-fno-exceptions>
+            $<$<AND:$<BOOL:${_eui_no_exc_rtti}>,$<COMPILE_LANGUAGE:CXX>,$<NOT:$<CONFIG:Debug>>>:-fno-rtti>
         )
     endif()
 endfunction()
@@ -561,7 +572,10 @@ function(eui_neo_configure_app target_name)
     endif()
     target_sources(${target_name} PRIVATE "${_eui_app_main_source}" ${_eui_app_icon_resource})
     target_link_libraries(${target_name} PRIVATE eui::neo)
-    eui_apply_compile_options(${target_name} NO_SIZE_OPT)
+    # NO_SIZE_OPT is this entry point's own default: consumer apps keep their
+    # CMAKE_BUILD_TYPE optimization level. ARGN is forwarded so consumers can
+    # also pass KEEP_EXCEPTIONS_RTTI when their sources need exceptions/RTTI.
+    eui_apply_compile_options(${target_name} NO_SIZE_OPT ${ARGN})
     eui_apply_app_link_options(${target_name})
     eui_neo_copy_assets(${target_name})
     eui_neo_copy_runtime_dependencies(${target_name})
