@@ -8,6 +8,9 @@ option(EUI_ENABLE_MARKDOWN "Enable MD4C Markdown parsing support" ON)
 set(EUI_THIRD_PARTY_DIR "${CMAKE_CURRENT_LIST_DIR}")
 include(FetchContent)
 
+# 3rd/ is a drop-in directory for bundled third-party deps: adding a folder must be
+# enough for discovery, and DevDesk consumes this file as a subdirectory, so keep
+# CONFIGURE_DEPENDS globbing (an explicit list would break both).
 file(GLOB _eui_third_party_entries
     CONFIGURE_DEPENDS
     LIST_DIRECTORIES TRUE

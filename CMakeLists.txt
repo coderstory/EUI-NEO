@@ -645,7 +645,24 @@ endfunction()
 # -----------------------------------------------------------------------------
 
 if(EUI_BUILD_APPS)
-    file(GLOB APP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.cpp")
+    # examples/ holds git-tracked first-class sources: enumerate explicitly so a
+    # consumer build never re-globs or silently misses files. Register new examples here.
+    set(APP_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/animated_card.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/dynamic_texture.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/eui_demo.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/ffmpeg_video_player.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/font_em_size_demo.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/keyboard.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/magic_wand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/multipage_table.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/pet_window.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/scale_contract.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/shadertoy.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/styled_text_demo.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/switch_position.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/window_effect.cpp"
+    )
     foreach(app_source ${APP_SOURCES})
         get_filename_component(app_name "${app_source}" NAME_WE)
         if(app_name STREQUAL "ffmpeg_video_player")
@@ -681,6 +698,9 @@ if(EUI_BUILD_FFMPEG_VIDEO_EXAMPLE)
 endif()
 
 if(EUI_BUILD_USER_APPS)
+    # apps/ is a user drop-in directory: sources may be added or removed without
+    # editing CMake, so keep CONFIGURE_DEPENDS globbing (both *.cpp and */app.cpp
+    # below). Explicit lists here would break the drop-in contract.
     file(GLOB USER_APP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/apps/*.cpp")
     foreach(app_source ${USER_APP_SOURCES})
         get_filename_component(app_name "${app_source}" NAME_WE)
@@ -703,6 +723,7 @@ if(EUI_BUILD_USER_APPS)
         if(TARGET ${app_name})
             message(FATAL_ERROR "Duplicate EUI app target name '${app_name}'. Rename one app source or folder.")
         endif()
+        # Per-app folder sources stay globbed: drop-in apps own their file tree.
         file(GLOB_RECURSE app_local_sources CONFIGURE_DEPENDS "${app_dir}/*.cpp")
         list(SORT app_local_sources)
         if(app_name STREQUAL "keyboard" AND NOT TARGET eui::module_keyboard)
@@ -724,14 +745,38 @@ endif()
 if(EUI_BUILD_TEST_FIXTURES)
     enable_testing()
 
-    file(GLOB TEST_FIXTURE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/*.cpp")
+    # Explicit source list: tests/fixtures/ is git-tracked first-class code.
+    set(TEST_FIXTURE_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/animation_240fps.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/complex_scroll_stress_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dirty_repaint_complexity_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/empty_window.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hover_scroll_repro_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/input_scrollbar_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layout_regression_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/loader_lifecycle_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/markdown_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/shadow_button_gpu_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/text_alignment_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/virtual_list_10m_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/window_controls_viewer.cpp"
+    )
     foreach(fixture_source ${TEST_FIXTURE_SOURCES})
         get_filename_component(fixture_name "${fixture_source}" NAME_WE)
         add_executable(${fixture_name} "${fixture_source}")
         eui_neo_configure_app(${fixture_name})
     endforeach()
 
-    file(GLOB TEST_PROBE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/*.cpp")
+    # Explicit source list: tests/probes/ is git-tracked first-class code.
+    set(TEST_PROBE_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/gpu_image_probe.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/input_runtime_probe.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/render_clear_probe.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/render_context_probe.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/shadertoy_probe.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/shadertoy_runtime_probe.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/window_only_probe.cpp"
+    )
     foreach(probe_source ${TEST_PROBE_SOURCES})
         get_filename_component(probe_name "${probe_source}" NAME_WE)
         add_executable(${probe_name} "${probe_source}")
@@ -795,7 +840,55 @@ if(EUI_BUILD_TEST_FIXTURES)
             EUI_TEST_SHADERS_DIR="${shadertoy_probe_assets_dir}")
     endif()
 
-    file(GLOB TEST_UNIT_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/*.cpp")
+    # Explicit source list: tests/unit/ is git-tracked first-class code.
+    set(TEST_UNIT_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/audio_api.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/button_disabled_color.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/color_hex.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/context_menu_paths.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/dirty_rects.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/dsl_app_config.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/exit_request.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/font_em_size.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/font_weight_resolution.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/gpu_image.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/image_cache.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/image_path_resolution.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/image_stream_primitive.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/image_stream.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/image_theme_color.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/ime_rect.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/input_editing.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/input_key_passthrough.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/input_line_styles.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/input_model.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/input_on_cancel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/input_scrollbar.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/json.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/keyboard_module.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/layout_numeric.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/open_file_events.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/pet_window_config.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/pointer_input.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/shadertoy_graph.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/shadertoy_packaged_assets.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/shadertoy_primitive.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/show_request.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/signal.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/styled_menu_window_size.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/styled_runs.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/svg_source.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/switch_builder_position.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/text_ellipsis.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/title_bar_appearance.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/toast_action.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/tray_menu.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/ui_set_scroll_offset.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/ui_state.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/window_effect_backdrop.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/window_effect_clear_color.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/zindex_escape.cpp"
+    )
     foreach(unit_source ${TEST_UNIT_SOURCES})
         get_filename_component(unit_name "${unit_source}" NAME_WE)
         add_executable(${unit_name} "${unit_source}")
