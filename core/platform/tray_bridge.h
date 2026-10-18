@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +52,31 @@ int eui_tray_expand_menu(const eui_tray_menu_item* custom, int custom_count,
                          int keep_default,
                          void (*show_cb)(void* user), void (*exit_cb)(void* user),
                          eui_tray_menu_item* out, int out_capacity);
+
+/*
+ * 通知横幅（当前仅 Windows Win32 后端实现；其余平台返回失败 / 空操作）。
+ *
+ * eui_tray_show_notification：可在任意线程调用。UTF-8 入参严格校验，level
+ * 0=Info / 1=Warning / 2=Error（未知值按 Info）。成功入队并投递 UI 线程消息
+ * 返回 1；非法 UTF-8、未初始化托盘、队列满或 PostMessage 失败返回 0。
+ * 返回 1 只代表已交给 Shell，不代表用户实际看到横幅。
+ *
+ * eui_tray_flush_notifications：仅由托盘窗口过程在 UI 线程调用，排空队列。
+ */
+#define EUI_TRAY_NOTIFY_TITLE_UNITS 64   /* 含结尾 NUL，实际最多 63 个码元 */
+#define EUI_TRAY_NOTIFY_BODY_UNITS 256   /* 含结尾 NUL，实际最多 255 个码元 */
+int eui_tray_show_notification(const char* title_utf8, const char* body_utf8,
+                               int level);
+void eui_tray_flush_notifications(void);
+
+/*
+ * 纯函数（全平台可编译、可测试）：UTF-8 → UTF-16 码元，按 out_capacity
+ * （含结尾 NUL）截断。截断只发生在码点边界，绝不切开代理对；放不下整个
+ * 码点时停止并保留已写入部分。返回写入的码元数（不含 NUL），非法 UTF-8 /
+ * 非法参数返回 -1。被截断的剩余输入不再校验。
+ */
+int eui_tray_utf8_to_utf16_truncated(const char* utf8, uint16_t* out,
+                                     size_t out_capacity);
 
 int eui_tray_init(const char* icon_path);
 int eui_tray_is_initialized(void);

@@ -3,7 +3,75 @@
 #include "eui/dsl_app.h"
 
 #include <cassert>
+#include <cstdint>
 #include <string>
+
+// ---------------------------------------------------------------------------
+// eui_tray_utf8_to_utf16_truncated：通知横幅标题/正文的 UTF-16 截断（纯函数）
+// ---------------------------------------------------------------------------
+
+static void testUtf8ToUtf16Truncation() {
+    uint16_t out[16];
+
+    // 中文按码点转码
+    int n = eui_tray_utf8_to_utf16_truncated("快速笔记", out, 16);
+    assert(n == 4);
+    assert(out[0] == 0x5FEB && out[3] == 0x8BB0 && out[4] == 0);
+
+    // 恰好放满（容量 = 码元数 + NUL）
+    n = eui_tray_utf8_to_utf16_truncated("abcd", out, 5);
+    assert(n == 4 && out[4] == 0);
+
+    // 超长 ASCII 在 NUL 余量前截断
+    n = eui_tray_utf8_to_utf16_truncated("abcdef", out, 5);
+    assert(n == 4 && out[3] == 'd' && out[4] == 0);
+
+    // emoji U+1F389 占 2 个 UTF-16 码元；容量只剩 1 个码元时必须整体丢弃
+    n = eui_tray_utf8_to_utf16_truncated("ab\xF0\x9F\x8E\x89", out, 4);
+    assert(n == 2 && out[2] == 0);
+
+    // 容量够放整个代理对时正常写入
+    n = eui_tray_utf8_to_utf16_truncated("ab\xF0\x9F\x8E\x89", out, 5);
+    assert(n == 4);
+    assert(out[2] == 0xD83C && out[3] == 0xDF89 && out[4] == 0);
+
+    // 空串
+    assert(eui_tray_utf8_to_utf16_truncated("", out, 16) == 0 && out[0] == 0);
+
+    // 非法 UTF-8：孤立 continuation / overlong / 截断 / 代理区 / 超范围 /
+    // 错误 continuation
+    const char* invalid[] = {
+        "\x80",
+        "\xC0\xAF",
+        "\xE4\xB8",
+        "\xED\xA0\x80",
+        "\xF4\x90\x80\x80",
+        "\xF0\x28\x8C\xBC",
+    };
+    for (const char* text : invalid) {
+        assert(eui_tray_utf8_to_utf16_truncated(text, out, 16) == -1);
+    }
+
+    // 参数防御
+    assert(eui_tray_utf8_to_utf16_truncated(nullptr, out, 16) == -1);
+    assert(eui_tray_utf8_to_utf16_truncated("a", nullptr, 16) == -1);
+    assert(eui_tray_utf8_to_utf16_truncated("a", out, 1) == -1);
+
+    // Windows 字段上限：200 个 ASCII 只保留 63 个码元 + NUL
+    std::string long_title(200, 'x');
+    uint16_t title[EUI_TRAY_NOTIFY_TITLE_UNITS];
+    assert(eui_tray_utf8_to_utf16_truncated(long_title.c_str(), title,
+                                             EUI_TRAY_NOTIFY_TITLE_UNITS) == 63);
+    assert(title[62] == 'x' && title[63] == 0);
+}
+
+static void testShowTrayNotificationWithoutTray() {
+    // 未初始化托盘：C API 与 C++ 包装都必须安全返回失败
+    assert(eui_tray_show_notification("title", "body", 0) == 0);
+    assert(!core::platform::showTrayNotification("title", "body"));
+    assert(!core::platform::showTrayNotification(
+        "title", "body", core::platform::TrayNotificationLevel::Error));
+}
 
 // ---------------------------------------------------------------------------
 // eui_tray_expand_menu：菜单合成纯函数（各平台后端共用）
@@ -176,6 +244,8 @@ static void testUtf8ToUtf16RoundTrip() {
 #endif
 
 int main() {
+    testUtf8ToUtf16Truncation();
+    testShowTrayNotificationWithoutTray();
     testExpandEmptyFallsBackToDefaults();
     testExpandCustomKeepsDefaults();
     testExpandCustomWithoutDefaults();

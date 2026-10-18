@@ -9,6 +9,7 @@ using core::platform::FileDialogResult;
 using core::platform::FileDialogStatus;
 using core::platform::TrayMenuItem;
 using core::platform::TrayMenuRequestedHandler;
+using core::platform::TrayNotificationLevel;
 using core::platform::TrayOptions;
 using core::platform::chooseFile;
 using core::platform::chooseFiles;
@@ -17,5 +18,6 @@ using core::platform::openUrl;
 using core::platform::resolveResourcePath;
 using core::platform::setTrayMenu;
 using core::platform::setTrayMenuRequestedHandler;
+using core::platform::showTrayNotification;
 
 } // namespace eui::platform

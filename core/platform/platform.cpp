@@ -799,6 +799,28 @@ bool consumeTrayShowRequested() {
     return eui_tray_consume_show_requested() != 0;
 }
 
+bool showTrayNotification(std::string_view title, std::string_view body,
+                          TrayNotificationLevel level) {
+    int bridge_level = 0;
+    switch (level) {
+    case TrayNotificationLevel::Warning:
+        bridge_level = 1;
+        break;
+    case TrayNotificationLevel::Error:
+        bridge_level = 2;
+        break;
+    case TrayNotificationLevel::Info:
+    default:
+        bridge_level = 0;
+        break;
+    }
+    /* C API 需要 NUL 结尾；string_view 不保证。 */
+    const std::string title_copy(title);
+    const std::string body_copy(body);
+    return eui_tray_show_notification(title_copy.c_str(), body_copy.c_str(),
+                                      bridge_level) != 0;
+}
+
 bool consumeTrayExitRequested() {
     return eui_tray_consume_exit_requested() != 0;
 }

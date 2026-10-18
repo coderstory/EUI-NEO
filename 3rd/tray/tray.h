@@ -226,6 +226,13 @@ wchar_t *eui_tray_utf8_to_utf16(const char *utf8);
    TrackPopupMenu path is skipped; zero keeps the original behavior. */
 int eui_tray_menu_requested(int x, int y, int left_button);
 
+/* EUI-NEO local patch: notification banner flush hook (implemented in
+   core/platform/tray_bridge.c). eui_tray_show_notification() may be called
+   from any thread; it queues the banner and posts EUI_TRAY_WM_NOTIFY to this
+   window, whose procedure runs on the tray/UI thread. */
+void eui_tray_flush_notifications(void);
+#define EUI_TRAY_WM_NOTIFY (WM_APP + 0x51)
+
 #define WM_TRAY_CALLBACK_MESSAGE (WM_USER + 1)
 #define WC_TRAY_CLASS_NAME "TRAY"
 #define ID_TRAY_FIRST 1000
@@ -243,6 +250,9 @@ static LRESULT CALLBACK _tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam,
     return 0;
   case WM_DESTROY:
     PostQuitMessage(0);
+    return 0;
+  case EUI_TRAY_WM_NOTIFY:
+    eui_tray_flush_notifications();
     return 0;
   case WM_TRAY_CALLBACK_MESSAGE:
     if (lparam == WM_LBUTTONUP || lparam == WM_RBUTTONUP) {

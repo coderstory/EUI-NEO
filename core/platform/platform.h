@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/window/window_backend.h"
@@ -81,6 +82,27 @@ void setTrayMenu(const std::vector<TrayMenuItem>& items, bool keepDefault = true
 using TrayMenuRequestedHandler = std::function<bool(int x, int y, bool left_button)>;
 void setTrayMenuRequestedHandler(TrayMenuRequestedHandler handler);
 void pollTray(bool blocking = false);
+
+/**
+ * @brief 原生托盘通知横幅级别（Windows 映射到 NIIF_INFO / WARNING / ERROR）。
+ */
+enum class TrayNotificationLevel {
+    Info,
+    Warning,
+    Error
+};
+
+/**
+ * @brief 显示原生托盘通知横幅（当前仅 Windows；其余平台返回 false）。
+ *
+ * 可在任意线程调用：Win32 后端会把内容拷贝进队列并 PostMessage 到托盘窗口，
+ * 由 UI 线程调用 Shell_NotifyIconW(NIF_INFO)。UTF-8 严格校验，标题/正文按
+ * Windows 限制截断（63/255 个 UTF-16 码元，不切开代理对）。
+ * 返回 true 只代表已交给 Shell，不代表用户实际看到横幅。
+ */
+bool showTrayNotification(std::string_view title, std::string_view body,
+                          TrayNotificationLevel level = TrayNotificationLevel::Info);
+
 bool consumeTrayShowRequested();
 bool consumeTrayExitRequested();
 /**

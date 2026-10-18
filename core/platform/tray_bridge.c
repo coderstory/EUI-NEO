@@ -2,6 +2,97 @@
 
 #include <string.h>
 
+/* ---------------------------------------------------------------------------
+ * UTF-8 -> UTF-16 截断（纯函数，全平台编译）
+ *
+ * Windows 通知横幅的 szInfoTitle / szInfo 是定长 UTF-16 数组。转码时不能按
+ * 字节或码元硬切：切开代理对会产生非法 UTF-16，Shell 侧可能显示乱码。这里
+ * 严格解码 UTF-8，只在码点边界截断。
+ * ------------------------------------------------------------------------- */
+int eui_tray_utf8_to_utf16_truncated(const char* utf8, uint16_t* out,
+                                     size_t out_capacity) {
+    if (utf8 == 0 || out == 0 || out_capacity < 2) {
+        return -1;
+    }
+
+    const unsigned char* p = (const unsigned char*)utf8;
+    size_t written = 0;
+
+    while (*p != 0) {
+        uint32_t cp = 0;
+        const unsigned char b = *p;
+
+        if (b < 0x80) {
+            cp = (uint32_t)b;
+            p += 1;
+        } else if ((b & 0xE0) == 0xC0) {
+            if ((p[1] & 0xC0) != 0x80) {
+                return -1;
+            }
+            cp = ((uint32_t)(b & 0x1F) << 6) | (uint32_t)(p[1] & 0x3F);
+            if (cp < 0x80) {   /* overlong */
+                return -1;
+            }
+            p += 2;
+        } else if ((b & 0xF0) == 0xE0) {
+            if ((p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80) {
+                return -1;
+            }
+            cp = ((uint32_t)(b & 0x0F) << 12) |
+                 ((uint32_t)(p[1] & 0x3F) << 6) |
+                 (uint32_t)(p[2] & 0x3F);
+            if (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF)) {   /* overlong / surrogate */
+                return -1;
+            }
+            p += 3;
+        } else if ((b & 0xF8) == 0xF0) {
+            if ((p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80 ||
+                (p[3] & 0xC0) != 0x80) {
+                return -1;
+            }
+            cp = ((uint32_t)(b & 0x07) << 18) |
+                 ((uint32_t)(p[1] & 0x3F) << 12) |
+                 ((uint32_t)(p[2] & 0x3F) << 6) |
+                 (uint32_t)(p[3] & 0x3F);
+            if (cp < 0x10000 || cp > 0x10FFFF) {   /* overlong / out of range */
+                return -1;
+            }
+            p += 4;
+        } else {
+            return -1;   /* 孤立 continuation 或非法起始字节 */
+        }
+
+        const size_t needed = (cp > 0xFFFF) ? 2 : 1;
+        if (written + needed >= out_capacity) {
+            break;   /* 放不下整个码点（含 NUL 余量）：在码点边界停止 */
+        }
+        if (needed == 2) {
+            const uint32_t v = cp - 0x10000;
+            out[written++] = (uint16_t)(0xD800 + (v >> 10));
+            out[written++] = (uint16_t)(0xDC00 + (v & 0x3FF));
+        } else {
+            out[written++] = (uint16_t)cp;
+        }
+    }
+
+    out[written] = 0;
+    return (int)written;
+}
+
+#if !defined(EUI_TRAY_WINAPI)
+/* 非 Windows / 无 Win32 托盘后端：没有原生通知横幅，保持 API 可链接。 */
+int eui_tray_show_notification(const char* title_utf8, const char* body_utf8,
+                               int level) {
+    (void)title_utf8;
+    (void)body_utf8;
+    (void)level;
+    return 0;
+}
+
+void eui_tray_flush_notifications(void) {
+}
+#endif
+
 #if defined(_WIN32)
 #include <windows.h>
 
@@ -1130,6 +1221,126 @@ void eui_tray_shutdown(void) {
 #if defined(_MSC_VER) && defined(EUI_TRAY_WINAPI)
 #pragma warning(pop)
 #endif
+
+#if defined(EUI_TRAY_WINAPI)
+
+/* ---------------------------------------------------------------------------
+ * 通知横幅队列（Win32 后端）
+ *
+ * Shell_NotifyIconW 只能在创建托盘窗口的 UI 线程调用，而 agent 等调用方在
+ * worker 线程。这里用 SRWLOCK 保护一个固定容量环形队列：worker 线程入队并
+ * PostMessage(EUI_TRAY_WM_NOTIFY)，托盘窗口过程在 UI 线程排空队列。
+ * ------------------------------------------------------------------------- */
+#define EUI_TRAY_NOTIFICATION_QUEUE_CAPACITY 8
+#define EUI_TRAY_NOTIFICATION_TIMEOUT_MS 10000
+
+typedef struct eui_tray_notification {
+    uint16_t title[EUI_TRAY_NOTIFY_TITLE_UNITS];
+    uint16_t body[EUI_TRAY_NOTIFY_BODY_UNITS];
+    DWORD info_flags;
+} eui_tray_notification;
+
+static SRWLOCK g_notification_lock = SRWLOCK_INIT;
+static eui_tray_notification g_notification_queue[EUI_TRAY_NOTIFICATION_QUEUE_CAPACITY];
+static int g_notification_head = 0;
+static int g_notification_count = 0;
+
+static DWORD eui_tray_notification_flags(int level) {
+    switch (level) {
+    case 1:
+        return NIIF_WARNING;
+    case 2:
+        return NIIF_ERROR;
+    default:
+        return NIIF_INFO;
+    }
+}
+
+/* 用 Win32 做一次完整校验；真正的截断交给纯函数（严格且可单测）。 */
+static int eui_tray_notification_utf8_valid(const char* text) {
+    return text == 0 ||
+           MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, -1, 0, 0) > 0;
+}
+
+int eui_tray_show_notification(const char* title_utf8, const char* body_utf8,
+                               int level) {
+    if (nid.hWnd == 0) {
+        return 0;
+    }
+    if (title_utf8 == 0) {
+        title_utf8 = "";
+    }
+    if (body_utf8 == 0) {
+        body_utf8 = "";
+    }
+    if (!eui_tray_notification_utf8_valid(title_utf8) ||
+        !eui_tray_notification_utf8_valid(body_utf8)) {
+        return 0;
+    }
+
+    eui_tray_notification item;
+    memset(&item, 0, sizeof(item));
+    if (eui_tray_utf8_to_utf16_truncated(title_utf8, item.title,
+                                         EUI_TRAY_NOTIFY_TITLE_UNITS) < 0 ||
+        eui_tray_utf8_to_utf16_truncated(body_utf8, item.body,
+                                         EUI_TRAY_NOTIFY_BODY_UNITS) < 0) {
+        return 0;
+    }
+    item.info_flags = eui_tray_notification_flags(level);
+
+    /* 持锁投递：PostMessageW 不会回调窗口过程；失败时能准确回滚刚入队的项，
+     * 而不会被其他 producer 抢先入队影响。 */
+    AcquireSRWLockExclusive(&g_notification_lock);
+    if (g_notification_count >= EUI_TRAY_NOTIFICATION_QUEUE_CAPACITY) {
+        ReleaseSRWLockExclusive(&g_notification_lock);
+        return 0;
+    }
+    const int tail = (g_notification_head + g_notification_count) %
+                     EUI_TRAY_NOTIFICATION_QUEUE_CAPACITY;
+    g_notification_queue[tail] = item;
+    ++g_notification_count;
+    if (!PostMessageW(nid.hWnd, EUI_TRAY_WM_NOTIFY, 0, 0)) {
+        --g_notification_count;
+        ReleaseSRWLockExclusive(&g_notification_lock);
+        return 0;
+    }
+    ReleaseSRWLockExclusive(&g_notification_lock);
+    return 1;
+}
+
+void eui_tray_flush_notifications(void) {
+    for (;;) {
+        eui_tray_notification item;
+        AcquireSRWLockExclusive(&g_notification_lock);
+        if (g_notification_count == 0) {
+            ReleaseSRWLockExclusive(&g_notification_lock);
+            break;
+        }
+        item = g_notification_queue[g_notification_head];
+        g_notification_head = (g_notification_head + 1) %
+                              EUI_TRAY_NOTIFICATION_QUEUE_CAPACITY;
+        --g_notification_count;
+        ReleaseSRWLockExclusive(&g_notification_lock);
+
+        /* 局部副本：不动全局 nid，避免污染后续 tray_update 的 NIM_MODIFY。 */
+        NOTIFYICONDATAW data;
+        memset(&data, 0, sizeof(data));
+        data.cbSize = sizeof(NOTIFYICONDATAW);
+        data.hWnd = nid.hWnd;
+        data.uID = nid.uID;
+        data.uFlags = NIF_INFO;
+        data.dwInfoFlags = item.info_flags;
+        data.uTimeout = EUI_TRAY_NOTIFICATION_TIMEOUT_MS;
+        memcpy(data.szInfoTitle, item.title, sizeof(item.title));
+        memcpy(data.szInfo, item.body, sizeof(item.body));
+
+        if (!Shell_NotifyIconW(NIM_MODIFY, &data)) {
+            OutputDebugStringW(L"EUI-NEO tray: Shell_NotifyIconW(NIF_INFO) failed\n");
+        }
+    }
+}
+
+#endif /* EUI_TRAY_WINAPI */
 
 static int g_initialized = 0;
 static int g_show_requested = 0;
