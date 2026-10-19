@@ -702,14 +702,14 @@ inline std::vector<MarkdownBlock> parseMarkdownBlocks(const std::string& source)
 
     MarkdownBlock block;
     block.kind = MarkdownBlockKind::Paragraph;
-    block.runs.push_back({MarkdownRunKind::Text, {}, source});
+    block.runs.push_back({MarkdownRunKind::Text, {}, source, {}, {}});
     return {block};
 }
 #else
 inline std::vector<MarkdownBlock> parseMarkdownBlocks(const std::string& source) {
     MarkdownBlock block;
     block.kind = MarkdownBlockKind::Paragraph;
-    block.runs.push_back({MarkdownRunKind::Text, {}, source});
+    block.runs.push_back({MarkdownRunKind::Text, {}, source, {}, {}});
     return {block};
 }
 #endif
