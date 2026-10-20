@@ -776,6 +776,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/shadertoy_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/shadertoy_runtime_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/window_only_probe.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/window_shell_probe.cpp"
     )
     foreach(probe_source ${TEST_PROBE_SOURCES})
         get_filename_component(probe_name "${probe_source}" NAME_WE)

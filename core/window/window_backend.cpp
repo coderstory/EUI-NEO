@@ -821,6 +821,10 @@ struct ChromeHitTestState {
     CaptionHitTestHandler captionHit;
     // false = 不启用八向边缘热区（不可 resize 的窗口）
     bool resizable = false;
+    // 安装时给窗口补过 WS_THICKFRAME（卸载须还原）：GLFW undecorated = 纯
+    // WS_POPUP，DefWindowProc 的 SC_SIZE 系统尺寸环只对带 WS_SIZEBOX 的窗口
+    // 真正改几何——缺它时八向命中码全对也拖不动（系统 Size 命令同因灰置）
+    bool thickFrameAdded = false;
     // 手动双击检测（GLFW 窗口类只注册 CS_OWNDC 无 CS_DBLCLKS，系统不会派发
     // WM_NCLBUTTONDBLCLK）：记录上一次 caption 区左键按下的时刻/位置，判据
     // 与系统双击一致——时限 GetDoubleClickTime、半径 SM_CX/CYDOUBLECLK
@@ -959,6 +963,23 @@ LRESULT CALLBACK chromeHitTestWindowProc(HWND hwnd, UINT message, WPARAM wParam,
         }
         return chained;
     }
+    case WM_NCCALCSIZE: {
+        // 安装期给 resizable 窗补了 WS_THICKFRAME（见 installChromeHitTest），
+        // DefWindowProc 会从客户区削掉一圈 resize 带，把自绘壳打回系统边框观
+        // 感；自绘壳的全部契约（客户区起点 = 窗口外框：ScreenToClient/
+        // GetClientRect 命中几何、DWM backdrop/clearColor 铺满、宿主按客户区
+        // 布局）要求客户区 = 整窗。wParam=TRUE 时入参 rgrc[0] 即本次操作的窗
+        // 口矩形（屏幕坐标，window_shell_probe 实证），原样接受 + return 0 即
+        // 客户区 = 整窗；禁止改写成 {0,0,w,h}（输出是屏幕坐标，会把客户区原
+        // 点钉到屏幕原点，真鼠标事件全落空），也禁止 GetWindowRect 重入（样式
+        // 变更中读到中间态矩形，形成偏移反馈环）。最大化态同一路径：ptMax 已
+        // 在 WM_GETMINMAXINFO 钳到工作区原点，整窗 = 工作区，客户区恰铺满。
+        // 仅自己补过 THICKFRAME 才接管（decorated 窗自带系统框，交默认处理）。
+        if (wParam == FALSE || !state->thickFrameAdded) {
+            break;
+        }
+        return 0;
+    }
     default:
         break;
     }
@@ -993,6 +1014,22 @@ void installChromeHitTest(HWND hwnd, CaptionHitTestHandler handler,
         return;
     }
     states.emplace(hwnd, state);
+    // 边缘 resize 的最后一环：可 resize 窗补 WS_THICKFRAME。命中码只是让
+    // 系统起 WM_NCLBUTTONDOWN → SC_SIZE 尺寸环，该环对缺 WS_SIZEBOX 的窗口
+    // 直接空转（真机 UAT4：八向光标对、拖不动；window_shell_probe 实证补上
+    // 后 delta=拖拽距离）。非客户带由 WM_NCCALCSIZE 钳回整窗，几何/观感与
+    // 旧 undecorated 一致；卸载时按 thickFrameAdded 还原样式。
+    if (resizable) {
+        const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        if ((style & WS_THICKFRAME) == 0) {
+            state->thickFrameAdded = true;  // 先立标志再改样式：FRAMECHANGED 会同步
+                                           // 触发 WM_NCCALCSIZE，晚置走默认削边
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_THICKFRAME);
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                             SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
+    }
 }
 
 void uninstallChromeHitTest(HWND hwnd) {
@@ -1006,6 +1043,16 @@ void uninstallChromeHitTest(HWND hwnd) {
     if (state->previousProc != nullptr) {
         SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
                           reinterpret_cast<LONG_PTR>(state->previousProc));
+    }
+    // 还原安装期补的 WS_THICKFRAME（测试/换回调场景反复装卸，样式必须可逆；
+    // 纯 WS_POPUP 无该位时 NCCALCSIZE 默认本就客户区=整窗，无需再补偿）
+    if (state->thickFrameAdded) {
+        const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        SetWindowLongPtrW(hwnd, GWL_STYLE,
+                          style & ~static_cast<LONG_PTR>(WS_THICKFRAME));
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                         SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
     delete state;
 }
@@ -1242,8 +1289,22 @@ void setWindowMousePassthrough(Handle window, bool enabled) {
 
 void requestWindowClose(Handle window) {
     if (window != nullptr) {
-        // 与用户点标题栏关闭同一语义：子窗口由主循环 pruneClosedWindows 正常
-        // 销毁；主窗口走 close callback（托盘模式 = 隐藏到托盘）
+        // 与用户点标题栏关闭（系统 X / Alt+F4）同一语义：必须经 WM_CLOSE →
+        // GLFW windowProc → close callback 这条链——托盘宿主的「隐藏到托盘」/
+        // 模态子窗聚焦/真关闭三态决策全部住在 close callback 里（主循环安装）。
+        // glfwSetWindowShouldClose 只置标志、不回调，主循环
+        // while(!glfwWindowShouldClose) 顶判直接退出 = 托盘宿主的自绘关闭钮
+        // 直接退出整个应用（UAT4 真机实证 + window_shell_probe 复现）。
+        // 子窗口无 close callback：WM_CLOSE 同样落 shouldClose=true，由主循环
+        // pruneClosedWindows 正常销毁，语义不变。非 Windows 无等价投递，保旧
+        // 置位语义（macOS/Linux 宿主走系统标题栏，自绘关闭钮无调用方）。
+#if defined(_WIN32)
+        if (HWND hwnd = glfwGetWin32Window(static_cast<GLFWwindow*>(window));
+            hwnd != nullptr) {
+            SendMessageW(hwnd, WM_CLOSE, 0, 0);
+            return;
+        }
+#endif
         glfwSetWindowShouldClose(static_cast<GLFWwindow*>(window), GLFW_TRUE);
         glfwPostEmptyEvent();
     }
