@@ -296,6 +296,34 @@ static NSImage* eui_tray_image(const char* icon_path) {
         NSString* path = [NSString stringWithUTF8String:icon_path];
         if (path != nil) {
             image = [[[NSImage alloc] initWithContentsOfFile:path] autorelease];
+            // macOS 图标命名惯例：与 <name>.png 同目录的 <name>@2x.png 是其 Retina 倍图。
+            // initWithContentsOfFile 只载单文件、不自动拾取 @2x（那是 imageNamed: 的行为），
+            // 故此处按惯例补载：把倍图位图作为同一 NSImage 的第二档表示（逻辑尺寸与
+            // 底图对齐 → 系统按屏倍率择优绘制）。无 @2x 文件 / 非 .png 路径时零行为变化。
+            if (image != nil) {
+                const NSRange pngRange = [path rangeOfString:@".png"
+                                                    options:NSBackwardsSearch];
+                if (pngRange.location != NSNotFound) {
+                    NSString* const retinaPath =
+                        [path stringByReplacingCharactersInRange:pngRange
+                                                        withString:@"@2x.png"];
+                    NSImage* const retina =
+                        [[[NSImage alloc] initWithContentsOfFile:retinaPath] autorelease];
+                    if (retina != nil && [retina.representations count] > 0
+                            && [image.representations count] > 0) {
+                        NSImage* const combined =
+                            [[[NSImage alloc] initWithSize:image.size] autorelease];
+                        for (NSImageRep* rep in image.representations) {
+                            [combined addRepresentation:rep];
+                        }
+                        for (NSImageRep* rep in retina.representations) {
+                            [rep setSize:image.size];
+                            [combined addRepresentation:rep];
+                        }
+                        image = combined;
+                    }
+                }
+            }
         }
     }
     if (image == nil) {
