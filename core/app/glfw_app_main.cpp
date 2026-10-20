@@ -645,6 +645,28 @@ int eui_app_run() {
         return -1;
     }
 
+    // 自绘窗口壳（DslAppConfig::onCaptionHitTest，与 decorated(false) 配套）：
+    // 主窗口句柄回写（app::maximize/restore/iconify/closeMainWindow 经它落
+    // core::window）+ 标题栏命中回调安装。物理→逻辑换算取 app::contentScale()
+    //（与 compose 的 Screen::scale 同源——命中判定对齐**上一帧已渲染**的逻辑
+    // 布局；首次 update 前恒 1.0，属启动窗口期，WM_NCHITTEST 早于首帧时按
+    // 1:1 判定）。非支持平台（macOS）不安装，core 层为无操作
+    app::detail::setMainWindowHandle(window);
+    if (app::customWindowChromeSupported() &&
+        app::dslAppConfig().captionHitTestHandlerValue) {
+        core::window::setWindowCaptionHitTestHandler(
+            window,
+            [handler = app::dslAppConfig().captionHitTestHandlerValue](
+                int x, int y, int width, int height, bool maximized) {
+                const float scale = app::contentScale();
+                const float s = scale > 0.0f ? scale : 1.0f;
+                const app::CaptionHitQuery query{x / s, y / s, width / s,
+                                                 height / s, maximized};
+                return handler(query);
+            },
+            app::windowResizable());
+    }
+
     WindowState windowState;
     windowState.resetTiming(glfwGetTime());
     updateFrameInterval(window, windowState, windowState.lastTitleUpdate, true);

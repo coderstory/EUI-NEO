@@ -55,6 +55,10 @@ struct DslAppConfig {
     std::function<void(const eui::KeyEvent&)> keyEventHandler;
     std::function<void()> shutdownHandler;
     std::function<void(const std::string&)> openFileHandler;
+    // 自绘窗口壳的标题栏命中回调（主窗口安装）：返回 true = 该点属标题栏
+    // 拖拽区。仅 customWindowChromeSupported() 平台生效；坐标为逻辑单位
+    //（CaptionHitQuery 注释见 eui/app.h）。回调主线程触发，须快速返回
+    std::function<bool(const CaptionHitQuery&)> captionHitTestHandlerValue;
 
     DslAppConfig& title(std::string value) { titleValue = std::move(value); return *this; }
     DslAppConfig& pageId(std::string value) { pageIdValue = std::move(value); return *this; }
@@ -198,6 +202,19 @@ struct DslAppConfig {
     /** @brief UI/渲染线程退出回调，在主窗口 GPU 设备销毁前释放应用资源引用。 */
     DslAppConfig& onShutdown(std::function<void()> handler) {
         shutdownHandler = std::move(handler);
+        return *this;
+    }
+    /**
+     * @brief 自绘窗口壳：主窗口标题栏命中回调（与 decorated(false) 配套）。
+     *
+     * 回调对每次鼠标移动触发（WM_NCHITTEST），返回 true 即该点为拖拽区
+     *（HTCAPTION）——系统原生接管拖拽/Aero Snap；双击最大化与边缘八向
+     * resize 由框架层自理，回调只管「这块是不是标题栏」。入参为客户区
+     * 逻辑坐标（CaptionHitQuery）。仅 customWindowChromeSupported() 平台
+     * 安装；不支持平台设置本回调无效果（窗口也不应请求 undecorated）。
+     */
+    DslAppConfig& onCaptionHitTest(std::function<bool(const CaptionHitQuery&)> handler) {
+        captionHitTestHandlerValue = std::move(handler);
         return *this;
     }
 };

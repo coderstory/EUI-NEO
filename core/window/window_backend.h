@@ -2,6 +2,7 @@
 
 #include "core/window/window_types.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -90,5 +91,34 @@ float windowScaleForPoint(float x, float y);
 void installInputCallbacks(Handle window);
 void uninstallInputCallbacks(Handle window);
 bool queryImeComposition(Handle window, std::string& text, bool& composing);
+
+// ---- 自绘窗口壳（undecorated 主窗口的自绘标题栏；DevDesk UAT3 D-R3-1）----
+// 与 decorated=false 配套：去掉系统标题栏后，拖拽/双击最大化/边缘 resize 在
+// Windows 由本层 WndProc 子类链接管，宿主只声明「哪块区域算标题栏拖拽区」。
+// macOS 保持系统标题栏（GLFW borderless 无红绿灯/不可 resize/不可拖拽，
+// customWindowChromeSupported() 恒 false，宿主据此不请求 undecorated）。
+
+// 本平台是否支持自绘窗口壳。纯平台查询（无窗口/GL 依赖，可在任何时刻调用）：
+// Windows（GLFW）= true；macOS / Linux / SDL2 = false。
+bool customWindowChromeSupported();
+
+// 窗口控制三键的运行时动作（自绘标题栏按钮消费；等价系统标题栏语义，两后端均可用）。
+// restoreWindow 同时承担「还原最大化」与「解除最小化」两个语义（GLFW/SDL 同构）。
+void maximizeWindow(Handle window);
+void restoreWindow(Handle window);
+void iconifyWindow(Handle window);
+// 窗口当前是否最大化（自绘按钮切换 maximize/还原图标用；handle 空恒 false）。
+bool windowIsMaximized(Handle window);
+
+// 标题栏命中回调：坐标/尺寸均为客户区**物理像素**，原点=窗口左上；返回 true =
+// 该点属于标题栏拖拽区。仅 Windows 实装——WM_NCHITTEST 按回调返回 HTCAPTION
+// 后系统原生接管拖拽与 Aero Snap；WM_NCLBUTTONDOWN 掐表判双击切最大化/还原
+//（GLFW 窗口类无 CS_DBLCLKS，系统不会派发 NC 双击消息）；八向边缘 resize
+// 热区 + 方向光标由本层按系统度量自理，**热区命中优先于回调**（标题栏贴边处
+// 应 resize 而非拖拽），仅在 resizable 且未最大化时生效。回调在主线程触发，
+// 必须快速返回（每次鼠标移动都会进来）。resizable=false 时八向热区不生效。
+// handler 为空函数 = 卸载；对未创建/有边框窗口调用为安全无操作。
+using CaptionHitTestHandler = std::function<bool(int x, int y, int width, int height, bool maximized)>;
+void setWindowCaptionHitTestHandler(Handle window, CaptionHitTestHandler handler, bool resizable);
 
 } // namespace core::window

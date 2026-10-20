@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <new>
+#include <unordered_map>
 
 // ---------------------------------------------------------------------------
 // 显示器缩放系数（逻辑单位 → 窗口物理像素）：两条窗口后端分支（SDL2 / GLFW）
@@ -719,6 +721,41 @@ std::vector<MonitorWorkArea> getMonitorWorkAreas() {
     return areas;
 }
 
+// ---- 自绘窗口壳（window_backend.h 声明区见契约）----
+// SDL2（desktop Linux）：无 WM_NCHITTEST 等价钩子，自绘壳能力恒不可用；
+// 窗口控制三键映射 SDL 原生 API（语义与 GLFW 分支一致，宿主代码零分叉）。
+bool customWindowChromeSupported() {
+    return false;
+}
+
+void maximizeWindow(Handle window) {
+    if (window != nullptr) {
+        SDL_MaximizeWindow(static_cast<SDL_Window*>(window));
+    }
+}
+
+void restoreWindow(Handle window) {
+    if (window != nullptr) {
+        SDL_RestoreWindow(static_cast<SDL_Window*>(window));
+    }
+}
+
+void iconifyWindow(Handle window) {
+    if (window != nullptr) {
+        SDL_MinimizeWindow(static_cast<SDL_Window*>(window));
+    }
+}
+
+bool windowIsMaximized(Handle window) {
+    return window != nullptr &&
+           (SDL_GetWindowFlags(static_cast<SDL_Window*>(window)) &
+            SDL_WINDOW_MAXIMIZED) != 0;
+}
+
+void setWindowCaptionHitTestHandler(Handle, CaptionHitTestHandler, bool) {
+    // SDL2 后端无标题栏命中钩子（能力查询恒 false，正常宿主不会走到安装）
+}
+
 } // namespace core::window
 
 #else
@@ -740,6 +777,9 @@ std::vector<MonitorWorkArea> getMonitorWorkAreas() {
 #define GLFW_EXPOSE_NATIVE_WIN32
 #endif
 #include <GLFW/glfw3native.h>
+// GET_X_LPARAM / GET_Y_LPARAM（WM_NCHITTEST 的 lParam 拆分；LEAN_AND_MEAN
+// 不自动带入 windowsx.h，负坐标多显示器场景手拆 LOWORD 会丢符号位）
+#include <windowsx.h>
 #elif defined(__APPLE__)
 // macOS 路径（M0：macos-three-features 设计 §3）：glfwGetCocoaWindow
 // （NSWindow*）填 NativeWindowInfo.platformWindow，M3 桌宠三项消费
@@ -768,6 +808,208 @@ void configureOpenGLWindowHints() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 }
+
+#if defined(_WIN32)
+// 自绘窗口壳（Windows/GLFW）：undecorated 主窗口的拖拽/双击最大化/边缘
+// resize。GLFW undecorated = 纯 WS_POPUP（无 WS_THICKFRAME/WS_MAXIMIZEBOX，
+// 不处理 WM_NCHITTEST），原生 hit-test 恒 HTCLIENT——拖拽/resize/双击全无。
+// 这里在 GLFW 的窗口 proc 之上再挂一层子类链（与 ime_bridge / power_events
+// 的既有子类叠加兼容：每层 CallWindowProcW 透传上一链，安装顺序无关）。
+struct ChromeHitTestState {
+    WNDPROC previousProc = nullptr;
+    // 宿主命中回调（客户区物理像素）；空 = 未启用（安装时保证非空）
+    CaptionHitTestHandler captionHit;
+    // false = 不启用八向边缘热区（不可 resize 的窗口）
+    bool resizable = false;
+    // 手动双击检测（GLFW 窗口类只注册 CS_OWNDC 无 CS_DBLCLKS，系统不会派发
+    // WM_NCLBUTTONDBLCLK）：记录上一次 caption 区左键按下的时刻/位置，判据
+    // 与系统双击一致——时限 GetDoubleClickTime、半径 SM_CX/CYDOUBLECLK
+    DWORD lastCaptionDownTick = 0;
+    POINT lastCaptionDownPos{};
+};
+
+std::unordered_map<HWND, ChromeHitTestState*>& chromeHitTestStates() {
+    static std::unordered_map<HWND, ChromeHitTestState*> states;
+    return states;
+}
+
+ChromeHitTestState* chromeStateFor(HWND hwnd) {
+    const auto iterator = chromeHitTestStates().find(hwnd);
+    return iterator != chromeHitTestStates().end() ? iterator->second : nullptr;
+}
+
+// WM_NCHITTEST 决策：边缘八向热区（优先）→ 宿主回调（HTCAPTION）→ HTCLIENT。
+// lParam 为屏幕坐标；回调契约是客户区物理像素（ScreenToClient 转换）。
+LRESULT chromeHitTestFor(HWND hwnd, ChromeHitTestState* state, LPARAM lParam) {
+    POINT clientPt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+    if (ScreenToClient(hwnd, &clientPt) == FALSE) {
+        return HTCLIENT;
+    }
+    RECT client{};
+    if (GetClientRect(hwnd, &client) == FALSE) {
+        return HTCLIENT;
+    }
+    const int width = static_cast<int>(client.right);
+    const int height = static_cast<int>(client.bottom);
+    if (width <= 0 || height <= 0) {
+        return HTCLIENT;
+    }
+    const bool maximized = IsZoomed(hwnd) != FALSE;
+    // 边缘热区厚度用系统度量（SIZEFRAME+PADDEDBORDER，与装饰窗的命中带一致，
+    // 高 DPI 下自动随缩放）；角区再扩一档 SIZEFRAME（系统惯例角区更好命中）。
+    // 最大化时整体失效——系统最大化窗格不允许边缘 resize，这里对齐。
+    if (!maximized && state->resizable) {
+        const int borderX =
+            GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+        const int borderY =
+            GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+        if (borderX > 0 && borderY > 0) {
+            const int corner = borderX + GetSystemMetrics(SM_CXSIZEFRAME);
+            const int x = clientPt.x;
+            const int y = clientPt.y;
+            const bool left = x < borderX;
+            const bool right = x >= width - borderX;
+            const bool top = y < borderY;
+            const bool bottom = y >= height - borderY;
+            if (x < corner && y < corner) {
+                return HTTOPLEFT;
+            }
+            if (x >= width - corner && y < corner) {
+                return HTTOPRIGHT;
+            }
+            if (x < corner && y >= height - corner) {
+                return HTBOTTOMLEFT;
+            }
+            if (x >= width - corner && y >= height - corner) {
+                return HTBOTTOMRIGHT;
+            }
+            if (left) {
+                return HTLEFT;
+            }
+            if (right) {
+                return HTRIGHT;
+            }
+            if (top) {
+                return HTTOP;
+            }
+            if (bottom) {
+                return HTBOTTOM;
+            }
+        }
+    }
+    if (state->captionHit &&
+        state->captionHit(clientPt.x, clientPt.y, width, height, maximized)) {
+        return HTCAPTION;
+    }
+    return HTCLIENT;
+}
+
+LRESULT CALLBACK chromeHitTestWindowProc(HWND hwnd, UINT message, WPARAM wParam,
+                                         LPARAM lParam) {
+    ChromeHitTestState* state = chromeStateFor(hwnd);
+    if (state == nullptr) {
+        // 卸载竞态残余（正常卸载同步还原 proc，不可达）：走 DefWindowProc 保底
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+    switch (message) {
+    case WM_NCHITTEST:
+        return chromeHitTestFor(hwnd, state, lParam);
+    case WM_NCLBUTTONDOWN: {
+        if (wParam != HTCAPTION) {
+            break;  // 边缘 resize 的按下透传给系统起 resize 模态循环
+        }
+        const DWORD now = GetTickCount();
+        const POINT down{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        const bool withinTime =
+            state->lastCaptionDownTick != 0 &&
+            now - state->lastCaptionDownTick <= GetDoubleClickTime();
+        const bool withinRect =
+            std::abs(down.x - state->lastCaptionDownPos.x) <=
+                GetSystemMetrics(SM_CXDOUBLECLK) &&
+            std::abs(down.y - state->lastCaptionDownPos.y) <=
+                GetSystemMetrics(SM_CYDOUBLECLK);
+        state->lastCaptionDownTick = now;
+        state->lastCaptionDownPos = down;
+        if (withinTime && withinRect) {
+            // 双击切换最大化/还原；计时清零防三连击把第二次双击立即翻回去。
+            // WS_POPUP 无 WS_MAXIMIZEBOX，DefWindowProc 的 NC 双击路径不存在，
+            // 必须自己 ShowWindow；最大化落位由 WM_GETMINMAXINFO 钳到工作区
+            state->lastCaptionDownTick = 0;
+            ShowWindow(hwnd, IsZoomed(hwnd) != FALSE ? SW_RESTORE : SW_MAXIMIZE);
+            return 0;
+        }
+        break;  // 单击：透传 → DefWindowProc 起 SC_MOVE 拖拽模态循环
+    }
+    case WM_GETMINMAXINFO: {
+        // WS_POPUP 最大化默认盖满整屏（含任务栏）——钳回所在显示器工作区。
+        // 先透传让 GLFW 落 min/max track 尺寸，再只覆盖 ptMax 三元组
+        const LRESULT chained =
+            CallWindowProcW(state->previousProc, hwnd, message, wParam, lParam);
+        if (IsZoomed(hwnd) == FALSE && IsIconic(hwnd) == FALSE) {
+            const HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO info{};
+            info.cbSize = sizeof(info);
+            if (GetMonitorInfoW(monitor, &info) != FALSE) {
+                auto* minMax = reinterpret_cast<MINMAXINFO*>(lParam);
+                minMax->ptMaxSize.x = info.rcWork.right - info.rcWork.left;
+                minMax->ptMaxSize.y = info.rcWork.bottom - info.rcWork.top;
+                minMax->ptMaxPosition.x = info.rcWork.left;
+                minMax->ptMaxPosition.y = info.rcWork.top;
+            }
+        }
+        return chained;
+    }
+    default:
+        break;
+    }
+    return CallWindowProcW(state->previousProc, hwnd, message, wParam, lParam);
+}
+
+void installChromeHitTest(HWND hwnd, CaptionHitTestHandler handler,
+                          bool resizable) {
+    auto& states = chromeHitTestStates();
+    const auto existing = states.find(hwnd);
+    if (existing != states.end()) {
+        // 幂等：同窗重复安装 = 先还原上一链（同一 GLFW 窗整个生命周期最多
+        // 一层壳子类，重装只发生在换回调的测试/宿主场景）
+        SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
+                          reinterpret_cast<LONG_PTR>(existing->second->previousProc));
+        delete existing->second;
+        states.erase(existing);
+    }
+    auto* state = new (std::nothrow) ChromeHitTestState{};
+    if (state == nullptr) {
+        return;
+    }
+    state->captionHit = std::move(handler);
+    state->resizable = resizable;
+    SetLastError(ERROR_SUCCESS);
+    state->previousProc =
+        reinterpret_cast<WNDPROC>(GetWindowLongPtrW(hwnd, GWLP_WNDPROC));
+    const LONG_PTR previous = SetWindowLongPtrW(
+        hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&chromeHitTestWindowProc));
+    if (previous == 0 && GetLastError() != ERROR_SUCCESS) {
+        delete state;
+        return;
+    }
+    states.emplace(hwnd, state);
+}
+
+void uninstallChromeHitTest(HWND hwnd) {
+    auto& states = chromeHitTestStates();
+    const auto iterator = states.find(hwnd);
+    if (iterator == states.end()) {
+        return;
+    }
+    ChromeHitTestState* state = iterator->second;
+    states.erase(iterator);
+    if (state->previousProc != nullptr) {
+        SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
+                          reinterpret_cast<LONG_PTR>(state->previousProc));
+    }
+    delete state;
+}
+#endif
 
 } // namespace
 
@@ -889,6 +1131,14 @@ Handle createWindow(const WindowCreateRequest& request) {
 
 void destroyWindow(Handle window) {
     if (window != nullptr) {
+#if defined(_WIN32)
+        // 自绘壳子类先卸载再销毁：HWND 数值销毁后可能被系统复用成新窗，
+        // 状态表留着会串窗（命中回调打到别人的窗口上）
+        if (HWND hwnd = glfwGetWin32Window(static_cast<GLFWwindow*>(window));
+            hwnd != nullptr) {
+            uninstallChromeHitTest(hwnd);
+        }
+#endif
         glfwDestroyWindow(static_cast<GLFWwindow*>(window));
     }
 }
@@ -1049,6 +1299,64 @@ std::vector<MonitorWorkArea> getMonitorWorkAreas() {
         areas.push_back(MonitorWorkArea{x, y, width, height});
     }
     return areas;
+}
+
+// ---- 自绘窗口壳（契约见 window_backend.h 声明区）----
+bool customWindowChromeSupported() {
+#if defined(_WIN32)
+    return true;
+#else
+    // macOS：GLFW undecorated = NSWindowStyleMaskBorderless，无红绿灯、不可
+    // resize、不可拖拽，且本层无等价命中钩子——宿主应保系统标题栏
+    return false;
+#endif
+}
+
+void maximizeWindow(Handle window) {
+    if (window != nullptr) {
+        glfwMaximizeWindow(static_cast<GLFWwindow*>(window));
+    }
+}
+
+void restoreWindow(Handle window) {
+    if (window != nullptr) {
+        glfwRestoreWindow(static_cast<GLFWwindow*>(window));
+    }
+}
+
+void iconifyWindow(Handle window) {
+    if (window != nullptr) {
+        glfwIconifyWindow(static_cast<GLFWwindow*>(window));
+    }
+}
+
+bool windowIsMaximized(Handle window) {
+    return window != nullptr &&
+           glfwGetWindowAttrib(static_cast<GLFWwindow*>(window), GLFW_MAXIMIZED) ==
+               GLFW_TRUE;
+}
+
+void setWindowCaptionHitTestHandler(Handle window, CaptionHitTestHandler handler,
+                                    bool resizable) {
+#if defined(_WIN32)
+    if (window == nullptr) {
+        return;
+    }
+    HWND hwnd = glfwGetWin32Window(static_cast<GLFWwindow*>(window));
+    if (hwnd == nullptr) {
+        return;
+    }
+    if (!handler) {
+        uninstallChromeHitTest(hwnd);
+        return;
+    }
+    installChromeHitTest(hwnd, std::move(handler), resizable);
+#else
+    // macOS 无等价钩子（能力查询恒 false，宿主不应请求自绘壳）
+    (void)window;
+    (void)handler;
+    (void)resizable;
+#endif
 }
 
 } // namespace core::window

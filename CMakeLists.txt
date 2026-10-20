@@ -887,6 +887,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/ui_state.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/window_effect_backdrop.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/window_effect_clear_color.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/window_chrome.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/zindex_escape.cpp"
     )
     foreach(unit_source ${TEST_UNIT_SOURCES})

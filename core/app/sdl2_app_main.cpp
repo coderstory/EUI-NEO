@@ -677,6 +677,9 @@ int eui_app_run() {
         SDL_Quit();
         return -1;
     }
+    // 主窗口句柄回写（app::maximize/restore/iconify/closeMainWindow 的公共下游；
+    // SDL2 无自绘壳命中钩子，customWindowChromeSupported 恒 false，无安装环节）
+    app::detail::setMainWindowHandle(window);
     // clearColor 联动基线（app::setClearColor 变更后广播到子窗口；主窗口在
     // app::render 里直接读覆盖值）
     eui::Color appliedClearColor = app::currentClearColor();

@@ -166,6 +166,31 @@ core::platform::WindowEffect currentWindowEffect();
  * currentWindowEffect()（最佳已知值）。设置页用它回查降级并提示。
  */
 core::platform::WindowEffect activeWindowEffect();
+// ---- 自绘窗口壳（undecorated 主窗口的自绘标题栏）----
+// 命中查询（onCaptionHitTest 回调入参）：客户区**逻辑坐标**（与 compose 的
+// Screen 同一坐标空间，物理=逻辑×contentScale；由 app 层从物理像素换算），
+// 原点=窗口左上，width/height=窗口客户区逻辑尺寸，maximized=当前是否最大化。
+struct CaptionHitQuery {
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+    bool maximized = false;
+};
+// 平台是否支持自绘窗口壳（core::window::customWindowChromeSupported 的 app 层
+// 透传）：Windows(GLFW)=true，macOS/Linux/SDL2=false。宿主据此决定
+// .decorated(false) 与自绘标题栏是否参与布局——**不支持平台必须保系统标题栏**，
+// 否则窗口不可拖拽/不可 resize（GLFW borderless 原生三无）。纯平台查询。
+bool customWindowChromeSupported();
+// 主窗口控制（自绘标题栏按钮消费；等价系统标题栏三键语义，全部主线程调用）。
+// closeMainWindow 与用户点系统 X 完全同路（托盘模式 = 隐藏到托盘）。
+// maximizeMainWindow / restoreMainWindow 不做「已最大化再点」的翻转——按钮的
+// 图标翻转由宿主读 mainWindowMaximized() 自行决定。
+void maximizeMainWindow();
+void restoreMainWindow();
+void iconifyMainWindow();
+void closeMainWindow();
+bool mainWindowMaximized();
 bool initialize(eui::window::Handle window);
 bool update(eui::window::Handle window, float deltaSeconds, int windowWidth, int windowHeight, float dpiScale, float pointerScale);
 bool update(eui::window::Handle window, float deltaSeconds, int windowWidth, int windowHeight, float dpiScale, float pointerScale, bool updateRequested);

@@ -371,6 +371,62 @@ bool consumeShowRequest() {
 }
 }
 
+// ---- 自绘窗口壳（主窗口句柄存取 + 控制动线）----
+// 主循环（glfw/sdl2_app_main）创建主窗口后回写；app::xxxMainWindow() 全部经它
+// 落到 core::window。inline 函数内 static 跨 TU 单实例（C++ 语义保证）。
+namespace detail {
+inline core::window::Handle& mainWindowHandleSlot() {
+    static core::window::Handle handle = nullptr;
+    return handle;
+}
+
+inline void setMainWindowHandle(core::window::Handle window) {
+    mainWindowHandleSlot() = window;
+}
+} // namespace detail
+
+bool customWindowChromeSupported() {
+    return core::window::customWindowChromeSupported();
+}
+
+void maximizeMainWindow() {
+    if (core::window::Handle handle = detail::mainWindowHandleSlot();
+        handle != nullptr) {
+        core::window::maximizeWindow(handle);
+    }
+}
+
+void restoreMainWindow() {
+    if (core::window::Handle handle = detail::mainWindowHandleSlot();
+        handle != nullptr) {
+        core::window::restoreWindow(handle);
+    }
+}
+
+void iconifyMainWindow() {
+    if (core::window::Handle handle = detail::mainWindowHandleSlot();
+        handle != nullptr) {
+        core::window::iconifyWindow(handle);
+    }
+}
+
+void closeMainWindow() {
+    if (core::window::Handle handle = detail::mainWindowHandleSlot();
+        handle != nullptr) {
+        // 与用户点系统 X 同一语义（托盘模式 = 隐藏到托盘，主循环 close
+        // callback 承担），自绘关闭钮不得绕过该路径
+        core::window::requestWindowClose(handle);
+    }
+}
+
+bool mainWindowMaximized() {
+    if (core::window::Handle handle = detail::mainWindowHandleSlot();
+        handle == nullptr) {
+        return false;
+    }
+    return core::window::windowIsMaximized(detail::mainWindowHandleSlot());
+}
+
 void setTitleBarAppearance(const core::platform::TitleBarAppearance& appearance) {
     detail::titleBarAppearanceOverride() = appearance;
     // 唤醒可能 glfwWaitEvents 中的主循环，让外观在下一帧生效
