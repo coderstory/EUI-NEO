@@ -12,9 +12,18 @@
 //      表现为自绘关闭钮直接退出整个应用（UAT4 实证），本断言是这条链的回归门；
 //   ③ --drag 才跑的真指针拖边缘（会动真实鼠标，ctest 默认不开）：SendInput/
 //      SetCursorPos 走系统真实输入流，端到端验证 resize 模态环真的改窗宽；
+//      同时统计模态环内的活渲染帧数（>0 = 修复在位），并加一段 caption 拖拽
+//      移动（SC_MOVE 模态环）的位移 + 活渲染断言；
 //   ④ maximized=true 启动窗对照打印（不断言）：边缘热区被 IsZoomed 门卫关闭是
 //      设计行为，但真机上「贴工作区放不下 → 启动即最大化」的窗口看起来只是
-//      "铺满屏幕、边缘不可拖"——打印出来供诊断，别再当 resize 失灵排查。
+//      "铺满屏幕、边缘不可拖"——打印出来供诊断，别再当 resize 失灵排查；
+//   ⑤ 安装链样式位断言（「缺少动画」修复的回归门）：undecorated 纯 WS_POPUP
+//      被shell 补上 WS_MINIMIZEBOX|WS_MAXIMIZEBOX（DWM 最小化/还原/最大化
+//      动画的必要风格位）+ WS_THICKFRAME；卸载后逐位还原（与安装前样式全等）；
+//   ⑥ 模态区间活渲染门（「缩放很卡」修复的机制层，无需真鼠标）：合成
+//      WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE 包住程序化 SetWindowPos，区间内
+//      WM_SIZE 重入 live render 回调（真实 GL present），区间外 0 帧——主循环
+//      既有渲染路径零行为变化的门卫证据。
 // 输出全 ASCII（测量值要进报告，不冒 GBK 控制台乱码风险）。
 #include "core/window/window_backend.h"
 
@@ -95,6 +104,8 @@ LPARAM screenLParamOf(HWND hwnd, int clientX, int clientY) {
 }
 
 int g_closeCallbackCount = 0;
+int g_liveRenderFrames = 0;       // 模态区间活渲染回调触发次数（live render 证据）
+GLFWwindow* g_probeGlfwWindow = nullptr;  // live render 回调里做真实 GL present
 
 // 诊断用日志子类（叠在 chrome 命中链之上，只看不拦）：drag 段临时挂上，
 // 打印 WM_NCLBUTTONDOWN / WM_SYSCOMMAND / WM_SIZING / WM_NCCALCSIZE 的实际
@@ -112,6 +123,14 @@ LRESULT CALLBACK logProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         } else if (message == WM_SIZING || message == WM_SIZE) {
             std::printf("trace: %s\n",
                         message == WM_SIZING ? "WM_SIZING" : "WM_SIZE");
+        } else if (message == WM_ENTERSIZEMOVE || message == WM_EXITSIZEMOVE) {
+            std::printf("trace: %s\n",
+                        message == WM_ENTERSIZEMOVE ? "WM_ENTERSIZEMOVE"
+                                                    : "WM_EXITSIZEMOVE");
+        } else if (message == WM_MOVE) {
+            std::printf("trace: WM_MOVE (%ld,%ld)\n",
+                        static_cast<long>(static_cast<short>(LOWORD(lParam))),
+                        static_cast<long>(static_cast<short>(HIWORD(lParam))));
         }
     }
     return CallWindowProcW(g_logPreviousProc, hwnd, message, wParam, lParam);
@@ -155,11 +174,27 @@ int probeWindowShell(bool drag, int holdSeconds) {
     }
 
     // 生产同款安装链：caption 回调 + resizable=true（glfw_app_main 主窗口路径）
+    // 安装前样式快照：undecorated = 纯 WS_POPUP（无 THICKFRAME/MIN/MAXBOX），
+    // ⑤ 的卸载还原断言以它为基线
+    const LONG_PTR styleBeforeInstall = GetWindowLongPtrW(hwnd, GWL_STYLE);
     core::window::setWindowCaptionHitTestHandler(
         handle, [](int x, int y, int width, int height, bool maximized) {
             (void)x; (void)width; (void)maximized;
             return y >= 0 && y < 40 && height > 0;  // 40 物理像素标题带（探针自定档）
         }, /*resizable=*/true);
+
+    // ---- ⑤ 安装链样式位（「缺少动画」修复的回归门，无需真鼠标）----
+    // 缺 WS_MINIMIZEBOX/WS_MAXIMIZEBOX 时 ShowWindow(SW_MINIMIZE/SW_MAXIMIZE)
+    // 仍改状态但 DWM 不播系统缩放动画（窗口直接消失/出现）。安装后三位必须在。
+    {
+        const LONG_PTR styleInstalled = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        check("style has WS_THICKFRAME after install (resize size loop)",
+              (styleInstalled & WS_THICKFRAME) != 0);
+        check("style has WS_MINIMIZEBOX after install (minimize animation)",
+              (styleInstalled & WS_MINIMIZEBOX) != 0);
+        check("style has WS_MAXIMIZEBOX after install (maximize animation)",
+              (styleInstalled & WS_MAXIMIZEBOX) != 0);
+    }
 
     RECT windowRect{};
     RECT clientRect{};
@@ -270,11 +305,49 @@ int probeWindowShell(bool drag, int holdSeconds) {
                   (after.right - after.left) == windowW);
     }
 
+    // ---- ⑥ 模态区间活渲染门（「缩放很卡」修复的机制层，无需真鼠标）----
+    // 契约：WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE 区间内的 WM_SIZE/WM_MOVE 重入
+    // live render 回调；区间外（程序化 SetWindowPos）不得触发——主循环既有
+    // 渲染路径零行为变化。回调里做真实 GL present（makeCurrent + SwapBuffers），
+    // 同线程提交路径一并实证；生产实装在 glfw_app_main（updateAndRender 同
+    // 一入口渲染整帧）。
+    {
+        g_probeGlfwWindow = static_cast<GLFWwindow*>(handle);
+        glfwMakeContextCurrent(g_probeGlfwWindow);
+        core::window::setWindowLiveRenderHandler(handle, [] {
+            ++g_liveRenderFrames;
+            glfwSwapBuffers(g_probeGlfwWindow);
+        });
+        RECT probeRect{};
+        GetWindowRect(hwnd, &probeRect);
+        const LONG outerW = probeRect.right - probeRect.left;
+        const LONG outerH = probeRect.bottom - probeRect.top;
+        g_liveRenderFrames = 0;
+        SendMessageW(hwnd, WM_ENTERSIZEMOVE, 0, 0);
+        SetWindowPos(hwnd, nullptr, 0, 0, outerW + 24, outerH,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(hwnd, nullptr, 0, 0, outerW + 48, outerH,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+        const int modalLiveFrames = g_liveRenderFrames;
+        // 区间外的程序化 resize（几何回原位）：门卫在位 = 0 新帧
+        SetWindowPos(hwnd, nullptr, 0, 0, outerW, outerH,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        char liveGateLine[160];
+        std::snprintf(liveGateLine, sizeof(liveGateLine),
+                      "live render inside modal loop only (%d frames inside, "
+                      "%d after exit)",
+                      modalLiveFrames, g_liveRenderFrames - modalLiveFrames);
+        check(liveGateLine, modalLiveFrames >= 2 &&
+                                g_liveRenderFrames == modalLiveFrames);
+    }
+
     // ---- ③ 真指针拖左边缘（--drag 显式开关：会动真实鼠标，别在 ctest 里跑）----
     // 方向语义：拖左缘向外（x-140）= 左缘左移 = 外框变宽 ~140。
     if (drag) {
         RECT outerBefore{};
         GetWindowRect(hwnd, &outerBefore);
+        g_liveRenderFrames = 0;  // 本段起计入：边缘拖拽模态环内的活渲染帧
         g_logPreviousProc = reinterpret_cast<WNDPROC>(
             GetWindowLongPtrW(hwnd, GWLP_WNDPROC));
         SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
@@ -284,13 +357,26 @@ int probeWindowShell(bool drag, int holdSeconds) {
                      SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         SetForegroundWindow(hwnd);
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        // 激活稳定步：非前台时首击会被「激活」吞掉（drag 段曾因此假红）——
+        // 客户区中心点一次空点击确保 active，再进拖拽
+        for (int attempt = 0; attempt < 3 && GetActiveWindow() != hwnd;
+             ++attempt) {
+            POINT center{clientW / 2, clientH / 2};
+            ClientToScreen(hwnd, &center);
+            SetCursorPos(center.x, center.y);
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+            INPUT press{};
+            press.type = INPUT_MOUSE;
+            press.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+            INPUT release{};
+            release.type = INPUT_MOUSE;
+            release.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+            SendInput(1, &press, sizeof(INPUT));
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            SendInput(1, &release, sizeof(INPUT));
+            std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        }
 
-        POINT edge{1, clientH / 2};
-        RECT rectAtDrag{};
-        GetWindowRect(hwnd, &rectAtDrag);
-        std::printf("drag: window at (%ld,%ld)\n", rectAtDrag.left,
-                    rectAtDrag.top);
-        ClientToScreen(hwnd, &edge);
         INPUT down{};
         down.type = INPUT_MOUSE;
         down.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
@@ -298,38 +384,96 @@ int probeWindowShell(bool drag, int holdSeconds) {
         up.type = INPUT_MOUSE;
         up.mi.dwFlags = MOUSEEVENTF_LEFTUP;
 
-        SetCursorPos(edge.x, edge.y);
-        std::this_thread::sleep_for(std::chrono::milliseconds(80));
-        SendInput(1, &down, sizeof(INPUT));
-        std::this_thread::sleep_for(std::chrono::milliseconds(80));
-        for (int step = 1; step <= 5; ++step) {
-            SetCursorPos(edge.x - step * 28, edge.y);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        // 最多三试：inactive 窗的首击被 WM_MOUSEACTIVATE(MA_ACTIVATE) 吃掉
+        //（激活而不重放按键）——首试 delta=0 是环境激活竞态，窗口 active 后第
+        // 二试必过；活渲染帧数跨试累计（>0 即模态环活渲染在位）
+        long delta = 0;
+        long widthBefore = 0;
+        long widthAfter = 0;
+        for (int attempt = 0; attempt < 3 && delta < 90; ++attempt) {
+            if (attempt > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            }
+            POINT edge{1, clientH / 2};
+            ClientToScreen(hwnd, &edge);
+            SetCursorPos(edge.x, edge.y);
+            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+            SendInput(1, &down, sizeof(INPUT));
+            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+            for (int step = 1; step <= 5; ++step) {
+                SetCursorPos(edge.x - step * 28, edge.y);
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            SendInput(1, &up, sizeof(INPUT));
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            glfwPollEvents();
+            RECT attemptRect{};
+            GetWindowRect(hwnd, &attemptRect);
+            widthBefore = outerBefore.right - outerBefore.left;
+            widthAfter = attemptRect.right - attemptRect.left;
+            delta = widthAfter - widthBefore;  // 左缘外拖 → 变宽
+            std::printf("drag: attempt %d delta=%ld active=%d\n", attempt,
+                        delta, GetActiveWindow() == hwnd ? 1 : 0);
+            std::fflush(stdout);
         }
         POINT cursorAtUp{};
         GetCursorPos(&cursorAtUp);
-        SendInput(1, &up, sizeof(INPUT));
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        glfwPollEvents();
-        g_logEnabled = 0;
-        SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
-                          reinterpret_cast<LONG_PTR>(g_logPreviousProc));
-        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-
-        RECT outerAfter{};
-        GetWindowRect(hwnd, &outerAfter);
-        const long widthBefore = outerBefore.right - outerBefore.left;
-        const long widthAfter = outerAfter.right - outerAfter.left;
-        const long delta = widthAfter - widthBefore;  // 左缘外拖 → 变宽
+        POINT edgeAtUp{1, clientH / 2};
+        ClientToScreen(hwnd, &edgeAtUp);
+        RECT rectAtDrag{};
+        GetWindowRect(hwnd, &rectAtDrag);
+        std::printf("drag: window at (%ld,%ld)\n", rectAtDrag.left,
+                    rectAtDrag.top);
         char dragLine[192];
         std::snprintf(dragLine, sizeof(dragLine),
                       "real-mouse drag left edge resizes (outer %ld -> %ld, "
                       "cursor %ld -> %ld, delta %ld)",
                       widthBefore, widthAfter,
-                      static_cast<long>(edge.x),
+                      static_cast<long>(edgeAtUp.x),
                       static_cast<long>(cursorAtUp.x), delta);
         check(dragLine, delta >= 90);
+
+        // 活渲染证据（真鼠标端到端）：拖边缘的模态环里每个 WM_SIZE/WM_MOVE
+        // 重入 live render 一帧——修复前这里恒 0（主循环阻塞、全程停帧）
+        char liveResizeLine[128];
+        std::snprintf(liveResizeLine, sizeof(liveResizeLine),
+                      "live frames during edge-drag resize = %d",
+                      g_liveRenderFrames);
+        check(liveResizeLine, g_liveRenderFrames > 0);
+
+        // caption 拖拽移动（SC_MOVE 模态环）：同一活渲染机制覆盖纯移动场景
+        //（拖动期间动画不冻结），并断言窗口真位移
+        g_liveRenderFrames = 0;
+        RECT beforeCaptionDrag{};
+        GetWindowRect(hwnd, &beforeCaptionDrag);
+        POINT caption{clientW / 2, 20};
+        ClientToScreen(hwnd, &caption);
+        SetCursorPos(caption.x, caption.y);
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        SendInput(1, &down, sizeof(INPUT));
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        for (int step = 1; step <= 4; ++step) {
+            SetCursorPos(caption.x + step * 22, caption.y + step * 16);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        SendInput(1, &up, sizeof(INPUT));
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        glfwPollEvents();
+        RECT afterCaptionDrag{};
+        GetWindowRect(hwnd, &afterCaptionDrag);
+        const long movedX = afterCaptionDrag.left - beforeCaptionDrag.left;
+        char captionDragLine[192];
+        std::snprintf(captionDragLine, sizeof(captionDragLine),
+                      "real-mouse caption drag moves window (dx=%ld) with "
+                      "live frames = %d",
+                      movedX, g_liveRenderFrames);
+        check(captionDragLine, movedX > 0 && g_liveRenderFrames > 0);
+
+        g_logEnabled = 0;
+        SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
+                          reinterpret_cast<LONG_PTR>(g_logPreviousProc));
+        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
     // ---- ④ maximized 启动窗对照（打印不断言：IsZoomed 门卫关热区是设计行为）----
@@ -373,6 +517,26 @@ int probeWindowShell(bool drag, int holdSeconds) {
     for (int elapsed = 0; elapsed < holdSeconds * 20; ++elapsed) {
         glfwPollEvents();
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    // ---- ⑤b 卸载还原：安装期补的样式位逐位还原（与安装前样式全等）----
+    // 「缺动画」与 resize 样式位的卸载对称性：测试/换回调场景反复装卸时样式
+    // 必须可逆，不留永久污染
+    {
+        const LONG_PTR styleBeforeUninstall = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        core::window::setWindowCaptionHitTestHandler(handle, {}, true);
+        const LONG_PTR styleAfterUninstall = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        char restoreLine[192];
+        std::snprintf(restoreLine, sizeof(restoreLine),
+                      "uninstall restores style (0x%llx -> 0x%llx, base 0x%llx)",
+                      static_cast<unsigned long long>(styleBeforeUninstall),
+                      static_cast<unsigned long long>(styleAfterUninstall),
+                      static_cast<unsigned long long>(styleBeforeInstall));
+        check(restoreLine,
+              styleAfterUninstall == styleBeforeInstall &&
+                  (styleBeforeUninstall & WS_THICKFRAME) != 0 &&
+                  (styleBeforeUninstall & WS_MINIMIZEBOX) != 0 &&
+                  (styleBeforeUninstall & WS_MAXIMIZEBOX) != 0);
     }
 
     core::window::destroyWindow(handle);

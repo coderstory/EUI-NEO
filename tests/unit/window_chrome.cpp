@@ -57,6 +57,8 @@ int main() {
     assert(!core::window::windowIsMaximized(nullptr));
     // 卸载语义（空回调）对空句柄为安全无操作
     core::window::setWindowCaptionHitTestHandler(nullptr, {}, false);
+    // 模态拖拽活渲染回调：空句柄为安全无操作（真窗口行为见 window_shell_probe）
+    core::window::setWindowLiveRenderHandler(nullptr, {});
 
     std::printf("window_chrome: all checks passed\n");
     return 0;

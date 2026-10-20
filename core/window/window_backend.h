@@ -121,4 +121,16 @@ bool windowIsMaximized(Handle window);
 using CaptionHitTestHandler = std::function<bool(int x, int y, int width, int height, bool maximized)>;
 void setWindowCaptionHitTestHandler(Handle window, CaptionHitTestHandler handler, bool resizable);
 
+// 模态拖拽循环的活渲染回调（真机反馈「窗体缩放很卡」修复）：SC_SIZE/SC_MOVE
+// 模态循环阻塞在事件泵的消息派发里（glfwWaitEvents 不返回），主渲染循环回不
+// 了环——期间零帧渲染、DWM 只能拉伸上一帧（卡顿/模糊根因）。壳子类在
+// WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE 区间内的每个 WM_SIZE/WM_MOVE（几何已
+// 落定后）重入调用本回调渲染一帧；区间外（程序化 SetWindowPos）不触发，主循
+// 环既有渲染路径零行为变化。回调在主线程 WndProc 内触发，必须快速返回（禁
+// 等待/事件泵/长任务）。须在 setWindowCaptionHitTestHandler 之后注册（仅自绘
+// 壳窗口存在模态拖拽循环，其余注册为无操作）；空函数 = 注销。非 Windows 平
+// 台无该模态循环问题，恒无操作。
+using LiveRenderHandler = std::function<void()>;
+void setWindowLiveRenderHandler(Handle window, LiveRenderHandler handler);
+
 } // namespace core::window

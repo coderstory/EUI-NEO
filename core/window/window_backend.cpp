@@ -756,6 +756,10 @@ void setWindowCaptionHitTestHandler(Handle, CaptionHitTestHandler, bool) {
     // SDL2 后端无标题栏命中钩子（能力查询恒 false，正常宿主不会走到安装）
 }
 
+void setWindowLiveRenderHandler(Handle, LiveRenderHandler) {
+    // SDL2 后端无自绘壳（能力查询恒 false），无模态拖拽循环可活渲染
+}
+
 } // namespace core::window
 
 #else
@@ -825,11 +829,25 @@ struct ChromeHitTestState {
     // WS_POPUP，DefWindowProc 的 SC_SIZE 系统尺寸环只对带 WS_SIZEBOX 的窗口
     // 真正改几何——缺它时八向命中码全对也拖不动（系统 Size 命令同因灰置）
     bool thickFrameAdded = false;
+    // 安装时补过的动画风格位掩码（卸载按位还原）：WS_MINIMIZEBOX/WS_MAXIMIZEBOX。
+    // GLFW undecorated = 纯 WS_POPUP 不带这两位，ShowWindow(SW_MINIMIZE/
+    // SW_MAXIMIZE) 虽仍改窗口状态，但 DWM 不播系统缩放动画（窗口直接消失/
+    // 出现——真机反馈「缺少动画」根因）
+    LONG_PTR addedAnimationStyle = 0;
     // 手动双击检测（GLFW 窗口类只注册 CS_OWNDC 无 CS_DBLCLKS，系统不会派发
     // WM_NCLBUTTONDBLCLK）：记录上一次 caption 区左键按下的时刻/位置，判据
     // 与系统双击一致——时限 GetDoubleClickTime、半径 SM_CX/CYDOUBLECLK
     DWORD lastCaptionDownTick = 0;
     POINT lastCaptionDownPos{};
+    // 模态拖拽活渲染（「缩放很卡」修复）：宿主渲染入口（glfw_app_main 在渲染
+    // 后端就绪后注册），在模态循环内的 WM_SIZE/WM_MOVE 重入调用
+    LiveRenderHandler liveRender;
+    // WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE 区间标记：只有 DefWindowProc 的
+    // SC_SIZE/SC_MOVE 模态循环会进这对消息，程序化 SetWindowPos 不进——
+    // 活渲染严格限定在拖拽中，程序化移动零行为变化
+    bool inSizeMoveLoop = false;
+    // 重入护栏：活渲染自身级联出的 WM_SIZE/WM_MOVE 不得再入渲染（递归保护）
+    bool inLiveRender = false;
 };
 
 std::unordered_map<HWND, ChromeHitTestState*>& chromeHitTestStates() {
@@ -980,6 +998,29 @@ LRESULT CALLBACK chromeHitTestWindowProc(HWND hwnd, UINT message, WPARAM wParam,
         }
         return 0;
     }
+    case WM_ENTERSIZEMOVE:
+        // DefWindowProc 的 SC_SIZE/SC_MOVE 模态循环起止标记：主循环此刻阻塞
+        // 在事件泵的消息派发里回不了环，后续 WM_SIZE/WM_MOVE 由本层重入活渲染
+        state->inSizeMoveLoop = true;
+        break;
+    case WM_EXITSIZEMOVE:
+        state->inSizeMoveLoop = false;
+        break;
+    case WM_SIZE:
+    case WM_MOVE: {
+        // 模态循环内的活渲染（「缩放很卡」修复）：先透传让 GLFW 落内部几何 +
+        // 派发 framebufferSizeCallback（→ 请求重绘），再重入宿主渲染一帧——
+        // 不在这里渲染的话拖拽全程零帧，DWM 只能拉伸旧帧。双护栏：仅模态区间
+        // 进（程序化 SetWindowPos 零行为变化）、渲染中级联消息不递归。
+        const LRESULT chained =
+            CallWindowProcW(state->previousProc, hwnd, message, wParam, lParam);
+        if (state->inSizeMoveLoop && state->liveRender && !state->inLiveRender) {
+            state->inLiveRender = true;
+            state->liveRender();
+            state->inLiveRender = false;
+        }
+        return chained;
+    }
     default:
         break;
     }
@@ -1014,21 +1055,36 @@ void installChromeHitTest(HWND hwnd, CaptionHitTestHandler handler,
         return;
     }
     states.emplace(hwnd, state);
-    // 边缘 resize 的最后一环：可 resize 窗补 WS_THICKFRAME。命中码只是让
-    // 系统起 WM_NCLBUTTONDOWN → SC_SIZE 尺寸环，该环对缺 WS_SIZEBOX 的窗口
-    // 直接空转（真机 UAT4：八向光标对、拖不动；window_shell_probe 实证补上
-    // 后 delta=拖拽距离）。非客户带由 WM_NCCALCSIZE 钳回整窗，几何/观感与
-    // 旧 undecorated 一致；卸载时按 thickFrameAdded 还原样式。
-    if (resizable) {
-        const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-        if ((style & WS_THICKFRAME) == 0) {
-            state->thickFrameAdded = true;  // 先立标志再改样式：FRAMECHANGED 会同步
-                                           // 触发 WM_NCCALCSIZE，晚置走默认削边
-            SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_THICKFRAME);
-            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
-                             SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        }
+    // 样式补齐（两处真机缺陷的样式侧，一次 FRAMECHANGED 落完）：
+    // ① 可 resize 窗补 WS_THICKFRAME——边缘命中码只是让系统起 SC_SIZE 尺寸
+    //   环，该环对缺 WS_SIZEBOX 的窗口直接空转（真机 UAT4：八向光标对、拖不
+    //   动；window_shell_probe 实证补上后 delta=拖拽距离）。非客户带由
+    //   WM_NCCALCSIZE 钳回整窗，几何/观感与旧 undecorated 一致。
+    // ② 补 WS_MINIMIZEBOX|WS_MAXIMIZEBOX——GLFW undecorated = 纯 WS_POPUP
+    //   不带这两位，ShowWindow(SW_MINIMIZE/SW_MAXIMIZE) 仍改状态但 DWM 不播
+    //   最小化/还原/最大化的系统动画（窗口直接消失/出现——真机反馈「缺少
+    //   动画」根因）。popup 无 caption/系统菜单，两位不会引出系统按钮。
+    // 先立标志再改样式：SWP_FRAMECHANGED 会同步触发 WM_NCCALCSIZE，晚置
+    // thickFrameAdded 走默认削边。卸载按记录位还原（window_shell_probe 断言）。
+    LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    LONG_PTR styleToAdd = 0;
+    if (resizable && (style & WS_THICKFRAME) == 0) {
+        state->thickFrameAdded = true;
+        styleToAdd |= WS_THICKFRAME;
+    }
+    if ((style & WS_MINIMIZEBOX) == 0) {
+        state->addedAnimationStyle |= WS_MINIMIZEBOX;
+        styleToAdd |= WS_MINIMIZEBOX;
+    }
+    if ((style & WS_MAXIMIZEBOX) == 0) {
+        state->addedAnimationStyle |= WS_MAXIMIZEBOX;
+        styleToAdd |= WS_MAXIMIZEBOX;
+    }
+    if (styleToAdd != 0) {
+        SetWindowLongPtrW(hwnd, GWL_STYLE, style | styleToAdd);
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                         SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 }
 
@@ -1044,12 +1100,13 @@ void uninstallChromeHitTest(HWND hwnd) {
         SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
                           reinterpret_cast<LONG_PTR>(state->previousProc));
     }
-    // 还原安装期补的 WS_THICKFRAME（测试/换回调场景反复装卸，样式必须可逆；
-    // 纯 WS_POPUP 无该位时 NCCALCSIZE 默认本就客户区=整窗，无需再补偿）
-    if (state->thickFrameAdded) {
+    // 还原安装期补的样式位（测试/换回调场景反复装卸，样式必须可逆；纯
+    // WS_POPUP 无 THICKFRAME 时 NCCALCSIZE 默认本就客户区=整窗，无需再补偿）
+    const LONG_PTR styleToRemove =
+        (state->thickFrameAdded ? WS_THICKFRAME : 0) | state->addedAnimationStyle;
+    if (styleToRemove != 0) {
         const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-        SetWindowLongPtrW(hwnd, GWL_STYLE,
-                          style & ~static_cast<LONG_PTR>(WS_THICKFRAME));
+        SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~styleToRemove);
         SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                          SWP_NOACTIVATE | SWP_FRAMECHANGED);
@@ -1417,6 +1474,29 @@ void setWindowCaptionHitTestHandler(Handle window, CaptionHitTestHandler handler
     (void)window;
     (void)handler;
     (void)resizable;
+#endif
+}
+
+void setWindowLiveRenderHandler(Handle window, LiveRenderHandler handler) {
+#if defined(_WIN32)
+    if (window == nullptr) {
+        return;
+    }
+    HWND hwnd = glfwGetWin32Window(static_cast<GLFWwindow*>(window));
+    if (hwnd == nullptr) {
+        return;
+    }
+    ChromeHitTestState* state = chromeStateFor(hwnd);
+    if (state == nullptr) {
+        // 未装自绘壳的窗口不存在模态拖拽循环（无 HTCAPTION/边缘热区，程序化
+        // 移动不发 WM_ENTERSIZEMOVE），注册无操作即可
+        return;
+    }
+    state->liveRender = std::move(handler);
+#else
+    // macOS 无自绘壳子类（能力查询恒 false），无模态循环可活渲染
+    (void)window;
+    (void)handler;
 #endif
 }
 

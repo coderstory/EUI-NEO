@@ -717,6 +717,35 @@ int eui_app_run() {
     }
     app::MainWindowRuntime mainWindowRuntime(windowState);
     windowState.initializeTray();
+    // 模态拖拽活渲染（真机反馈「窗体缩放很卡」根因修复）：SC_SIZE/SC_MOVE 模
+    // 态循环阻塞在 glfwWaitEvents 的消息派发里，主循环回不了环、拖拽全程零帧
+    // 渲染——DWM 只能拉伸旧帧（模糊/冻结感）。壳子类在模态区间内的每个
+    // WM_SIZE/WM_MOVE 重入这里渲染一帧：复用主循环同一渲染入口
+    // updateAndRender（GL 同线程、上下文已 current，安全），帧率天然跟随拖拽
+    // 鼠标步进、不另做节奏（模态循环里禁止等待）。updateRequested 固定 false：
+    // 拖拽中指针输入被系统模态环吃掉、无平台 UI 请求要赶，异步完成与子窗口
+    // 增删留给拖拽结束后的主循环帧。与自绘壳安装同一门卫（仅壳窗口有模态拖
+    // 拽循环）；宿主（DevDesk）无需任何接线。
+    if (app::customWindowChromeSupported() &&
+        app::dslAppConfig().captionHitTestHandlerValue) {
+        core::window::setWindowLiveRenderHandler(window, [&] {
+            int liveFramebufferWidth = 0;
+            int liveFramebufferHeight = 0;
+            glfwGetFramebufferSize(window, &liveFramebufferWidth, &liveFramebufferHeight);
+            if (liveFramebufferWidth <= 0 || liveFramebufferHeight <= 0) {
+                return;  // 最小化途中/零尺寸：无可渲染内容
+            }
+            mainWindowRuntime.updateAndRender(
+                window,
+                *renderBackend,
+                {liveFramebufferWidth, liveFramebufferHeight, getDpiScale(window),
+                 getPointerScale(window)},
+                windowState.consumeFrameDelta(glfwGetTime()),
+                false,
+                windowState.modalChildWindow == nullptr,
+                [] {});
+        });
+    }
     // 系统电源事件（睡眠/唤醒，DevDesk 桌宠 M2 需求）：挂主窗口 WndProc 链
     // 截获 WM_POWERBROADCAST，转发宿主经 core::platform::setSystemPowerHandler
     // 注册的回调；非 Windows / 未注册 = 空操作。必须在此处（事件泵启动前）
