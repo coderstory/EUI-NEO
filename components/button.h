@@ -24,7 +24,7 @@ struct ButtonStyle {
         text = primary || tokens.dark ? core::Color{0.94f, 0.97f, 1.0f, 1.0f} : tokens.text;
         icon = text;
         border = theme::buttonBorder(tokens, primary);
-        shadow = {};
+        shadow = {};  // flat — no shadow (WeChat flat design)
         radius = tokens.metrics.radius.overlay;
     }
 
@@ -37,6 +37,8 @@ struct ButtonStyle {
             *this = ButtonStyle(tokens, true);
             break;
         case ButtonVariant::Outline:
+            // W2 合约: primarySoftBg/primaryActive 需由 DevDesk 主题工厂填充;
+            // 未填时回退到 12%/22% alpha 混合近似值（视觉偏离 S2 但不崩）。
             normal = tokens.surface;
             hover = tokens.primarySoftBg.a > 0.0f
                         ? tokens.primarySoftBg
@@ -60,12 +62,13 @@ struct ButtonStyle {
             break;
         case ButtonVariant::Danger: {
             const core::Color err = tokens.error;
-            normal = err.a > 0.0f ? theme::withAlpha(err, 0.12f)
+            normal = err.a > 0.0f ? theme::withAlpha(err, 0.20f)  // S2.1: #FEE2E2 = error 20% alpha
                                   : core::Color{0.996f, 0.886f, 0.886f, 1.0f};
             hover = err.a > 0.0f ? err : core::Color{0.937f, 0.267f, 0.267f, 1.0f};
-            pressed = core::mixColor(
-                hover, core::Color{0.0f, 0.0f, 0.0f, 1.0f}, 0.15f);
+            pressed = core::Color{0.863f, 0.149f, 0.149f, 1.0f};  // S2.1: #DC2626
             text = err.a > 0.0f ? err : core::Color{0.937f, 0.267f, 0.267f, 1.0f};
+            textHover = {1.0f, 1.0f, 1.0f, 1.0f};       // S2.1 Danger hover: #FFFFFF
+            textPressed = {1.0f, 1.0f, 1.0f, 1.0f};     // S2.1 Danger pressed: #FFFFFF
             icon = text;
             border = {};
             break;
@@ -77,6 +80,8 @@ struct ButtonStyle {
     core::Color hover;
     core::Color pressed;
     core::Color text;
+    core::Color textHover = {};    // 非零时 hover 状态用此色替代 text（旧代码设 {} = 无效果）
+    core::Color textPressed = {};  // 非零时 pressed 状态用此色替代 textHover（无此字段则沿用 textHover）
     core::Color icon;
     core::Border border;
     core::Shadow shadow;
@@ -104,13 +109,23 @@ public:
     ButtonBuilder& iconColor(const core::Color& value) { style_.icon = value; return *this; }
     ButtonBuilder& style(const ButtonStyle& value) { style_ = value; return *this; }
     ButtonBuilder& theme(const theme::ThemeColorTokens& tokens, bool primary = true) {
-        style_ = ButtonStyle(tokens, primary);
+        if (hasExplicitVariant_) {
+            style_ = ButtonStyle(tokens, defaultVariant_);
+        } else {
+            style_ = ButtonStyle(tokens, primary);
+        }
         metrics_ = tokens.metrics;
         return *this;
     }
     ButtonBuilder& theme(const theme::ThemeColorTokens& tokens, ButtonVariant variant) {
         style_ = ButtonStyle(tokens, variant);
         metrics_ = tokens.metrics;
+        return *this;
+    }
+    /** @brief 预设变体——当后续 .theme(tokens) 不带 variant 参数时生效；显式传 variant 参数则覆盖此值。 */
+    ButtonBuilder& variant(ButtonVariant v) {
+        defaultVariant_ = v;
+        hasExplicitVariant_ = true;
         return *this;
     }
     ButtonBuilder& radius(float value) { style_.radius = value; return *this; }
@@ -239,16 +254,52 @@ public:
                         }
 
                         if (hasText) {
-                            ui_.text(id_ + ".text")
-                                .size(labelWidth, h)
-                                .text(text_)
-                                .fontSize(font)
-                                .lineHeight(font)
-                                .color(textColor)
-                                .horizontalAlign(core::HorizontalAlign::Center)
-                                .verticalAlign(core::VerticalAlign::Center)
-                                .transition(transition_)
-                                .build();
+                            core::Color textHoverClr = style_.textHover;
+                            core::Color textPressedClr = style_.textPressed;
+                            if (textHoverClr.a > 0.0f || textPressedClr.a > 0.0f) {
+                                // 逐态文字: 正常 / hover 双 text + hoverOpacityFrom 切换
+                                core::Color hoverClr = textHoverClr.a > 0.0f ? textHoverClr : textColor;
+                                auto textStack = ui_.stack(id_ + ".text.states")
+                                    .size(labelWidth, h);
+                                textStack.content([&] {
+                                    // 正常态文字 (hover 时渐隐)
+                                    ui_.text(id_ + ".text.normal")
+                                        .size(labelWidth, h)
+                                        .text(text_)
+                                        .fontSize(font)
+                                        .lineHeight(font)
+                                        .color(textColor)
+                                        .horizontalAlign(core::HorizontalAlign::Center)
+                                        .verticalAlign(core::VerticalAlign::Center)
+                                        .transition(transition_)
+                                        .hoverOpacityFrom(id_ + ".bg", 1.0f, 0.0f)
+                                        .build();
+                                    // hover/pressed 态文字（正常态时不可见，hover 时渐显）
+                                    ui_.text(id_ + ".text.hover")
+                                        .size(labelWidth, h)
+                                        .text(text_)
+                                        .fontSize(font)
+                                        .lineHeight(font)
+                                        .color(hoverClr)
+                                        .horizontalAlign(core::HorizontalAlign::Center)
+                                        .verticalAlign(core::VerticalAlign::Center)
+                                        .transition(transition_)
+                                        .hoverOpacityFrom(id_ + ".bg", 0.0f, 1.0f)
+                                        .build();
+                                });
+                                textStack.build();
+                            } else {
+                                ui_.text(id_ + ".text")
+                                    .size(labelWidth, h)
+                                    .text(text_)
+                                    .fontSize(font)
+                                    .lineHeight(font)
+                                    .color(textColor)
+                                    .horizontalAlign(core::HorizontalAlign::Center)
+                                    .verticalAlign(core::VerticalAlign::Center)
+                                    .transition(transition_)
+                                    .build();
+                            }
                         }
                     })
                     .build();
@@ -274,6 +325,8 @@ private:
     float scale_ = 1.0f;
     float fontSize_ = 0.0f;
     float iconSize_ = 0.0f;
+    ButtonVariant defaultVariant_ = ButtonVariant::Filled;
+    bool hasExplicitVariant_ = false;
     float translateX_ = 0.0f;
     float translateY_ = 0.0f;
     float x_ = 0.0f;
@@ -291,7 +344,7 @@ inline ButtonBuilder button(core::dsl::Ui& ui, const std::string& id) {
 }
 
 inline ButtonBuilder button(core::dsl::Ui& ui, const std::string& id, ButtonVariant variant) {
-    return ButtonBuilder(ui, id);
+    return ButtonBuilder(ui, id).variant(variant);
 }
 
 } // namespace components
