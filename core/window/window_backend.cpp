@@ -1373,26 +1373,35 @@ void setWindowMousePassthrough(Handle window, bool enabled) {
 }
 
 void requestWindowClose(Handle window) {
-    if (window != nullptr) {
-        // 与用户点标题栏关闭（系统 X / Alt+F4）同一语义：必须经 WM_CLOSE →
-        // GLFW windowProc → close callback 这条链——托盘宿主的「隐藏到托盘」/
-        // 模态子窗聚焦/真关闭三态决策全部住在 close callback 里（主循环安装）。
-        // glfwSetWindowShouldClose 只置标志、不回调，主循环
-        // while(!glfwWindowShouldClose) 顶判直接退出 = 托盘宿主的自绘关闭钮
-        // 直接退出整个应用（UAT4 真机实证 + window_shell_probe 复现）。
-        // 子窗口无 close callback：WM_CLOSE 同样落 shouldClose=true，由主循环
-        // pruneClosedWindows 正常销毁，语义不变。非 Windows 无等价投递，保旧
-        // 置位语义（macOS/Linux 宿主走系统标题栏，自绘关闭钮无调用方）。
+    if (window == nullptr) return;
+    GLFWwindow* glfwWin = static_cast<GLFWwindow*>(window);
+
 #if defined(_WIN32)
-        if (HWND hwnd = glfwGetWin32Window(static_cast<GLFWwindow*>(window));
-            hwnd != nullptr) {
-            SendMessageW(hwnd, WM_CLOSE, 0, 0);
-            return;
-        }
-#endif
-        glfwSetWindowShouldClose(static_cast<GLFWwindow*>(window), GLFW_TRUE);
-        glfwPostEmptyEvent();
+    // Windows：SendMessage WM_CLOSE → windowProc → GLFW close event → close callback
+    if (HWND hwnd = glfwGetWin32Window(glfwWin); hwnd != nullptr) {
+        SendMessageW(hwnd, WM_CLOSE, 0, 0);
+        return;
     }
+#else
+    // 非 Windows：glfwSetWindowShouldClose 只置标志、不触发 close callback——
+    // 托盘宿主（glfw_app_main 安装的 close callback）的「隐藏到托盘」/ 模态
+    // 子窗聚焦决策住在回调里，跳过回调 =「程序化关闭 ≠ 点 X 关闭」。
+    // 手工调回调模拟"系统请求关闭"等价链：
+    //   ① 暂设 shouldClose=true（模拟系统关闭请求）
+    //   ② 调回调（回调有权设 shouldClose=false 取消，如托盘隐藏）
+    //   ③ 回调取了 → shouldClose 为 true 则继续（发空事件推进主循环判定）
+    // 零竞态风险：回调取/还两行间隙不跨线程（GLFW 事件在主线程单投递）。
+    GLFWwindowclosefun cb = glfwSetWindowCloseCallback(glfwWin, nullptr);
+    glfwSetWindowCloseCallback(glfwWin, cb);
+    glfwSetWindowShouldClose(glfwWin, GLFW_TRUE);
+    if (cb) cb(glfwWin);
+    if (!glfwWindowShouldClose(glfwWin)) return;  // 回调取消（托盘隐藏等）
+    glfwPostEmptyEvent();
+    return;
+#endif
+    // 兜底：Windows 无 HWND 的子窗口 / 其他不可达路径——保旧置位语义
+    glfwSetWindowShouldClose(glfwWin, GLFW_TRUE);
+    glfwPostEmptyEvent();
 }
 
 bool windowIsFocused(Handle window) {
