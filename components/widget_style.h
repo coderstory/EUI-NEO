@@ -20,6 +20,8 @@ struct WidgetStyleEntry {
 };
 
 // -- S0#4 全局控件样式注册表（单例）---------------------------------------------
+// 线程安全合约: EUI 单线程 GUI 框架，预期主线程一次性全量填充后只读查询。
+// 多线程使用者必须在外部自行同步（entries_ 无内部锁）。
 // 键 = "widgetType:variant:state"（如 "Button:Filled:default"）
 // 组件构造时查询默认样式，未注册则用组件自身的 Builder 默认值
 class WidgetStyleRegistry {
