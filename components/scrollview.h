@@ -38,6 +38,8 @@ public:
     ScrollViewBuilder& step(float value) { step_ = std::max(1.0f, value); return *this; }
     ScrollViewBuilder& scrollbarWidth(float value) { scrollbarWidth_ = std::max(0.0f, value); return *this; }
     ScrollViewBuilder& scrollbarGap(float value) { scrollbarGap_ = std::max(0.0f, value); return *this; }
+    // UAT6 K 批：覆盖式滚动条——不占内容宽，悬浮绘于内容右侧
+    ScrollViewBuilder& scrollbarOverlay(bool v = true) { scrollbarOverlay_ = v; return *this; }
     ScrollViewBuilder& zIndex(int value) { zIndex_ = value; return *this; }
     ScrollViewBuilder& style(const ScrollStyle& value) { scrollStyle_ = value; return *this; }
     ScrollViewBuilder& theme(const theme::ThemeColorTokens& tokens) {
@@ -71,9 +73,12 @@ public:
         const bool scrollable = initialContentHeight > height_;
         const float scrollbarWidth = scrollbarWidth_ >= 0.0f ? scrollbarWidth_ : metrics_.control.scrollbar;
         const float scrollbarGap = scrollbarGap_ >= 0.0f ? scrollbarGap_ : metrics_.spacing.section;
+        // UAT6 K 批覆盖式：内容宽取全宽，滚动条悬浮右侧不占位
         const float scrollWidth = scrollable ? scrollbarWidth : 0.0f;
-        const float scrollGap = scrollable ? scrollbarGap : 0.0f;
-        const float contentWidth = std::max(0.0f, width_ - scrollWidth - scrollGap);
+        const float scrollGap = (scrollable && !scrollbarOverlay_) ? scrollbarGap : 0.0f;
+        const float contentWidth = scrollbarOverlay_
+            ? std::max(0.0f, width_)
+            : std::max(0.0f, width_ - scrollWidth - scrollGap);
         const float contentHeight = scrollable
             ? (contentKey_.empty() ? measureContentHeight(contentWidth, height_) : cachedContentHeight(*cache, contentWidth, height_))
             : initialContentHeight;
@@ -201,6 +206,7 @@ private:
     float step_ = 0.0f;
     float scrollbarWidth_ = -1.0f;
     float scrollbarGap_ = -1.0f;
+    bool scrollbarOverlay_ = false;  // UAT6 K 批覆盖式悬浮滚动条
     float x_ = 0.0f;
     float y_ = 0.0f;
     bool hasX_ = false;

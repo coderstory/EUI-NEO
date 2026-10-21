@@ -13,10 +13,11 @@ struct ScrollStyle {
     ScrollStyle() : ScrollStyle(theme::dark()) {}
 
     explicit ScrollStyle(const theme::ThemeColorTokens& tokens) {
-        track = theme::withOpacity(tokens.surfaceHover, tokens.dark ? 0.34f : 0.46f);
-        thumb = theme::withOpacity(tokens.text, tokens.dark ? 0.34f : 0.28f);
-        thumbHover = theme::withOpacity(tokens.text, tokens.dark ? 0.46f : 0.38f);
-        thumbPressed = theme::withOpacity(tokens.primary, 0.76f);
+        // UAT6 M 批：轨道近不可见，thumb 品牌绿浅档半透、hover/拖动加深
+        track = theme::withOpacity(tokens.surfaceHover, 0.08f);  // 近不可见
+        thumb = theme::withOpacity(tokens.primary, tokens.dark ? 0.32f : 0.26f);  // 品牌绿半透
+        thumbHover = theme::withOpacity(tokens.primary, tokens.dark ? 0.44f : 0.38f);
+        thumbPressed = theme::withOpacity(tokens.primaryPressed, 0.68f);
         radius = tokens.metrics.radius.full;
     }
 
