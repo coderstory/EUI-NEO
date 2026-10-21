@@ -1257,6 +1257,20 @@ Handle createWindow(const WindowCreateRequest& request) {
     }
     if (request.positionSet) {
         glfwSetWindowPos(window, request.x, request.y);
+    } else {
+        // 未设显式位置（centerWindow() 语义）→ 按工作区居中放置
+        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        if (monitor != nullptr) {
+            int workX = 0, workY = 0, workW = 0, workH = 0;
+            glfwGetMonitorWorkarea(monitor, &workX, &workY, &workW, &workH);
+            int winW = 0, winH = 0;
+            glfwGetWindowSize(window, &winW, &winH);
+            if (winW > 0 && winH > 0 && workW > 0 && workH > 0) {
+                const int cx = workX + (workW - winW) / 2;
+                const int cy = workY + (workH - winH) / 2;
+                glfwSetWindowPos(window, cx, cy);
+            }
+        }
     }
     return window;
 }
