@@ -99,6 +99,7 @@ struct ControlSizeTokens {
     float buttonLargeHeight = 44.0f;
     float tabHeight = 40.0f;
     float tabSmallHeight = 32.0f;
+    float listItemHeight = 40.0f;
 };
 
 struct ThemeMetricTokens {
@@ -228,7 +229,7 @@ inline PageVisualTokens pageVisuals(const ThemeColorTokens& tokens) {
         .buttonHeight    = metrics.control.buttonHeight,
         .tabHeight       = metrics.control.tabHeight,
         .inputRadius     = metrics.radius.small,
-        .listItemHeight  = metrics.control.control,
+        .listItemHeight  = metrics.control.listItemHeight,
     };
 }
 
