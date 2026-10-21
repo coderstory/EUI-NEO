@@ -17,7 +17,7 @@ struct ScrollStyle {
         track = theme::withOpacity(tokens.surfaceHover, 0.08f);  // 近不可见
         thumb = theme::withOpacity(tokens.primary, tokens.dark ? 0.32f : 0.26f);  // 品牌绿半透
         thumbHover = theme::withOpacity(tokens.primary, tokens.dark ? 0.44f : 0.38f);
-        thumbPressed = theme::withOpacity(tokens.primaryPressed, 0.68f);
+        thumbPressed = theme::withOpacity(theme::buttonPressed(tokens, tokens.primary), 0.68f);
         radius = tokens.metrics.radius.full;
     }
 
