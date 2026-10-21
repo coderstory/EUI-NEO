@@ -6,6 +6,25 @@
 
 namespace components::theme {
 
+// -- 工具函数（必须在 struct 前定义，供默认成员初始化器使用）------------------
+inline core::Color color(float r, float g, float b, float a = 1.0f) {
+    return {r, g, b, a};
+}
+
+inline core::Color defaultPrimary(float a = 1.0f) {
+    return color(56.0f / 255.0f, 113.0f / 255.0f, 224.0f / 255.0f, a);
+}
+
+inline core::Color withAlpha(core::Color value, float alpha) {
+    value.a = std::clamp(alpha, 0.0f, 1.0f);
+    return value;
+}
+
+inline core::Color withOpacity(core::Color value, float opacity) {
+    value.a *= std::clamp(opacity, 0.0f, 1.0f);
+    return value;
+}
+
 struct TypographyTokens {
     float micro = 11.0f;
     float caption = 12.0f;
@@ -135,6 +154,11 @@ struct PageVisualTokens {
     float sectionRounding = 18.0f;
     float labelSize = 17.0f;
     float fieldHeight = 35.0f;
+    // -- S0#6 页面级控件默认尺寸 --
+    float buttonHeight = 40.0f;
+    float tabHeight = 40.0f;
+    float inputRadius = 6.0f;
+    float listItemHeight = 40.0f;
 };
 
 struct FieldVisualTokens {
@@ -154,24 +178,6 @@ struct PageHeaderLayout {
     float subtitleY = 0.0f;
     float contentY = 0.0f;
 };
-
-inline core::Color color(float r, float g, float b, float a = 1.0f) {
-    return {r, g, b, a};
-}
-
-inline core::Color defaultPrimary(float a = 1.0f) {
-    return color(56.0f / 255.0f, 113.0f / 255.0f, 224.0f / 255.0f, a);
-}
-
-inline core::Color withAlpha(core::Color value, float alpha) {
-    value.a = std::clamp(alpha, 0.0f, 1.0f);
-    return value;
-}
-
-inline core::Color withOpacity(core::Color value, float opacity) {
-    value.a *= std::clamp(opacity, 0.0f, 1.0f);
-    return value;
-}
 
 inline ThemeColorTokens light() {
     return {
@@ -202,22 +208,27 @@ inline ThemeColorTokens dark() {
 inline PageVisualTokens pageVisuals(const ThemeColorTokens& tokens) {
     const ThemeMetricTokens& metrics = tokens.metrics;
     return {
-        withAlpha(tokens.text, 0.98f),
-        withAlpha(tokens.text, 0.72f),
-        withAlpha(tokens.text, 0.68f),
-        tokens.surface,
-        tokens.surfaceHover,
-        withAlpha(tokens.primary, 0.16f),
-        metrics.spacing.panel,
-        metrics.spacing.header,
-        metrics.spacing.page,
-        metrics.typography.display,
-        metrics.typography.subtitle,
-        metrics.spacing.section,
-        metrics.spacing.large,
-        metrics.radius.section,
-        metrics.typography.input,
-        metrics.control.field
+        .titleColor      = withAlpha(tokens.text, 0.98f),
+        .subtitleColor   = withAlpha(tokens.text, 0.72f),
+        .bodyColor       = withAlpha(tokens.text, 0.68f),
+        .cardColor       = tokens.surface,
+        .mutedCardColor  = tokens.surfaceHover,
+        .softAccentColor = withAlpha(tokens.primary, 0.16f),
+        .headerTopInset     = metrics.spacing.panel,
+        .headerTitleGap     = metrics.spacing.header,
+        .headerContentGap   = metrics.spacing.page,
+        .headerTitleSize    = metrics.typography.display,
+        .headerSubtitleSize = metrics.typography.subtitle,
+        .sectionGap      = metrics.spacing.section,
+        .sectionInset    = metrics.spacing.large,
+        .sectionRounding = metrics.radius.section,
+        .labelSize       = metrics.typography.input,
+        .fieldHeight     = metrics.control.field,
+        // S0#6 新增页面级控件默认尺寸
+        .buttonHeight    = metrics.control.buttonHeight,
+        .tabHeight       = metrics.control.tabHeight,
+        .inputRadius     = metrics.radius.small,
+        .listItemHeight  = metrics.control.control,
     };
 }
 
