@@ -242,6 +242,7 @@ struct DslWindowConfig {
     std::optional<core::platform::WindowEffect> windowEffectOverrideValue;
     std::function<void(core::window::Handle)> windowCreatedHandler;
     std::function<void(core::window::Handle)> windowDestroyedHandler;
+    std::function<void(core::window::Handle, bool focused)> windowFocusChangedHandler;
 
     DslWindowConfig& title(std::string value) { titleValue = std::move(value); return *this; }
     DslWindowConfig& pageId(std::string value) { pageIdValue = std::move(value); return *this; }
@@ -324,6 +325,21 @@ struct DslWindowConfig {
      */
     DslWindowConfig& onWindowDestroyed(std::function<void(core::window::Handle)> handler) {
         windowDestroyedHandler = std::move(handler);
+        return *this;
+    }
+    /**
+     * @brief 窗口焦点变化回调（WM_KILLFOCUS / WM_ACTIVATE(deactivate) /
+     *        焦点转到其他窗口，经平台 focus 事件统一抽象）。
+     *
+     * focused=false 在失焦当拍同步触发（早于任何 compose 轮询）——弹出类
+     * 窗口（styledMenu 独立菜单窗等）用它做「点击别处即收」的直连关闭链，
+     * 不再依赖「失焦→请求重绘→下一帧 compose 检查」的轮询链（托盘驻留等
+     * 场景下 compose 会被饿死，菜单不消失）。回调内可安全调用
+     * core::window::requestWindowClose（Windows 走 WM_CLOSE 置 shouldClose，
+     * 真正销毁仍由主循环 prune 统一做，不在回调内销毁窗口）。主线程触发。
+     */
+    DslWindowConfig& onWindowFocusChanged(std::function<void(core::window::Handle, bool focused)> handler) {
+        windowFocusChangedHandler = std::move(handler);
         return *this;
     }
     DslWindowConfig& onKeyEvent(std::function<void(const eui::KeyEvent&)> handler) {

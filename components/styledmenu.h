@@ -11,9 +11,12 @@
 // 关闭语义（对齐原生菜单直觉）：
 //   1. 选中项 → requestWindowClose + onSelect(path)；
 //   2. Esc → 关闭（DslWindowConfig.onKeyEvent）；
-//   3. 失焦（点击其他窗口/桌面）→ 下一帧 compose 经 core::window::windowIsFocused
-//      检测后自关（仅 Windows 同步查询，其他平台恒"有焦点"= 不自动关，
-//      仍可靠选中/Esc/再次打开时的单实例关闭）；
+//   3. 失焦（点击其他窗口/桌面）→ WM_KILLFOCUS / WM_ACTIVATE(deactivate)
+//      经平台 focus 回调当拍同步 requestDismiss（DslWindowConfig.
+//      onWindowFocusChanged，Windows 布线）；兜底再保留旧的 compose 轮询链
+//      （下一帧 compose 经 core::window::windowIsFocused 检测自关，仅
+//      Windows 同步查询）——直连链修「托盘驻留/后台进程下 compose 被饿死、
+//      失焦后菜单像个独立悬浮窗赖着不走」的真机缺陷；
 //   4. 同一时刻只保留一个 styled 菜单（showStyledMenu 开新窗前关旧窗）。
 //
 // 选中回调路径语义与 core::platform::contextMenuCommandPaths 一致：path 是
@@ -181,30 +184,53 @@ inline std::size_t styledMenuSelectableCount(const std::vector<StyledMenuRow>& r
     return count;
 }
 
+// 是否有任一行带图标：决定整菜单是否保留行首图标列——有则无图标行也空出该
+// 列，文字跨行左对齐（微信菜单的图标距/对齐规则；全菜单无图标时不空列）。
+// showStyledMenu 按全展开行表判定，窗口生命期内恒定（组头切换不改变列宽）。
+inline bool styledMenuAnyIcon(const std::vector<StyledMenuRow>& rows) {
+    for (const StyledMenuRow& row : rows) {
+        if (row.kind != StyledMenuRowKind::Separator && row.iconCodepoint != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 struct StyledMenuStyle {
     StyledMenuStyle() : StyledMenuStyle(theme::dark()) {}
 
-    // 与 ContextMenuStyle 同色模型（主题 token 派生），外加独立窗专属几何
+    // 微信观感整改（真机 UAT：「样式与微信不搭」）：色档与几何全部从注入
+    // tokens 派生——注入侧（DevDesk componentTokensWeChat）传 wechat 令牌时
+    // 本构造即产出微信菜单观感（白底圆角卡 / ~36 行高 / hover=selectedBg /
+    // 文字 textPrimary+textSecondary 当量档），spec 接口（showStyledMenu 签名）
+    // 不变。色档注意三项与旧派生的差异：
+    //   - 面板恒 surface（不再按 dark 混黑）：注入的 wechat.cardBg 深浅主题
+    //     同为 #FFFFFF 白卡，旧 dark 混黑会把白卡洗成灰卡；
+    //   - hover 恒 surfaceActive（wechat.selectedBg #E5E5E5）：旧 surfaceHover
+    //     映射 dividerSecondary #EDEDED，白卡上近不可见；
+    //   - 阴影恒浅色档（轻）：白卡配 dark 重阴影不搭，与上面第一条同理。
     explicit StyledMenuStyle(const theme::ThemeColorTokens& tokens) {
         const theme::ThemeMetricTokens& metrics = tokens.metrics;
-        background = tokens.dark
-            ? core::mixColor(tokens.surface, theme::color(0.0f, 0.0f, 0.0f), 0.16f)
-            : tokens.surface;
-        hover = tokens.surfaceHover;
+        background = tokens.surface;
+        hover = tokens.surfaceActive;
         pressed = tokens.surfaceActive;
         text = tokens.text;
-        mutedText = theme::withOpacity(tokens.text, 0.54f);
-        border = theme::withOpacity(tokens.border, 0.82f);
-        separator = theme::withOpacity(tokens.border, 0.60f);
+        mutedText = theme::withOpacity(tokens.text, 0.67f);
+        border = theme::withOpacity(tokens.border, 0.60f);
+        separator = theme::withOpacity(tokens.border, 0.80f);
         accent = tokens.primary;
-        shadow = theme::popupShadow(tokens);
-        radius = metrics.radius.popup;
+        theme::ThemeColorTokens shadowTokens = tokens;
+        shadowTokens.dark = false;  // 白卡恒配浅档 popup 阴影（12 blur / 5 偏移）
+        shadow = theme::popupShadow(shadowTokens);
+        // 几何：微信菜单档——圆角 radiusWeChat(6) / 行高 ~36 / 行内边距 12-16
+        radius = metrics.radius.small;
         panelWidth = 220.0f;
-        rowHeight = metrics.control.menuItem;
+        rowHeight = 36.0f;
         separatorHeight = metrics.spacing.compact + metrics.spacing.hairline;
-        inset = metrics.spacing.small;
+        inset = metrics.spacing.tiny;        // hover 药丸/面板内缘距（4）
+        rowPaddingX = 12.0f;                 // 行内边距：文字/图标距药丸左缘（12-16 档）
         indent = metrics.spacing.panel;      // 子项缩进
-        iconArea = 24.0f;                    // 行首图标位宽
+        iconArea = 24.0f;                     // 行首图标位宽（任一行有图标即整列保留）
         margin = 12.0f;                      // 阴影留白（窗比面板大的部分）
         fontSize = metrics.typography.option;
         iconSize = metrics.typography.label;
@@ -220,11 +246,12 @@ struct StyledMenuStyle {
     core::Color separator;
     core::Color accent;
     core::Shadow shadow;
-    float radius = 10.0f;
+    float radius = 6.0f;
     float panelWidth = 220.0f;
-    float rowHeight = 34.0f;
+    float rowHeight = 36.0f;
     float separatorHeight = 9.0f;
-    float inset = 6.0f;
+    float inset = 4.0f;
+    float rowPaddingX = 12.0f;
     float indent = 24.0f;
     float iconArea = 24.0f;
     float margin = 12.0f;
@@ -312,8 +339,11 @@ struct StyledMenuRuntime {
     StyledMenuStyle style;
     std::function<void(const std::vector<int>&)> onSelect;
     core::window::Handle handle = nullptr;
-    int focusGraceFrames = 3;  // 创建初期焦点未稳，跳过失焦检查
+    int focusGraceFrames = 3;  // 创建初期焦点未稳，跳过 compose 轮询检查
     bool dismissed = false;
+    // 整菜单是否保留行首图标列（styledMenuAnyIcon 全展开判定，开窗时算好，
+    // 组头切换不改列宽）——无图标行也空列，文字跨行左对齐
+    bool anyIcon = false;
     // U3（2026-09-28 DevDesk UI 现代化）：开窗时的面板逻辑宽与物理/逻辑
     // 折算系数——组头 toggle 重算行后按最新行数重测窗高（styledMenuWindowSize
     // 同口径），宽度不随折叠变化
@@ -383,14 +413,17 @@ inline bool showStyledMenu(const std::string& id,
     }
 
     // 宽度自适应（2026-09-24 DevDesk 反馈：固定 220 装不下较长中文菜单
-    // 文本）：最长行文本实宽 + 行首图标位 + 尾部勾选/箭头位 + 缩进 + 双侧
-    // inset，下限 style.panelWidth。按全展开行算宽——折叠子行文本也要装得下
+    // 文本）：最长行文本实宽 + 行内边距（rowPaddingX，12-16 档）×2 + 行首
+    // 图标列（任一行有图标即整列保留）+ 尾部勾选/箭头位 + 缩进 + 双侧 inset，
+    // 下限 style.panelWidth。按全展开行算宽——折叠子行文本也要装得下
+    const bool anyIcon = styledMenuAnyIcon(fullRows);
     float panelWidth = style.panelWidth;
     for (const StyledMenuRow& row : fullRows) {
         if (row.kind == StyledMenuRowKind::Separator) continue;
         const float textW = core::TextPrimitive::measureTextWidth(
             row.text, {}, style.fontSize);
-        const float rowNeed = style.inset * 2.0f + style.iconArea +
+        const float rowNeed = (style.inset + style.rowPaddingX) * 2.0f +
+                              (anyIcon ? style.iconArea : 0.0f) +
                               static_cast<float>(row.depth) * style.indent +
                               textW + style.iconArea;
         panelWidth = std::max(panelWidth, rowNeed);
@@ -452,6 +485,7 @@ inline bool showStyledMenu(const std::string& id,
     runtime->rows = currentRows;        // 初始折叠态显示行
     runtime->style = style;
     runtime->onSelect = std::move(onSelect);
+    runtime->anyIcon = anyIcon;         // 图标列恒定（全展开判定，见注释）
     runtime->panelWidth = panelWidth;   // U3：toggle 重测窗高时复用
     runtime->windowScale = windowScale; // U3：toggle 重测窗高时复用
     activeRuntime() = runtime;
@@ -491,7 +525,21 @@ inline bool showStyledMenu(const std::string& id,
                             if (key.isDown() && key.key == eui::InputKey::Escape) {
                                 requestDismiss(runtime);
                             }
-                        }),
+                        })
+#if defined(_WIN32)
+                        // 失焦直连关闭（真机缺陷：托盘驻留/后台进程下菜单窗
+                        // 可能拿不到前台、compose 轮询被饿死，失焦后像独立
+                        // 悬浮窗赖着不走）：WM_KILLFOCUS / WM_ACTIVATE(
+                        // deactivate) 当拍同步 requestDismiss，走与选中/Esc
+                        // 同一条关闭路径。其他平台不布线（windowIsFocused 恒
+                        // 真的 compose 降级语义保持不变，macOS 行为零变化）。
+                        .onWindowFocusChanged([runtime](core::window::Handle, bool focused) {
+                            if (!focused) {
+                                requestDismiss(runtime);
+                            }
+                        })
+#endif
+                        ,  // DslWindowConfig 建造链结束，下一实参 = compose 闭包
                     [runtime, prefix](eui::Ui& ui, const eui::Screen& screen) {
                         if (runtime->dismissed || runtime->rows.empty()) {
                             return;
@@ -511,6 +559,15 @@ inline bool showStyledMenu(const std::string& id,
                         const float panelY = style.margin;
                         const float panelWidth = std::max(0.0f, screen.width - style.margin * 2.0f);
                         const float panelHeight = std::max(0.0f, screen.height - style.margin * 2.0f);
+                        // 微信行几何派生量：hover 药丸（行命中区）贴面板内缘留
+                        // inset 空隙；文字/图标在药丸内再留 rowPaddingX 内边距；
+                        // 任一行有图标时全菜单保留行首图标列（无图标行空列，
+                        // 文字跨行对齐）；组头/勾选行的尾部图标位在文本宽度里
+                        // 显式预留（不再与长文本争位）
+                        const float pillX = panelX + style.inset;
+                        const float pillWidth = std::max(0.0f, panelWidth - style.inset * 2.0f);
+                        const float pillRadius = std::max(2.0f, style.radius - 2.0f);
+                        const float iconColumn = runtime->anyIcon ? style.iconArea : 0.0f;
 
                         ui.stack(prefix)
                             .size(screen.width, screen.height)
@@ -545,27 +602,33 @@ inline bool showStyledMenu(const std::string& id,
                                     const std::string rowId = prefix + ".row." + std::to_string(index);
                                     if (row.kind == StyledMenuRowKind::Separator) {
                                         ui.rect(rowId)
-                                            .position(panelX + style.inset, rowY + (style.separatorHeight - 1.0f) * 0.5f)
-                                            .size(std::max(0.0f, panelWidth - style.inset * 2.0f), 1.0f)
+                                            .position(pillX, rowY + (style.separatorHeight - 1.0f) * 0.5f)
+                                            .size(pillWidth, 1.0f)
                                             .color(style.separator)
                                             .build();
                                         rowY += style.separatorHeight;
                                         continue;
                                     }
 
-                                    const float textX = panelX + style.inset +
+                                    // 行首内容锚点：药丸内 rowPaddingX 内边距 + 子项缩进
+                                    const float textX = pillX + style.rowPaddingX +
                                                         static_cast<float>(row.depth) * style.indent;
-                                    const float textWidth = std::max(
-                                        0.0f, panelWidth - style.inset * 2.0f -
-                                                  static_cast<float>(row.depth) * style.indent);
+                                    // 尾部图标位（组头 chevron / 勾选 check）在文本宽度里预留
+                                    const float trailing =
+                                        (row.kind == StyledMenuRowKind::GroupHeader || row.checked)
+                                            ? style.iconArea
+                                            : 0.0f;
+                                    const float labelX = textX + iconColumn;
+                                    const float labelWidth = std::max(
+                                        0.0f, pillX + pillWidth - style.rowPaddingX - trailing - labelX);
 
                                     if (row.kind == StyledMenuRowKind::Item && !row.disabled) {
                                         // hover / pressed 反馈行 + 点击选中
                                         ui.rect(rowId + ".hit")
-                                            .position(panelX + style.inset, rowY)
-                                            .size(std::max(0.0f, panelWidth - style.inset * 2.0f), style.rowHeight)
+                                            .position(pillX, rowY)
+                                            .size(pillWidth, style.rowHeight)
                                             .states(theme::color(0.0f, 0.0f, 0.0f, 0.0f), style.hover, style.pressed)
-                                            .radius(std::max(2.0f, style.radius - 6.0f))
+                                            .radius(pillRadius)
                                             .instantStates()
                                             .onClick([runtime, path = row.path] {
                                                 const std::function<void(const std::vector<int>&)> onSelect =
@@ -584,10 +647,10 @@ inline bool showStyledMenu(const std::string& id,
                                         // （菜单保持打开，子行画进预留高度区）。窗口生命期内
                                         // expandedSet 持久——切回折叠态也走此路径
                                         ui.rect(rowId + ".hit")
-                                            .position(panelX + style.inset, rowY)
-                                            .size(std::max(0.0f, panelWidth - style.inset * 2.0f), style.rowHeight)
+                                            .position(pillX, rowY)
+                                            .size(pillWidth, style.rowHeight)
                                             .states(theme::color(0.0f, 0.0f, 0.0f, 0.0f), style.hover, style.hover)
-                                            .radius(std::max(2.0f, style.radius - 6.0f))
+                                            .radius(pillRadius)
                                             .instantStates()
                                             .onClick([runtime, path = row.path] {
                                                 if (runtime->expandedSet.count(path) > 0) {
@@ -639,14 +702,12 @@ inline bool showStyledMenu(const std::string& id,
                                             .build();
                                     }
 
-                                    const float labelX =
-                                        textX + (row.iconCodepoint != 0 ? style.iconArea : 0.0f);
+                                    // 文字起点恒在图标列之后（anyIcon 时无图标行空列，
+                                    // 跨行对齐——微信菜单规则），尾部图标位已在
+                                    // labelWidth 里预留
                                     ui.text(rowId + ".label")
                                         .position(labelX, rowY)
-                                        .size(std::max(0.0f, textWidth -
-                                                  (row.iconCodepoint != 0 ? style.iconArea : 0.0f) -
-                                                  (row.checked ? style.iconArea : 0.0f)),
-                                              style.rowHeight)
+                                        .size(labelWidth, style.rowHeight)
                                         .text(row.text)
                                         .fontSize(style.fontSize).fontWeight(400)
                                         .lineHeight(style.lineHeight)
@@ -663,7 +724,7 @@ inline bool showStyledMenu(const std::string& id,
                                                : 0xF054)  // ▸ fa-chevron-right（折叠态）
                                             : 0xF054;
                                         ui.text(rowId + ".chevron")
-                                            .position(panelX + panelWidth - style.inset - style.iconArea, rowY)
+                                            .position(pillX + pillWidth - style.rowPaddingX - style.iconArea, rowY)
                                             .size(style.iconArea, style.rowHeight)
                                             .icon(chevronIcon)
                                             .fontSize(style.iconSize - 2.0f)
@@ -674,7 +735,7 @@ inline bool showStyledMenu(const std::string& id,
                                             .build();
                                     } else if (row.checked) {
                                         ui.text(rowId + ".check")
-                                            .position(panelX + panelWidth - style.inset - style.iconArea, rowY)
+                                            .position(pillX + pillWidth - style.rowPaddingX - style.iconArea, rowY)
                                             .size(style.iconArea, style.rowHeight)
                                             .icon(0xF00C)  // fa-check
                                             .fontSize(style.iconSize)

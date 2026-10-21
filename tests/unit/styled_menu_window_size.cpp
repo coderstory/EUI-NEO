@@ -42,11 +42,12 @@ int main() {
     using components::styledMenuPanelHeight;
     using components::styledMenuWindowSize;
 
-    const StyledMenuStyle style;  // 默认 token：rowHeight 34 / separator 9 /
-                                  // inset 6 / margin 12
-    check(near(style.rowHeight, 34.0f) && near(style.separatorHeight, 9.0f) &&
-              near(style.inset, 6.0f) && near(style.margin, 12.0f),
-          "default style tokens unchanged (34/9/6/12)");
+    const StyledMenuStyle style;  // 微信几何档：rowHeight 36 / separator 9 /
+                                  // inset 4 / rowPaddingX 12 / radius 6 / margin 12
+    check(near(style.rowHeight, 36.0f) && near(style.separatorHeight, 9.0f) &&
+              near(style.inset, 4.0f) && near(style.rowPaddingX, 12.0f) &&
+              near(style.radius, 6.0f) && near(style.margin, 12.0f),
+          "wechat style tokens (36/9/4/12/r6)");
 
     // ---- 1. scale = 1.0：与旧公式一致（面板 + margin×2）----
     const auto at1 = styledMenuWindowSize(220.0f, 200.0f, style.margin, 1.0f);
@@ -78,11 +79,11 @@ int main() {
     const std::vector<components::StyledMenuItem> items{
         item("打开"), item("换肤"), item("-"), item("退出")};
     const std::vector<components::StyledMenuRow> rows = components::styledMenuFlatten(items);
-    const float panelHeight = styledMenuPanelHeight(rows, style);  // 12 + 3*34 + 9
-    check(near(panelHeight, 123.0f), "panel height: inset*2 + 3 rows + 1 separator");
+    const float panelHeight = styledMenuPanelHeight(rows, style);  // 4*2 + 3*36 + 9
+    check(near(panelHeight, 125.0f), "panel height: inset*2 + 3 rows + 1 separator");
     const float scale = 1.25f;
     const auto menu = styledMenuWindowSize(style.panelWidth, panelHeight, style.margin, scale);
-    check(near(menu.height, 184.0f), "125%: window height = ceil((123 + 24) * 1.25)");
+    check(near(menu.height, 187.0f), "125%: window height = ceil((125 + 24) * 1.25)");
     // 折算回逻辑单位后窗高必须 ≥ 面板高（余量恰为 margin×2 阴影留白）
     check(menu.height / scale >= panelHeight,
           "125%: window content box covers panel height");

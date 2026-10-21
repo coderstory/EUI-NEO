@@ -190,6 +190,7 @@ void openWindow(const DslWindowConfig& config, DslWindowCompose composeFn) {
     request.windowEffectOverride = config.windowEffectOverrideValue;
     request.onWindowCreated = config.windowCreatedHandler;
     request.onWindowDestroyed = config.windowDestroyedHandler;
+    request.onWindowFocusChanged = config.windowFocusChangedHandler;
     request.onKeyEvent = config.keyEventHandler;
     request.compose = std::move(composeFn);
     detail::dslWindowRequests().push_back(std::move(request));

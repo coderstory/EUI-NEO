@@ -54,6 +54,9 @@ struct DslWindowRequest {
     // 子窗口创建成功后回调（core::window::Handle，可用来做运行时
     // setWindowPos / setWindowMousePassthrough 等）
     std::function<void(core::window::Handle)> onWindowCreated;
+    // 窗口焦点变化回调（DslWindowConfig::onWindowFocusChanged 透传；
+    // focused=false = 失焦当拍同步触发，语义见该处注释）
+    std::function<void(core::window::Handle, bool focused)> onWindowFocusChanged;
     // 子窗口销毁前回调（与 onWindowCreated 对称，覆盖所有销毁路径：
     // requestWindowClose / Alt+F4 等窗口关闭事件 / 应用退出 destroyAll）。
     // 触发时机：窗口真正 glfwDestroyWindow/SDL 销毁之前，传入句柄此刻仍

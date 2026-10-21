@@ -256,6 +256,14 @@ void installWindowCallbacks(GLFWwindow* window, WindowState& windowState) {
             core::platform::requestUiUpdate();
         }
         state->paintRequested = true;
+        // 失焦直连链（DslWindowConfig::onWindowFocusChanged 注册方）：WM_KILLFOCUS
+        // / WM_ACTIVATE(deactivate) 当拍同步通知，早于上面的重绘轮询链——
+        // styledMenu 独立菜单窗借此在失焦瞬间走与选中/Esc 同一条 requestDismiss
+        // 关闭路径，不再依赖下一帧 compose。回调内只请求关闭（WM_CLOSE 置
+        // shouldClose），真销毁仍由主循环 prune 统一做。
+        if (state->windowFocusChangedHandler) {
+            state->windowFocusChangedHandler(currentWindow, focused == GLFW_TRUE);
+        }
         if (focused && state->modalChildWindow != nullptr && !glfwWindowShouldClose(state->modalChildWindow)) {
             glfwFocusWindow(state->modalChildWindow);
         }
@@ -438,6 +446,8 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     }
     managed->state.lastTitleUpdate = glfwGetTime();
     managed->state.nextFrameTime = managed->state.lastTitleUpdate;
+    // 逐窗焦点回调（onWindowFocusChanged）先装配再装回调（focus 回调读它）
+    managed->state.windowFocusChangedHandler = request.onWindowFocusChanged;
     installWindowCallbacks(childWindow, managed->state);
 
     if (!managed->content.initialize(childWindow, request)) {

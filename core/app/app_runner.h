@@ -17,6 +17,11 @@ struct AppRunner {
     bool paintRequested = true;
     bool trayAvailable = false;
     bool hiddenToTray = false;
+    // 逐窗焦点变化回调（DslWindowConfig::onWindowFocusChanged 注册，仅子窗
+    // 由 createManagedWindow 从 request 装配；主窗恒空）：focus 回调在
+    // WM_KILLFOCUS / WM_ACTIVATE(deactivate) 当拍同步调用它，focused=false
+    // 早于任何 compose 轮询——styledMenu 等弹出窗的「点击别处即收」直连链。
+    std::function<void(eui::window::Handle, bool focused)> windowFocusChangedHandler;
     int renderedFrames = 0;
     double lastTitleUpdate = 0.0;
     double nextFrameTime = 0.0;

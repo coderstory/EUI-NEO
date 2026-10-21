@@ -259,6 +259,15 @@ static LRESULT CALLBACK _tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam,
       POINT p;
       GetCursorPos(&p);
       if (eui_tray_menu_requested(p.x, p.y, lparam == WM_LBUTTONUP ? 1 : 0)) {
+        /* EUI-NEO local patch: takeover path (styled menu window created and
+           shown asynchronously by the app layer) must put our process in the
+           foreground BEFORE the menu window appears, exactly like the native
+           TrackPopupMenu path below (KB 135788). Without this, a tray-hidden
+           (background-process) app is denied activation by the foreground
+           lock: the styled menu window never receives Win32 focus, so a later
+           click elsewhere produces no WM_KILLFOCUS for it and the menu
+           lingers on screen as an independent floating window. */
+        SetForegroundWindow(hwnd);
         return 0;
       }
       SetForegroundWindow(hwnd);

@@ -775,6 +775,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/render_context_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/shadertoy_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/shadertoy_runtime_probe.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/styled_menu_focus_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/window_only_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/window_shell_probe.cpp"
     )
@@ -797,6 +798,15 @@ if(EUI_BUILD_TEST_FIXTURES)
             set_tests_properties(${probe_name} PROPERTIES FAIL_REGULAR_EXPRESSION "Validation Error;VUID-")
         endif()
     endforeach()
+
+    # styled_menu_focus_probe 跑完整生产主循环（真窗口 + 真回调链 + 真 prune），
+    # 把 app runner（glfw_app_main.cpp）编进探针本体；EUI_APP_RUNNER_LIBRARY
+    # 抑制其内置 main，由探针自带的 main 调 eui_app_run()。Windows(GLFW) 专属
+    # ——其他后端探针源内已自守卫为 skip。
+    if(WIN32 AND EUI_WINDOW_BACKEND STREQUAL "glfw" AND TARGET styled_menu_focus_probe)
+        target_sources(styled_menu_focus_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/core/app/glfw_app_main.cpp")
+        target_compile_definitions(styled_menu_focus_probe PRIVATE EUI_APP_RUNNER_LIBRARY)
+    endif()
 
     if(EUI_RESOLVED_RENDER_BACKEND STREQUAL "vulkan" AND TARGET shadertoy_probe)
         set(shadertoy_probe_assets_dir
@@ -877,6 +887,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/show_request.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/signal.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/styled_menu_window_size.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/styled_menu_wechat_style.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/styled_runs.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/svg_source.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/switch_builder_position.cpp"
