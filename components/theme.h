@@ -99,6 +99,23 @@ struct ThemeColorTokens {
     core::Color border;
     bool dark = false;
     ThemeMetricTokens metrics;
+    // -- S0#2 新增语义色 / 辅助色 / 中性文字级联 --
+    core::Color success   = color(0.063f, 0.725f, 0.506f);   // #10B981
+    core::Color warning   = color(0.961f, 0.620f, 0.043f);   // #F59E0B
+    core::Color error     = color(0.937f, 0.267f, 0.267f);   // #EF4444
+    core::Color info      = color(0.231f, 0.510f, 0.965f);   // #3B82F6
+    core::Color textSecondary = {};
+    core::Color textTertiary = {};
+    core::Color textDisabled = {};
+    core::Color primaryHover = {};
+    core::Color primaryActive = {};
+    core::Color primarySoftBg = {};
+    core::Color sidebarBg = {};
+    core::Color cardGreen = {};
+    core::Color cardBlue = {};
+    core::Color cardOrange = {};
+    core::Color cardPurple = {};
+    core::Color cardCyan = {};
 };
 
 struct PageVisualTokens {
