@@ -21,7 +21,11 @@ struct ButtonStyle {
         text = primary || tokens.dark ? core::Color{0.94f, 0.97f, 1.0f, 1.0f} : tokens.text;
         icon = text;
         border = theme::buttonBorder(tokens, primary);
-        shadow = theme::buttonShadow(tokens);
+        // UAT6 阴影统一（WeChat 纯平体系）：按钮默认无阴影（core::Shadow 默认
+        // enabled=false）——内容区按钮一律 flat，根治「有些有有些没有」（此前
+        // 默认挂 dark 主题 14px 阴影，所有未显式覆盖的按钮都带阴影）。浮动层
+        // 钮需要轻阴影时显式 .shadow(...)（dialog.h primary / navbar 为先例）。
+        shadow = {};
         radius = tokens.metrics.radius.overlay;
     }
 

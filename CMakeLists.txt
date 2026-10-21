@@ -855,6 +855,7 @@ if(EUI_BUILD_TEST_FIXTURES)
     set(TEST_UNIT_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/audio_api.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/button_disabled_color.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/button_flat_style.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/color_hex.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/context_menu_paths.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/dirty_rects.cpp"

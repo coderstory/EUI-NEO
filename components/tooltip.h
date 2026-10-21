@@ -38,6 +38,10 @@ public:
     TooltipBuilder& value(const std::string& value) { text_ = value; return *this; }
     TooltipBuilder& anchor(float x, float y) { anchorX_ = x; anchorY_ = y; return *this; }
     TooltipBuilder& bounds(float width, float height) { boundsWidth_ = width; boundsHeight_ = height; return *this; }
+    // 面板宽度档（默认 86-112 是 barchart 短标签档）；长句提示（页面说明类）
+    // 经此放宽，否则单行 112px 装不下会截断。
+    TooltipBuilder& minWidth(float value) { minWidth_ = value; return *this; }
+    TooltipBuilder& maxWidth(float value) { maxWidth_ = value; return *this; }
     TooltipBuilder& style(const TooltipStyle& value) { style_ = value; return *this; }
     TooltipBuilder& theme(const theme::ThemeColorTokens& tokens) {
         style_ = TooltipStyle(tokens);
