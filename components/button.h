@@ -10,6 +10,9 @@
 
 namespace components {
 
+// -- S0#3 按钮变体枚举 ----------------------------------------------------------
+enum class ButtonVariant { Filled, Outline, Ghost, Danger };
+
 struct ButtonStyle {
     ButtonStyle() : ButtonStyle(theme::dark()) {}
 
@@ -21,12 +24,53 @@ struct ButtonStyle {
         text = primary || tokens.dark ? core::Color{0.94f, 0.97f, 1.0f, 1.0f} : tokens.text;
         icon = text;
         border = theme::buttonBorder(tokens, primary);
-        // UAT6 阴影统一（WeChat 纯平体系）：按钮默认无阴影（core::Shadow 默认
-        // enabled=false）——内容区按钮一律 flat，根治「有些有有些没有」（此前
-        // 默认挂 dark 主题 14px 阴影，所有未显式覆盖的按钮都带阴影）。浮动层
-        // 钮需要轻阴影时显式 .shadow(...)（dialog.h primary / navbar 为先例）。
         shadow = {};
         radius = tokens.metrics.radius.overlay;
+    }
+
+    // S0#3: 基于变体构造 ButtonStyle
+    explicit ButtonStyle(const theme::ThemeColorTokens& tokens, ButtonVariant variant) {
+        shadow = {};
+        radius = tokens.metrics.radius.control;
+        switch (variant) {
+        case ButtonVariant::Filled:
+            *this = ButtonStyle(tokens, true);
+            break;
+        case ButtonVariant::Outline:
+            normal = tokens.surface;
+            hover = tokens.primarySoftBg.a > 0.0f
+                        ? tokens.primarySoftBg
+                        : theme::withAlpha(tokens.primary, 0.12f);
+            pressed = tokens.primaryActive.a > 0.0f
+                          ? theme::withAlpha(tokens.primaryActive, 0.15f)
+                          : theme::withAlpha(tokens.primary, 0.22f);
+            text = tokens.primary;
+            icon = text;
+            border = {1.0f, tokens.primary};
+            break;
+        case ButtonVariant::Ghost:
+            normal = core::Color{0.0f, 0.0f, 0.0f, 0.0f};
+            hover = tokens.primarySoftBg.a > 0.0f
+                        ? tokens.primarySoftBg
+                        : theme::withAlpha(tokens.primary, 0.12f);
+            pressed = theme::withAlpha(tokens.primary, 0.22f);
+            text = tokens.primary;
+            icon = text;
+            border = {};
+            break;
+        case ButtonVariant::Danger: {
+            const core::Color err = tokens.error;
+            normal = err.a > 0.0f ? theme::withAlpha(err, 0.12f)
+                                  : core::Color{0.996f, 0.886f, 0.886f, 1.0f};
+            hover = err.a > 0.0f ? err : core::Color{0.937f, 0.267f, 0.267f, 1.0f};
+            pressed = core::mixColor(
+                hover, core::Color{0.0f, 0.0f, 0.0f, 1.0f}, 0.15f);
+            text = err.a > 0.0f ? err : core::Color{0.937f, 0.267f, 0.267f, 1.0f};
+            icon = text;
+            border = {};
+            break;
+        }
+        }
     }
 
     core::Color normal;
@@ -61,6 +105,11 @@ public:
     ButtonBuilder& style(const ButtonStyle& value) { style_ = value; return *this; }
     ButtonBuilder& theme(const theme::ThemeColorTokens& tokens, bool primary = true) {
         style_ = ButtonStyle(tokens, primary);
+        metrics_ = tokens.metrics;
+        return *this;
+    }
+    ButtonBuilder& theme(const theme::ThemeColorTokens& tokens, ButtonVariant variant) {
+        style_ = ButtonStyle(tokens, variant);
         metrics_ = tokens.metrics;
         return *this;
     }
@@ -238,6 +287,10 @@ private:
 };
 
 inline ButtonBuilder button(core::dsl::Ui& ui, const std::string& id) {
+    return ButtonBuilder(ui, id);
+}
+
+inline ButtonBuilder button(core::dsl::Ui& ui, const std::string& id, ButtonVariant variant) {
     return ButtonBuilder(ui, id);
 }
 
