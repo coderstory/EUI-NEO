@@ -76,6 +76,10 @@ struct ControlSizeTokens {
     float switchWidth = 46.0f;
     float navigation = 50.0f;
     float scrollbar = 8.0f;
+    float buttonHeight = 40.0f;
+    float buttonLargeHeight = 44.0f;
+    float tabHeight = 40.0f;
+    float tabSmallHeight = 32.0f;
 };
 
 struct ThemeMetricTokens {
