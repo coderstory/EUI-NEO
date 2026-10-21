@@ -964,20 +964,25 @@ LRESULT CALLBACK chromeHitTestWindowProc(HWND hwnd, UINT message, WPARAM wParam,
     }
     case WM_GETMINMAXINFO: {
         // WS_POPUP 最大化默认盖满整屏（含任务栏）——钳回所在显示器工作区。
-        // 先透传让 GLFW 落 min/max track 尺寸，再只覆盖 ptMax 三元组
+        // 先透传让 GLFW 落 min/max track 尺寸，再只覆盖 ptMax 三元组。
+        // 无条件钳（不设 IsZoomed/IsIconic 门卫）：zoomed 窗的再适配路径（托盘
+        // hide→show 恢复、任务栏/显示器拓扑/DPI 变更后的重落位、iconic 态自
+        // 任务栏最大化）同样派发 WM_GETMINMAXINFO，门卫跳过时 ptMax 落
+        // DefWindowProc 默认值——该值以主显示器锚定，非主显示器上会得到错误
+        // 尺寸的最大化窗（真机「最大化窗口比屏幕大」的候选机制）。钳制值本身
+        // 幂等（最大化目标恒 = 所在显示器工作区），已 zoomed 时重派发也是同一
+        // 结果（window_shell_probe ⑦/⑦c/⑦d 实证不变）。
         const LRESULT chained =
             CallWindowProcW(state->previousProc, hwnd, message, wParam, lParam);
-        if (IsZoomed(hwnd) == FALSE && IsIconic(hwnd) == FALSE) {
-            const HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            MONITORINFO info{};
-            info.cbSize = sizeof(info);
-            if (GetMonitorInfoW(monitor, &info) != FALSE) {
-                auto* minMax = reinterpret_cast<MINMAXINFO*>(lParam);
-                minMax->ptMaxSize.x = info.rcWork.right - info.rcWork.left;
-                minMax->ptMaxSize.y = info.rcWork.bottom - info.rcWork.top;
-                minMax->ptMaxPosition.x = info.rcWork.left;
-                minMax->ptMaxPosition.y = info.rcWork.top;
-            }
+        const HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO info{};
+        info.cbSize = sizeof(info);
+        if (GetMonitorInfoW(monitor, &info) != FALSE) {
+            auto* minMax = reinterpret_cast<MINMAXINFO*>(lParam);
+            minMax->ptMaxSize.x = info.rcWork.right - info.rcWork.left;
+            minMax->ptMaxSize.y = info.rcWork.bottom - info.rcWork.top;
+            minMax->ptMaxPosition.x = info.rcWork.left;
+            minMax->ptMaxPosition.y = info.rcWork.top;
         }
         return chained;
     }
@@ -990,11 +995,34 @@ LRESULT CALLBACK chromeHitTestWindowProc(HWND hwnd, UINT message, WPARAM wParam,
         // 口矩形（屏幕坐标，window_shell_probe 实证），原样接受 + return 0 即
         // 客户区 = 整窗；禁止改写成 {0,0,w,h}（输出是屏幕坐标，会把客户区原
         // 点钉到屏幕原点，真鼠标事件全落空），也禁止 GetWindowRect 重入（样式
-        // 变更中读到中间态矩形，形成偏移反馈环）。最大化态同一路径：ptMax 已
-        // 在 WM_GETMINMAXINFO 钳到工作区原点，整窗 = 工作区，客户区恰铺满。
-        // 仅自己补过 THICKFRAME 才接管（decorated 窗自带系统框，交默认处理）。
+        // 变更中读到中间态矩形，形成偏移反馈环）。仅自己补过 THICKFRAME 才接
+        // 管（decorated 窗自带系统框，交默认处理）。
         if (wParam == FALSE || !state->thickFrameAdded) {
             break;
+        }
+        if (IsZoomed(hwnd) != FALSE) {
+            // 最大化态的客户区护栏（真机「最大化窗口比屏幕大、右上角关闭钮
+            // 半截」的防护层）：本机实证（Win11 26200，window_shell_probe ⑦
+            // 系）系统对 ptMax 逐字落位、最大化矩形 == 工作区、客户区已 == 工
+            // 作区——本分支在此为恒等变换，零行为变化；但它兜住两类异常落位：
+            // ①系统对 zoomed 矩形按不可见 resize 边框外扩的布置变体（其他
+            // Windows 版本/arrange 路径），②zoomed 态下矩形异常出屏的混合
+            // 态（如创建期带 WS_MAXIMIZE 的窗）。钳法取「rgrc[0] ∩ 工作区」
+            // 而非按 SM_CXSIZEFRAME 定值内收：无论系统扩张多少，客户区都精确
+            // 收在可见工作区内——可见内容（含自绘关闭钮）恒在屏内，且不会因
+            // 扩张量与度量不吻合而欠收/过收（欠收 = 白边，过收 = 内容出屏）。
+            const HMONITOR monitor =
+                MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO info{};
+            info.cbSize = sizeof(info);
+            if (GetMonitorInfoW(monitor, &info) != FALSE) {
+                RECT& client =
+                    reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam)->rgrc[0];
+                client.left = std::max(client.left, info.rcWork.left);
+                client.top = std::max(client.top, info.rcWork.top);
+                client.right = std::min(client.right, info.rcWork.right);
+                client.bottom = std::min(client.bottom, info.rcWork.bottom);
+            }
         }
         return 0;
     }

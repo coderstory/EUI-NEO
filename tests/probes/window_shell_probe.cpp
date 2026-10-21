@@ -14,16 +14,32 @@
 //      SetCursorPos 走系统真实输入流，端到端验证 resize 模态环真的改窗宽；
 //      同时统计模态环内的活渲染帧数（>0 = 修复在位），并加一段 caption 拖拽
 //      移动（SC_MOVE 模态环）的位移 + 活渲染断言；
-//   ④ maximized=true 启动窗对照打印（不断言）：边缘热区被 IsZoomed 门卫关闭是
-//      设计行为，但真机上「贴工作区放不下 → 启动即最大化」的窗口看起来只是
-//      "铺满屏幕、边缘不可拖"——打印出来供诊断，别再当 resize 失灵排查；
+//   ④ maximized=true 启动窗（zoomed 混合态回归门 + 对照打印）：GLFW 创建期
+//      maximized hint 落成「zoomed 样式 + 矩形未按最大化放置」混合态（矩形出
+//      屏）——断言客户区四边全在工作区内（WM_NCCALCSIZE 护栏的可见证据），边
+//      缘热区被 IsZoomed 门卫关闭仍是设计行为（打印对照，别再当 resize 失灵
+//      排查）；
 //   ⑤ 安装链样式位断言（「缺少动画」修复的回归门）：undecorated 纯 WS_POPUP
 //      被shell 补上 WS_MINIMIZEBOX|WS_MAXIMIZEBOX（DWM 最小化/还原/最大化
 //      动画的必要风格位）+ WS_THICKFRAME；卸载后逐位还原（与安装前样式全等）；
 //   ⑥ 模态区间活渲染门（「缩放很卡」修复的机制层，无需真鼠标）：合成
 //      WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE 包住程序化 SetWindowPos，区间内
 //      WM_SIZE 重入 live render 回调（真实 GL present），区间外 0 帧——主循环
-//      既有渲染路径零行为变化的门卫证据。
+//      既有渲染路径零行为变化的门卫证据；
+//   ⑦ 运行期最大化几何（最大化窗口比屏幕大、右上角关闭钮半截的回归门）：
+//      生产同款 maximizeWindow 路径（标题栏最大化按钮/caption 双击同源
+//      ShowWindow(SW_MAXIMIZE)）下断言 最大化客户区 == 所在显示器工作区（四边
+//      全等）、关闭钮带（右缘内 46px）仍命中 HTCAPTION、还原后窗口矩形与最大
+//      化前逐边全等、zoomed 态重派发 WM_GETMINMAXINFO 时 ptMax 仍钳在工作区
+//      （不设 IsZoomed/IsIconic 门卫——托盘 hide→show 恢复/拓扑 DPI 再适配/iconic
+//      最大化都派发它，回落 DefWindowProc 默认值在非主显示器上尺寸错）。本机
+//      实证（Win11 26200）：系统对 ptMax 逐字落位，最大化矩形 == 工作区，任务
+//      假设的 THICKFRAME 最大化外扩不成立（raw-thickframe 取证：DefWindowProc
+//      默认 ptMax 也是工作区），故 ⑦ 系断言的是「恒等契约」——任何环境/版本上
+//      布置偏离都会在这里现形；
+//   ⑦b snap-arrange 几何（--drag 真输入取证）：Aero Snap 最大化（Win+Up 键盘
+//      与 caption 拖到顶缘两种手势）不走 ptMax 语义，是独立布置路径——布置后
+//      客户区同样必须 == 工作区（同 ⑦ 断言），Win+Down/几何复位清场。
 // 输出全 ASCII（测量值要进报告，不冒 GBK 控制台乱码风险）。
 #include "core/window/window_backend.h"
 
@@ -342,6 +358,472 @@ int probeWindowShell(bool drag, int holdSeconds) {
                                 g_liveRenderFrames == modalLiveFrames);
     }
 
+    // ---- ⑦ 运行期最大化几何（最大化窗口比屏幕大、右上角关闭钮半截的回归门）----
+    // resizable 自绘壳窗在运行期最大化。断言（最大化可见契约，任何环境/版本上
+    // 布置偏离都在此现形）：客户区精确 == 所在显示器工作区；关闭钮带（右缘内
+    // 46px）与最右一列仍命中 HTCAPTION；还原后窗口矩形与最大化前逐边全等；
+    // zoomed 态重派发 WM_GETMINMAXINFO 时 ptMax 仍钳工作区（ptMax 钳制不设
+    // IsZoomed/IsIconic 门卫的回归门）。
+    {
+        RECT preRect{};
+        GetWindowRect(hwnd, &preRect);
+        core::window::maximizeWindow(handle);
+        for (int settle = 0; settle < 10; ++settle) {
+            glfwPollEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+        RECT maxRect{};
+        RECT maxClient{};
+        GetWindowRect(hwnd, &maxRect);
+        GetClientRect(hwnd, &maxClient);
+        POINT clientOrigin{0, 0};
+        ClientToScreen(hwnd, &clientOrigin);
+        MONITORINFO maxInfo{};
+        maxInfo.cbSize = sizeof(maxInfo);
+        GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &maxInfo);
+        const int frameX = GetSystemMetrics(SM_CXSIZEFRAME) +
+                           GetSystemMetrics(SM_CXPADDEDBORDER);
+        const int frameY = GetSystemMetrics(SM_CYSIZEFRAME) +
+                           GetSystemMetrics(SM_CXPADDEDBORDER);
+        std::printf("maximize: zoomed=%d glfwMaximized=%d "
+                    "window=(%ld,%ld)-(%ld,%ld) client=(%ld,%ld) %ldx%ld "
+                    "work=(%ld,%ld)-(%ld,%ld) frame=%d/%d "
+                    "window-vs-work L%+ld T%+ld R%+ld B%+ld\n",
+                    IsZoomed(hwnd) != FALSE,
+                    core::window::windowIsMaximized(handle) ? 1 : 0,
+                    maxRect.left, maxRect.top, maxRect.right, maxRect.bottom,
+                    clientOrigin.x, clientOrigin.y, maxClient.right,
+                    maxClient.bottom, maxInfo.rcWork.left, maxInfo.rcWork.top,
+                    maxInfo.rcWork.right, maxInfo.rcWork.bottom, frameX, frameY,
+                    maxRect.left - maxInfo.rcWork.left,
+                    maxRect.top - maxInfo.rcWork.top,
+                    maxRect.right - maxInfo.rcWork.right,
+                    maxRect.bottom - maxInfo.rcWork.bottom);
+        char fitLine[192];
+        std::snprintf(fitLine, sizeof(fitLine),
+                      "maximized client == monitor work area (origin %ld,%ld "
+                      "size %ldx%ld vs work %ldx%ld)",
+                      clientOrigin.x, clientOrigin.y, maxClient.right,
+                      maxClient.bottom,
+                      maxInfo.rcWork.right - maxInfo.rcWork.left,
+                      maxInfo.rcWork.bottom - maxInfo.rcWork.top);
+        check(fitLine,
+              clientOrigin.x == maxInfo.rcWork.left &&
+                  clientOrigin.y == maxInfo.rcWork.top &&
+                  maxClient.right == maxInfo.rcWork.right - maxInfo.rcWork.left &&
+                  maxClient.bottom ==
+                      maxInfo.rcWork.bottom - maxInfo.rcWork.top);
+        check("maximize sets windowIsMaximized",
+              core::window::windowIsMaximized(handle));
+        // 直接门（ptMax 钳制无门卫）：zoomed 态再派发 WM_GETMINMAXINFO（托盘
+        // hide→show 恢复、拓扑/DPI 再适配同型）——ptMax 必须仍钳在所在显示器工
+        // 作区，不得回落 DefWindowProc 默认值（主显示器锚定，非主屏上尺寸错）。
+        {
+            MINMAXINFO minMax{};
+            SendMessageW(hwnd, WM_GETMINMAXINFO, 0,
+                         reinterpret_cast<LPARAM>(&minMax));
+            char mmLine[192];
+            std::snprintf(mmLine, sizeof(mmLine),
+                          "zoomed GETMINMAXINFO ptMax == work area (pos %ld,%ld "
+                          "size %ldx%ld)",
+                          minMax.ptMaxPosition.x, minMax.ptMaxPosition.y,
+                          minMax.ptMaxSize.x, minMax.ptMaxSize.y);
+            check(mmLine,
+                  minMax.ptMaxPosition.x == maxInfo.rcWork.left &&
+                      minMax.ptMaxPosition.y == maxInfo.rcWork.top &&
+                      minMax.ptMaxSize.x ==
+                          maxInfo.rcWork.right - maxInfo.rcWork.left &&
+                      minMax.ptMaxSize.y ==
+                          maxInfo.rcWork.bottom - maxInfo.rcWork.top);
+        }
+        {
+            const LRESULT btnZone =
+                SendMessageW(hwnd, WM_NCHITTEST, 0,
+                             screenLParamOf(hwnd, maxClient.right - 23, 20));
+            const LRESULT rightmost =
+                SendMessageW(hwnd, WM_NCHITTEST, 0,
+                             screenLParamOf(hwnd, maxClient.right - 1, 20));
+            char btnLine[160];
+            std::snprintf(btnLine, sizeof(btnLine),
+                          "close-button band hits caption when maximized "
+                          "(x-23 got %s, rightmost got %s)",
+                          htName(btnZone), htName(rightmost));
+            check(btnLine, btnZone == HTCAPTION && rightmost == HTCAPTION);
+        }
+        core::window::restoreWindow(handle);
+        for (int settle = 0; settle < 10; ++settle) {
+            glfwPollEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+        RECT postRect{};
+        GetWindowRect(hwnd, &postRect);
+        char restoreLine[160];
+        std::snprintf(restoreLine, sizeof(restoreLine),
+                      "restore returns pre-maximize rect (%ld,%ld)-(%ld,%ld) "
+                      "vs (%ld,%ld)-(%ld,%ld)",
+                      postRect.left, postRect.top, postRect.right,
+                      postRect.bottom, preRect.left, preRect.top, preRect.right,
+                      preRect.bottom);
+        check(restoreLine,
+              postRect.left == preRect.left && postRect.top == preRect.top &&
+                  postRect.right == preRect.right &&
+                  postRect.bottom == preRect.bottom);
+        check("restore clears windowIsMaximized",
+              !core::window::windowIsMaximized(handle));
+    }
+
+    // ---- ⑦c 托盘流：最大化窗 hide→show 再适配（close 钮 = 隐藏到托盘的宿主形态）----
+    // DevDesk 生产流：自绘关闭钮 → 隐藏到托盘（glfwHideWindow）→ 托盘点击恢复
+    // （glfwShowWindow）。zoomed 态的 show 会重适配最大化放置——WM_GETMINMAXINFO
+    // 在 IsZoomed=TRUE 下派发，若 ptMax 钳制被门卫跳过，落位由 DefWindowProc 默认
+    // 值决定。断言恢复后仍 zoomed 且客户区 == 工作区。
+    {
+        core::window::maximizeWindow(handle);
+        for (int settle = 0; settle < 10; ++settle) {
+            glfwPollEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+        glfwHideWindow(static_cast<GLFWwindow*>(handle));
+        for (int settle = 0; settle < 10; ++settle) {
+            glfwPollEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+        glfwShowWindow(static_cast<GLFWwindow*>(handle));
+        for (int settle = 0; settle < 10; ++settle) {
+            glfwPollEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+        RECT trayRect{};
+        RECT trayClient{};
+        GetWindowRect(hwnd, &trayRect);
+        GetClientRect(hwnd, &trayClient);
+        POINT trayOrigin{0, 0};
+        ClientToScreen(hwnd, &trayOrigin);
+        MONITORINFO trayInfo{};
+        trayInfo.cbSize = sizeof(trayInfo);
+        GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                         &trayInfo);
+        std::printf("tray-maximized-show: zoomed=%d glfwMaximized=%d "
+                    "window=(%ld,%ld)-(%ld,%ld) client=(%ld,%ld) %ldx%ld "
+                    "work=(%ld,%ld)-(%ld,%ld) window-vs-work L%+ld T%+ld "
+                    "R%+ld B%+ld\n",
+                    IsZoomed(hwnd) != FALSE,
+                    core::window::windowIsMaximized(handle) ? 1 : 0,
+                    trayRect.left, trayRect.top, trayRect.right, trayRect.bottom,
+                    trayOrigin.x, trayOrigin.y, trayClient.right,
+                    trayClient.bottom, trayInfo.rcWork.left, trayInfo.rcWork.top,
+                    trayInfo.rcWork.right, trayInfo.rcWork.bottom,
+                    trayRect.left - trayInfo.rcWork.left,
+                    trayRect.top - trayInfo.rcWork.top,
+                    trayRect.right - trayInfo.rcWork.right,
+                    trayRect.bottom - trayInfo.rcWork.bottom);
+        char trayFitLine[192];
+        std::snprintf(trayFitLine, sizeof(trayFitLine),
+                      "tray-maximized-show client == work area (origin %ld,%ld "
+                      "size %ldx%ld)",
+                      trayOrigin.x, trayOrigin.y, trayClient.right,
+                      trayClient.bottom,
+                      trayInfo.rcWork.right - trayInfo.rcWork.left,
+                      trayInfo.rcWork.bottom - trayInfo.rcWork.top);
+        check(trayFitLine,
+              trayOrigin.x == trayInfo.rcWork.left &&
+                  trayOrigin.y == trayInfo.rcWork.top &&
+                  trayClient.right ==
+                      trayInfo.rcWork.right - trayInfo.rcWork.left &&
+                  trayClient.bottom ==
+                      trayInfo.rcWork.bottom - trayInfo.rcWork.top);
+        core::window::restoreWindow(handle);
+        for (int settle = 0; settle < 10; ++settle) {
+            glfwPollEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+    }
+
+    // ---- ⑦d 从最小化态最大化（WM_GETMINMAXINFO 在 IsIconic 下派发的钳制缺口）----
+    // ShowWindow(SW_MAXIMIZE) 在窗口 iconic 时派发 WM_GETMINMAXINFO，壳层的
+    // ptMax 钳制若被 IsIconic/IsZoomed 门卫跳过，ptMax 落 DefWindowProc 默认值
+    // ——WS_POPUP|WS_THICKFRAME 的默认最大化矩形是工作区外扩边框（真机「最大化
+    // 窗口比屏幕大、右上角关闭钮半截」的机制层）。断言同 ⑦：最大化客户区 ==
+    // 工作区，且还原回到最小化前矩形。
+    {
+        RECT preIconicRect{};
+        GetWindowRect(hwnd, &preIconicRect);
+        core::window::iconifyWindow(handle);
+        for (int settle = 0; settle < 10; ++settle) {
+            glfwPollEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+        core::window::maximizeWindow(handle);
+        for (int settle = 0; settle < 10; ++settle) {
+            glfwPollEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+        RECT fromIconicRect{};
+        RECT fromIconicClient{};
+        GetWindowRect(hwnd, &fromIconicRect);
+        GetClientRect(hwnd, &fromIconicClient);
+        POINT fromIconicOrigin{0, 0};
+        ClientToScreen(hwnd, &fromIconicOrigin);
+        MONITORINFO iconicInfo{};
+        iconicInfo.cbSize = sizeof(iconicInfo);
+        GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                         &iconicInfo);
+        const int frameX = GetSystemMetrics(SM_CXSIZEFRAME) +
+                           GetSystemMetrics(SM_CXPADDEDBORDER);
+        const int frameY = GetSystemMetrics(SM_CYSIZEFRAME) +
+                           GetSystemMetrics(SM_CXPADDEDBORDER);
+        std::printf("maximize-from-iconic: zoomed=%d "
+                    "window=(%ld,%ld)-(%ld,%ld) client=(%ld,%ld) %ldx%ld "
+                    "work=(%ld,%ld)-(%ld,%ld) frame=%d/%d "
+                    "window-vs-work L%+ld T%+ld R%+ld B%+ld\n",
+                    IsZoomed(hwnd) != FALSE, fromIconicRect.left,
+                    fromIconicRect.top, fromIconicRect.right,
+                    fromIconicRect.bottom, fromIconicOrigin.x,
+                    fromIconicOrigin.y, fromIconicClient.right,
+                    fromIconicClient.bottom, iconicInfo.rcWork.left,
+                    iconicInfo.rcWork.top, iconicInfo.rcWork.right,
+                    iconicInfo.rcWork.bottom, frameX, frameY,
+                    fromIconicRect.left - iconicInfo.rcWork.left,
+                    fromIconicRect.top - iconicInfo.rcWork.top,
+                    fromIconicRect.right - iconicInfo.rcWork.right,
+                    fromIconicRect.bottom - iconicInfo.rcWork.bottom);
+        char iconicFitLine[192];
+        std::snprintf(iconicFitLine, sizeof(iconicFitLine),
+                      "maximize-from-iconic client == work area (origin "
+                      "%ld,%ld size %ldx%ld)",
+                      fromIconicOrigin.x, fromIconicOrigin.y,
+                      fromIconicClient.right, fromIconicClient.bottom,
+                      iconicInfo.rcWork.right - iconicInfo.rcWork.left,
+                      iconicInfo.rcWork.bottom - iconicInfo.rcWork.top);
+        check(iconicFitLine,
+              fromIconicOrigin.x == iconicInfo.rcWork.left &&
+                  fromIconicOrigin.y == iconicInfo.rcWork.top &&
+                  fromIconicClient.right ==
+                      iconicInfo.rcWork.right - iconicInfo.rcWork.left &&
+                  fromIconicClient.bottom ==
+                      iconicInfo.rcWork.bottom - iconicInfo.rcWork.top);
+        core::window::restoreWindow(handle);
+        for (int settle = 0; settle < 10; ++settle) {
+            glfwPollEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+        RECT afterIconicRestore{};
+        GetWindowRect(hwnd, &afterIconicRestore);
+        char iconicRestoreLine[160];
+        std::snprintf(iconicRestoreLine, sizeof(iconicRestoreLine),
+                      "restore from iconic-maximize returns pre-minimize rect "
+                      "(%ld,%ld)-(%ld,%ld)",
+                      afterIconicRestore.left, afterIconicRestore.top,
+                      afterIconicRestore.right, afterIconicRestore.bottom);
+        check(iconicRestoreLine,
+              afterIconicRestore.left == preIconicRect.left &&
+                  afterIconicRestore.top == preIconicRect.top &&
+                  afterIconicRestore.right == preIconicRect.right &&
+                  afterIconicRestore.bottom == preIconicRect.bottom);
+    }
+
+    // ---- ⑦b snap-arrange 几何（--drag 真输入取证：Aero Snap 最大化不走
+    // ShowWindow(SW_MAXIMIZE) 的 WM_GETMINMAXINFO/ptMax 语义，是独立于 ⑦ 的
+    // 布置路径——「最大化窗口比屏幕大、右上角关闭钮半截」在这条路径上取证/复现。
+    // 合成真实键盘流（Win+Up / Win+Down）与真实鼠标 caption 拖到顶缘两种手势，
+    // 断言同 ⑦：布置后的客户区 == 工作区、还原复位。----
+    if (drag) {
+        const auto activateWindow = [&] {
+            SetForegroundWindow(hwnd);
+            for (int attempt = 0; attempt < 3 && GetActiveWindow() != hwnd;
+                 ++attempt) {
+                POINT center{clientW / 2, clientH / 2};
+                ClientToScreen(hwnd, &center);
+                SetCursorPos(center.x, center.y);
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                INPUT press{};
+                press.type = INPUT_MOUSE;
+                press.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+                INPUT release{};
+                release.type = INPUT_MOUSE;
+                release.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+                SendInput(1, &press, sizeof(INPUT));
+                std::this_thread::sleep_for(std::chrono::milliseconds(40));
+                SendInput(1, &release, sizeof(INPUT));
+                std::this_thread::sleep_for(std::chrono::milliseconds(120));
+            }
+        };
+        const auto tapKey = [](WORD vk, bool up) {
+            INPUT input{};
+            input.type = INPUT_KEYBOARD;
+            input.ki.wVk = vk;
+            input.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
+            SendInput(1, &input, sizeof(INPUT));
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        };
+        const auto sendWinCombo = [&tapKey](WORD vk) {
+            tapKey(VK_LWIN, false);
+            tapKey(vk, false);
+            tapKey(vk, true);
+            tapKey(VK_LWIN, true);
+        };
+        const auto settleLoop = [] {
+            for (int settle = 0; settle < 20; ++settle) {
+                glfwPollEvents();
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            }
+        };
+        const auto printArrange = [&](const char* tag) {
+            RECT rect{};
+            RECT client{};
+            GetWindowRect(hwnd, &rect);
+            GetClientRect(hwnd, &client);
+            POINT origin{0, 0};
+            ClientToScreen(hwnd, &origin);
+            MONITORINFO info{};
+            info.cbSize = sizeof(info);
+            GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                            &info);
+            const int frameX = GetSystemMetrics(SM_CXSIZEFRAME) +
+                               GetSystemMetrics(SM_CXPADDEDBORDER);
+            const int frameY = GetSystemMetrics(SM_CYSIZEFRAME) +
+                               GetSystemMetrics(SM_CXPADDEDBORDER);
+            std::printf("%s: zoomed=%d glfwMaximized=%d "
+                        "window=(%ld,%ld)-(%ld,%ld) client=(%ld,%ld) %ldx%ld "
+                        "work=(%ld,%ld)-(%ld,%ld) frame=%d/%d "
+                        "window-vs-work L%+ld T%+ld R%+ld B%+ld\n",
+                        tag, IsZoomed(hwnd) != FALSE,
+                        core::window::windowIsMaximized(handle) ? 1 : 0,
+                        rect.left, rect.top, rect.right, rect.bottom,
+                        origin.x, origin.y, client.right, client.bottom,
+                        info.rcWork.left, info.rcWork.top, info.rcWork.right,
+                        info.rcWork.bottom, frameX, frameY,
+                        rect.left - info.rcWork.left,
+                        rect.top - info.rcWork.top,
+                        rect.right - info.rcWork.right,
+                        rect.bottom - info.rcWork.bottom);
+            char fitLine[192];
+            std::snprintf(fitLine, sizeof(fitLine),
+                          "%s: client == work area (origin %ld,%ld size "
+                          "%ldx%ld)",
+                          tag, origin.x, origin.y, client.right,
+                          client.bottom,
+                          info.rcWork.right - info.rcWork.left,
+                          info.rcWork.bottom - info.rcWork.top);
+            check(fitLine,
+                  origin.x == info.rcWork.left &&
+                      origin.y == info.rcWork.top &&
+                      client.right == info.rcWork.right - info.rcWork.left &&
+                      client.bottom ==
+                          info.rcWork.bottom - info.rcWork.top);
+        };
+        const auto resetGeometry = [&](const RECT& target) {
+            sendWinCombo(VK_DOWN);  // Win+Down 解除 arrange/zoom
+            settleLoop();
+            RECT now{};
+            GetWindowRect(hwnd, &now);
+            if (now.left != target.left || now.top != target.top ||
+                now.right != target.right || now.bottom != target.bottom) {
+                SetWindowPos(hwnd, nullptr, target.left, target.top,
+                             target.right - target.left,
+                             target.bottom - target.top,
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+                settleLoop();
+            }
+        };
+
+        RECT preSnap{};
+        GetWindowRect(hwnd, &preSnap);
+        activateWindow();
+        // Win+Up：键盘手势的 snap 最大化（arrange 布置）
+        sendWinCombo(VK_UP);
+        settleLoop();
+        printArrange("snap-keyup");
+        resetGeometry(preSnap);
+
+        // caption 拖到屏幕顶缘中点：鼠标手势的 snap 最大化（最贴近真实用户操作）
+        activateWindow();
+        POINT caption{clientW / 2, 20};
+        ClientToScreen(hwnd, &caption);
+        SetCursorPos(caption.x, caption.y);
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        INPUT down{};
+        down.type = INPUT_MOUSE;
+        down.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+        INPUT up{};
+        up.type = INPUT_MOUSE;
+        up.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+        SendInput(1, &down, sizeof(INPUT));
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        SetCursorPos(preSnap.left + clientW / 2, 2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        SendInput(1, &up, sizeof(INPUT));
+        settleLoop();
+        printArrange("snap-dragtop");
+        resetGeometry(preSnap);
+
+        // 裸 WS_THICKFRAME 取证（打印不断言）：不装壳子类（无 ptMax 钳制、无
+        // WM_NCCALCSIZE 接管）时，DefWindowProc 给 WS_POPUP|WS_THICKFRAME 的
+        // 默认 ptMax 与实际最大化矩形——「钳制缺口时」系统原生布置的直接证据。
+        {
+            core::window::WindowCreateRequest rawRequest = request;
+            rawRequest.title = "window_shell_probe (raw thickframe)";
+            core::window::Handle rawHandle =
+                core::window::createWindow(rawRequest);
+            if (rawHandle != nullptr) {
+                HWND rawHwnd = static_cast<HWND>(
+                    core::window::nativeWindowInfo(rawHandle).platformWindow);
+                if (rawHwnd != nullptr) {
+                    SetWindowPos(rawHwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                    SetForegroundWindow(rawHwnd);
+                    const LONG_PTR rawStyle =
+                        GetWindowLongPtrW(rawHwnd, GWL_STYLE);
+                    SetWindowLongPtrW(rawHwnd, GWL_STYLE,
+                                      rawStyle | WS_THICKFRAME);
+                    MINMAXINFO mmi{};
+                    mmi.ptMaxSize.x = -1;  // 哨兵：未被填则现形
+                    mmi.ptMaxPosition.x = -1;
+                    SendMessageW(rawHwnd, WM_GETMINMAXINFO, 0,
+                                 reinterpret_cast<LPARAM>(&mmi));
+                    MONITORINFO rawInfo{};
+                    rawInfo.cbSize = sizeof(rawInfo);
+                    GetMonitorInfoW(
+                        MonitorFromWindow(rawHwnd, MONITOR_DEFAULTTONEAREST),
+                        &rawInfo);
+                    const int rawFrameX =
+                        GetSystemMetrics(SM_CXSIZEFRAME) +
+                        GetSystemMetrics(SM_CXPADDEDBORDER);
+                    const int rawFrameY =
+                        GetSystemMetrics(SM_CYSIZEFRAME) +
+                        GetSystemMetrics(SM_CXPADDEDBORDER);
+                    std::printf("raw-thickframe: default ptMaxPos=(%ld,%ld) "
+                                "ptMaxSize=(%ld,%ld) work=(%ld,%ld)-(%ld,%ld) "
+                                "frame=%d/%d\n",
+                                mmi.ptMaxPosition.x, mmi.ptMaxPosition.y,
+                                mmi.ptMaxSize.x, mmi.ptMaxSize.y,
+                                rawInfo.rcWork.left, rawInfo.rcWork.top,
+                                rawInfo.rcWork.right, rawInfo.rcWork.bottom,
+                                rawFrameX, rawFrameY);
+                    ShowWindow(rawHwnd, SW_MAXIMIZE);
+                    settleLoop();
+                    RECT rawRect{};
+                    RECT rawClient{};
+                    GetWindowRect(rawHwnd, &rawRect);
+                    GetClientRect(rawHwnd, &rawClient);
+                    std::printf("raw-thickframe maximized: zoomed=%d "
+                                "window=(%ld,%ld)-(%ld,%ld) client=%ldx%ld "
+                                "window-vs-work L%+ld T%+ld R%+ld B%+ld\n",
+                                IsZoomed(rawHwnd) != FALSE, rawRect.left,
+                                rawRect.top, rawRect.right, rawRect.bottom,
+                                rawClient.right, rawClient.bottom,
+                                rawRect.left - rawInfo.rcWork.left,
+                                rawRect.top - rawInfo.rcWork.top,
+                                rawRect.right - rawInfo.rcWork.right,
+                                rawRect.bottom - rawInfo.rcWork.bottom);
+                    SetWindowPos(rawHwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                }
+                core::window::destroyWindow(rawHandle);
+            }
+        }
+    }
+
     // ---- ③ 真指针拖左边缘（--drag 显式开关：会动真实鼠标，别在 ctest 里跑）----
     // 方向语义：拖左缘向外（x-140）= 左缘左移 = 外框变宽 ~140。
     if (drag) {
@@ -476,7 +958,15 @@ int probeWindowShell(bool drag, int holdSeconds) {
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
-    // ---- ④ maximized 启动窗对照（打印不断言：IsZoomed 门卫关热区是设计行为）----
+    // ---- ④ maximized 启动窗对照（zoomed 混合态回归门 + 对照打印）----
+    // GLFW 创建期 maximized hint 落成「zoomed 样式 + 窗口矩形未按最大化放置」
+    // 的混合态（本机实证：rect=工作区尺寸@创建位置，右/下缘出屏）——正是
+    // WM_NCCALCSIZE 客户区护栏要兜的 zoomed 态异常落位：护栏在位时客户区被钳
+    // 到可见工作区内（自绘标题栏/关闭钮恒在屏内），缺失时客户区 = 整窗跟着出
+    // 屏（真机「最大化窗显示不全、关闭钮半截」形态）。本段从纯打印升为断言。
+    // 注：直接合成 WM_NCCALCSIZE(TRUE) 消息做门会不达壳层 proc（SendMessage
+    // 被系统吞掉、参数原样返回；裸 Win32 对照组则正常送达——机制未明），故用
+    // 这个系统真实产出的混合态做门，别换回合成的直接派发。
     {
         core::window::WindowCreateRequest maxRequest = request;
         maxRequest.maximized = true;
@@ -497,17 +987,44 @@ int probeWindowShell(bool drag, int holdSeconds) {
                 RECT maxWindow{};
                 GetClientRect(maxHwnd, &maxClient);
                 GetWindowRect(maxHwnd, &maxWindow);
+                POINT maxVariantOrigin{0, 0};
+                ClientToScreen(maxHwnd, &maxVariantOrigin);
+                MONITORINFO maxVariantInfo{};
+                maxVariantInfo.cbSize = sizeof(maxVariantInfo);
+                GetMonitorInfoW(MonitorFromWindow(
+                                    maxHwnd, MONITOR_DEFAULTTONEAREST),
+                                 &maxVariantInfo);
                 const LRESULT left = SendMessageW(
                     maxHwnd, WM_NCHITTEST, 0,
                     screenLParamOf(maxHwnd, 1, maxClient.bottom / 2));
                 std::printf("maximized variant: zoomed=%d window=%ldx%ld@(%ld,%ld) "
-                            "client=%ldx%ld edge-left got %s (by-design HTCLIENT "
+                            "client=(%ld,%ld) %ldx%ld work=(%ld,%ld)-(%ld,%ld) "
+                            "edge-left got %s (by-design HTCLIENT "
                             "when maximized)\n",
                             IsZoomed(maxHwnd) != FALSE,
                             maxWindow.right - maxWindow.left,
                             maxWindow.bottom - maxWindow.top, maxWindow.left,
-                            maxWindow.top, maxClient.right, maxClient.bottom,
-                            htName(left));
+                            maxWindow.top, maxVariantOrigin.x,
+                            maxVariantOrigin.y, maxClient.right,
+                            maxClient.bottom, maxVariantInfo.rcWork.left,
+                            maxVariantInfo.rcWork.top,
+                            maxVariantInfo.rcWork.right,
+                            maxVariantInfo.rcWork.bottom, htName(left));
+                // 客户区四边全在工作区内（护栏生效的可见证据）——窗口矩形本身
+                // 是 GLFW 创建流的产物，壳层不医矩形，只保证可见内容在屏内。
+                char variantFitLine[192];
+                std::snprintf(variantFitLine, sizeof(variantFitLine),
+                              "maximized-startup client fits work area "
+                              "(origin %ld,%ld size %ldx%ld)",
+                              maxVariantOrigin.x, maxVariantOrigin.y,
+                              maxClient.right, maxClient.bottom);
+                check(variantFitLine,
+                      maxVariantOrigin.x >= maxVariantInfo.rcWork.left &&
+                          maxVariantOrigin.y >= maxVariantInfo.rcWork.top &&
+                          maxVariantOrigin.x + maxClient.right <=
+                              maxVariantInfo.rcWork.right &&
+                          maxVariantOrigin.y + maxClient.bottom <=
+                              maxVariantInfo.rcWork.bottom);
             }
             core::window::destroyWindow(maxHandle);
         }
