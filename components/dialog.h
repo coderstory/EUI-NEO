@@ -141,7 +141,7 @@ public:
                         } else {
                             ui_.text(id_ + ".title")
                                 .x(metrics_.spacing.panel)
-                                .y(metrics_.control.indicator)
+                                .y(16.0f)  // 规格 §三.4：标题上缘距弹窗顶 ≤16px（原 metrics_.control.indicator=22）
                                 .size(contentWidth, metrics_.spacing.header + metrics_.spacing.micro)
                                 .text(title_)
                                 .fontSize(metrics_.typography.heading)
@@ -151,7 +151,7 @@ public:
 
                             ui_.text(id_ + ".message")
                                 .x(metrics_.spacing.panel)
-                                .y(64.0f)
+                                .y(56.0f)  // 规格 §三.4：标题下缘距内容首元素 ≤12px（原 64）
                                 .size(contentWidth, std::max(0.0f, height - 138.0f))
                                 .text(message_)
                                 .fontSize(metrics_.typography.input)
