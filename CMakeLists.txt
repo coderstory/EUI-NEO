@@ -255,6 +255,9 @@ set(CORE_SOURCES
     core/render/shadertoy_primitive.cpp
     core/render/stb_image_impl.cpp
     core/render/text.cpp
+    core/render/text_shaping.cpp
+    core/render/text_measure.cpp
+    core/render/text_layout.cpp
     core/platform/tray_bridge.c
     core/platform/open_file_bridge.c
     core/window/window_backend.cpp
@@ -769,6 +772,7 @@ if(EUI_BUILD_TEST_FIXTURES)
 
     # Explicit source list: tests/probes/ is git-tracked first-class code.
     set(TEST_PROBE_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/arabic_bidi_text_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/gpu_image_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/input_runtime_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/render_clear_probe.cpp"
