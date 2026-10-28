@@ -12,6 +12,11 @@
 
 namespace components {
 
+struct DropdownOpenState {
+    bool initialized = false;
+    bool open = false;
+};
+
 struct DropdownStyle {
     DropdownStyle() : DropdownStyle(theme::dark()) {}
 
@@ -71,6 +76,7 @@ public:
         onOpenChange([&signal](bool value) { signal.set(value); });
         return *this;
     }
+    DropdownBuilder& openUp(bool value = true) { openUp_ = value; return *this; }
     DropdownBuilder& itemHeight(float value) { itemHeight_ = std::max(1.0f, value); return *this; }
     DropdownBuilder& style(const DropdownStyle& value) { style_ = value; return *this; }
     DropdownBuilder& theme(const theme::ThemeColorTokens& tokens) {
@@ -84,6 +90,15 @@ public:
     DropdownBuilder& onOpenChange(std::function<void(bool)> callback) { onOpenChange_ = std::move(callback); return *this; }
 
     void build() {
+        DropdownOpenState* retainedOpen = nullptr;
+        if (!onOpenChange_) {
+            retainedOpen = &ui_.state<DropdownOpenState>(id_ + ".open");
+            if (!retainedOpen->initialized) {
+                retainedOpen->open = open_;
+                retainedOpen->initialized = true;
+            }
+            open_ = retainedOpen->open;
+        }
         const int count = static_cast<int>(items_.size());
         const int selected = count > 0 ? std::clamp(selected_, 0, count - 1) : -1;
         const std::string label = selected >= 0 ? items_[selected] : placeholder_;
@@ -94,11 +109,11 @@ public:
         const float popupGap = metrics_.spacing.compact;
         const float popupPadding = metrics_.spacing.small;
         const float popupHeight = itemHeight * static_cast<float>(std::max(1, count)) + popupPadding * 2.0f;
-        const float rootHeight = height + popupGap + popupHeight;
         const float visible = open_ ? 1.0f : 0.0f;
-        // 向下：收起时从上方 -6 滑入；向上：镜像，从下方 +6 滑入、以底边为缩放锚
         const float popupOffsetY = open_ ? 0.0f : (openUp_ ? 6.0f : -6.0f);
         const float popupScale = open_ ? 1.0f : 0.96f;
+        const float popupY = openUp_ ? -(popupHeight + popupGap) : height + popupGap;
+        const float rootHeight = openUp_ ? height : height + popupGap + popupHeight;
         const std::function<void(int)> onChange = onChange_;
         const std::function<void(bool)> onOpenChange = onOpenChange_;
 
@@ -112,9 +127,11 @@ public:
                     .radius(style_.radius)
                     .border(metrics_.spacing.hairline, style_.border)
                     .transition(transition_)
-                    .onClick([onOpenChange, open = open_] {
+                    .onClick([onOpenChange, retainedOpen, open = open_] {
                         if (onOpenChange) {
                             onOpenChange(!open);
+                        } else if (retainedOpen != nullptr) {
+                            retainedOpen->open = !open;
                         }
                     })
                     .build();
@@ -143,7 +160,7 @@ public:
                     .build();
 
                 ui_.stack(id_ + ".popup")
-                    .y(openUp_ ? -(popupGap + popupHeight) : height + popupGap)
+                    .y(popupY)
                     .size(width_, popupHeight)
                     // 弹层展开档位：open 时把 popup 子树抬到常规内容档之上
                     // （sidebar 60 / card_slider 信息层 250 / 其它 dropdown
@@ -195,12 +212,14 @@ public:
                                 .radius(std::max(metrics_.radius.tiny, style_.radius - metrics_.radius.tiny))
                                 .instantStates()
                                 .disabled(!open_)
-                                .onClick([onChange, onOpenChange, index] {
+                                .onClick([onChange, onOpenChange, retainedOpen, index] {
                                     if (onChange) {
                                         onChange(index);
                                     }
                                     if (onOpenChange) {
                                         onOpenChange(false);
+                                    } else if (retainedOpen != nullptr) {
+                                        retainedOpen->open = false;
                                     }
                                 })
                                 .build();

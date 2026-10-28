@@ -1,5 +1,6 @@
 #include "core/window/window_backend.h"
 #include "core/platform/native_bridge.h"
+#include "core/window/x11_moveresize.h"
 
 #include <algorithm>
 #include <cmath>
@@ -350,6 +351,27 @@ const X11ResourceApi& x11ResourceApi() {
     static const X11ResourceApi api = loadX11ResourceApi();
     return api;
 }
+
+bool sendX11MoveResizeForWindow(Handle window, int direction) {
+    SDL_Window* sdlWindow = static_cast<SDL_Window*>(window);
+    if (!sdlWindow) {
+        return false;
+    }
+#if defined(__linux__) && !defined(__ANDROID__) && defined(SDL_VIDEO_DRIVER_X11)
+    SDL_SysWMinfo info{};
+    SDL_VERSION(&info.version);
+    if (SDL_GetWindowWMInfo(sdlWindow, &info) != SDL_TRUE ||
+        info.subsystem != SDL_SYSWM_X11 ||
+        info.info.x11.display == nullptr) {
+        return false;
+    }
+    return detail::sendX11MoveResize(info.info.x11.display,
+                                     static_cast<std::uint64_t>(info.info.x11.window), direction);
+#else
+    (void)direction;
+    return false;
+#endif
+}
 #endif
 
 
@@ -416,7 +438,7 @@ Handle createWindow(const WindowCreateRequest& request) {
         configureOpenGLWindowAttributes();
     }
 
-    Uint32 flags = 0;
+    Uint32 flags = request.visible ? 0 : SDL_WINDOW_HIDDEN;
     if (request.highDpi) {
         flags |= SDL_WINDOW_ALLOW_HIGHDPI;
     }
@@ -758,6 +780,19 @@ void setWindowCaptionHitTestHandler(Handle, CaptionHitTestHandler, bool) {
 
 void setWindowLiveRenderHandler(Handle, LiveRenderHandler) {
     // SDL2 后端无自绘壳（能力查询恒 false），无模态拖拽循环可活渲染
+
+bool framebufferTransparent(Handle) {
+    // SDL2 has no transparent-window flag (it arrived in SDL3), so the
+    // request.transparent hint cannot be honored on this backend.
+    return false;
+}
+
+bool beginWindowMove(Handle window) {
+    return sendX11MoveResizeForWindow(window, kNetWmMoveResizeMove);
+}
+
+bool beginWindowResize(Handle window, WindowResizeEdge edge) {
+    return sendX11MoveResizeForWindow(window, static_cast<int>(edge));
 }
 
 } // namespace core::window
@@ -790,6 +825,11 @@ void setWindowLiveRenderHandler(Handle, LiveRenderHandler) {
 #ifndef GLFW_EXPOSE_NATIVE_COCOA
 #define GLFW_EXPOSE_NATIVE_COCOA
 #endif
+#include <GLFW/glfw3native.h>
+#endif
+
+#if defined(__linux__) && !defined(__ANDROID__)
+#define GLFW_EXPOSE_NATIVE_X11
 #include <GLFW/glfw3native.h>
 #endif
 
@@ -1143,6 +1183,29 @@ void uninstallChromeHitTest(HWND hwnd) {
 }
 #endif
 
+bool sendX11MoveResizeForWindow(Handle window, int direction) {
+#if defined(__linux__) && !defined(__ANDROID__)
+    GLFWwindow* glfwWindow = static_cast<GLFWwindow*>(window);
+    if (!glfwWindow) {
+        return false;
+    }
+#if defined(GLFW_PLATFORM_X11)
+    // Runtime platform selection (GLFW 3.4+): only X11 windows can be moved
+    // via the EWMH message.
+    if (glfwGetPlatform() != GLFW_PLATFORM_X11) {
+        return false;
+    }
+#endif
+    return detail::sendX11MoveResize(glfwGetX11Display(),
+                                     static_cast<std::uint64_t>(glfwGetX11Window(glfwWindow)),
+                                     direction);
+#else
+    (void)window;
+    (void)direction;
+    return false;
+#endif
+}
+
 } // namespace
 
 Handle createWindow(const WindowCreateRequest& request) {
@@ -1163,8 +1226,10 @@ Handle createWindow(const WindowCreateRequest& request) {
                        transparentHint ? GLFW_TRUE : GLFW_FALSE);
         shareContext = static_cast<GLFWwindow*>(request.parent);
     }
+    glfwWindowHint(GLFW_VISIBLE, request.visible ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_RESIZABLE, request.resizable ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_DECORATED, request.decorated ? GLFW_TRUE : GLFW_FALSE);
+    glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, request.transparent ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_FLOATING, request.alwaysOnTop ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_MAXIMIZED, request.maximized ? GLFW_TRUE : GLFW_FALSE);
     // 不抢焦点（桌宠设计 G1）：glfwShowWindow 是否把窗口带到前台。hint 跨
@@ -1177,6 +1242,19 @@ Handle createWindow(const WindowCreateRequest& request) {
     // 按钮）→ 应用 WS_EX_TOOLWINDOW → 再显示。hint 跨 glfwCreateWindow 残留，
     // 两态都显式设置
     glfwWindowHint(GLFW_VISIBLE, request.visible ? GLFW_TRUE : GLFW_FALSE);
+
+#if defined(GLFW_WAYLAND_APP_ID) || defined(GLFW_X11_CLASS_NAME)
+    const char* appId = request.appId.c_str();
+#endif
+#if defined(GLFW_WAYLAND_APP_ID)
+    glfwWindowHintString(GLFW_WAYLAND_APP_ID, appId);
+#endif
+#if defined(GLFW_X11_CLASS_NAME)
+    glfwWindowHintString(GLFW_X11_CLASS_NAME, appId);
+#endif
+#if defined(GLFW_X11_INSTANCE_NAME)
+    glfwWindowHintString(GLFW_X11_INSTANCE_NAME, appId);
+#endif
 
     GLFWwindow* window = glfwCreateWindow(
         request.width,
@@ -1549,6 +1627,20 @@ void setWindowLiveRenderHandler(Handle window, LiveRenderHandler handler) {
     (void)window;
     (void)handler;
 #endif
+
+bool framebufferTransparent(Handle window) {
+    // Reports what the platform actually granted: without a compositor an
+    // X11 window cannot honor the transparent hint.
+    return window != nullptr &&
+           glfwGetWindowAttrib(static_cast<GLFWwindow*>(window), GLFW_TRANSPARENT_FRAMEBUFFER) == GLFW_TRUE;
+}
+
+bool beginWindowMove(Handle window) {
+    return sendX11MoveResizeForWindow(window, kNetWmMoveResizeMove);
+}
+
+bool beginWindowResize(Handle window, WindowResizeEdge edge) {
+    return sendX11MoveResizeForWindow(window, static_cast<int>(edge));
 }
 
 } // namespace core::window

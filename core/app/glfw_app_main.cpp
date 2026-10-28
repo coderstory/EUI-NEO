@@ -53,6 +53,7 @@ struct WindowState : app::AppRunner {
 struct ManagedWindow {
     GLFWwindow* window = nullptr;
     WindowState state;
+    bool shown = false;
     app::DslWindowRuntime content;
     std::unique_ptr<core::render::RenderBackend> renderBackend;
 };
@@ -93,6 +94,12 @@ float getPointerScale(GLFWwindow* window) {
     const float scaleX = static_cast<float>(framebufferWidth) / static_cast<float>(windowWidth);
     const float scaleY = static_cast<float>(framebufferHeight) / static_cast<float>(windowHeight);
     return (scaleX + scaleY) * 0.5f;
+}
+
+app::MainWindowMetrics windowMetrics(GLFWwindow* window) {
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(window, &width, &height);
+    return {width, height, getDpiScale(window), getPointerScale(window)};
 }
 
 GLFWmonitor* getWindowMonitor(GLFWwindow* window) {
@@ -405,6 +412,7 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
                                                    GLFWwindow* parentWindow,
                                                    core::render::RenderBackend& shareBackend) {
     core::window::WindowCreateRequest windowRequest;
+    windowRequest.visible = false;
     windowRequest.width = request.width;
     windowRequest.height = request.height;
     windowRequest.title = request.title.c_str();
@@ -563,6 +571,14 @@ bool updateManagedWindow(ManagedWindow& managed, float deltaSeconds, bool update
         managed.state.paintRequested = true;
     }
 
+    const app::MainWindowMetrics metrics{framebufferWidth, framebufferHeight, dpiScale, pointerScale};
+    if (!(metrics == windowMetrics(managed.window))) {
+        managed.state.paintRequested = true;
+        managed.content.requestFullPaint();
+        core::platform::requestFrame();
+        return true;
+    }
+
     if (managed.state.paintRequested || managed.content.paintRequested()) {
         managed.renderBackend->beginFrame({
             managed.window,
@@ -572,6 +588,15 @@ bool updateManagedWindow(ManagedWindow& managed, float deltaSeconds, bool update
             dpiScale
         });
         managed.content.render(*managed.renderBackend, framebufferWidth, framebufferHeight, dpiScale);
+        if (!managed.shown) {
+            glfwShowWindow(managed.window);
+            managed.shown = true;
+            managed.content.requestFullPaint();
+            core::platform::requestFrame();
+            if (managed.content.request().modal) {
+                glfwFocusWindow(managed.window);
+            }
+        }
         managed.renderBackend->present();
         managed.state.paintRequested = false;
         ++managed.state.renderedFrames;
@@ -632,6 +657,7 @@ int eui_app_run() {
     TimerResolutionGuard timerResolution;
 
     core::window::WindowCreateRequest windowRequest;
+    windowRequest.visible = false;
     windowRequest.width = app::initialWindowWidth();
     windowRequest.height = app::initialWindowHeight();
     windowRequest.x = app::initialWindowX();
@@ -644,9 +670,11 @@ int eui_app_run() {
     windowRequest.resizable = app::windowResizable();
     windowRequest.highDpi = app::windowHighDpi();
     windowRequest.decorated = app::windowDecorated();
+    windowRequest.transparent = app::windowTransparent();
     windowRequest.alwaysOnTop = app::windowAlwaysOnTop();
     windowRequest.maximized = app::windowMaximized();
     windowRequest.title = app::windowTitle();
+    windowRequest.appId = app::dslAppConfig().appIdValue;
     windowRequest.renderApi = core::render::windowRenderApi();
     windowRequest.windowEffect = app::windowEffect();
     GLFWwindow* window = static_cast<GLFWwindow*>(core::window::createWindow(windowRequest));
@@ -709,7 +737,7 @@ int eui_app_run() {
         glfwTerminate();
     };
 
-    auto renderBackend = core::render::createRenderBackend(window);
+    auto renderBackend = core::render::createRenderBackend(window, nullptr, app::windowTransparent());
     if (!renderBackend) {
         cleanupMainWindow();
         return -1;
@@ -725,7 +753,11 @@ int eui_app_run() {
         cleanupMainWindow();
         return -1;
     }
-    app::MainWindowRuntime mainWindowRuntime(windowState);
+    app::MainWindowRuntime mainWindowRuntime(windowState, [&] {
+        glfwShowWindow(window);
+        app::detail::requestFullPaint();
+        core::platform::requestFrame();
+    });
     windowState.initializeTray();
     // 模态拖拽活渲染（真机反馈「窗体缩放很卡」根因修复）：SC_SIZE/SC_MOVE 模
     // 态循环阻塞在 glfwWaitEvents 的消息派发里，主循环回不了环、拖拽全程零帧
@@ -926,8 +958,6 @@ int eui_app_run() {
             continue;
         }
 
-        const float dpiScale = getDpiScale(window);
-        const float pointerScale = getPointerScale(window);
         const bool mainInputEnabled = windowState.modalChildWindow == nullptr;
 
         // 布局度量（每秒一行，EUI_FX_DEBUG=1）：屏幕尺寸折算链的各环节真值
@@ -987,7 +1017,7 @@ int eui_app_run() {
         mainWindowRuntime.runFrame(
             window,
             *renderBackend,
-            {framebufferWidth, framebufferHeight, dpiScale, pointerScale},
+            [&] { return windowMetrics(window); },
             currentFrameTime,
             getWindowRefreshRate(window),
             mainInputEnabled,

@@ -88,6 +88,17 @@ std::vector<MonitorWorkArea> getMonitorWorkAreas();
  * 纯查表，不依赖窗口/GL 初始化，可在无头环境调用（供单测）。
  */
 float windowScaleForPoint(float x, float y);
+
+// Reports whether the created framebuffer actually carries alpha (GLFW
+// honors the transparent request; SDL2 and compositor-less X11 do not).
+bool framebufferTransparent(Handle window);
+// Hand an interactive move/resize to the window manager (EWMH
+// _NET_WM_MOVERESIZE on X11). Per-frame programmatic moves arrive as
+// ConfigureRequests and can be clamped back into the workarea, so undecorated
+// windows should delegate title-bar drags this way. Returns false when the
+// current platform/backend cannot delegate; callers keep their own fallback.
+bool beginWindowMove(Handle window);
+bool beginWindowResize(Handle window, WindowResizeEdge edge);
 void installInputCallbacks(Handle window);
 void uninstallInputCallbacks(Handle window);
 bool queryImeComposition(Handle window, std::string& text, bool& composing);

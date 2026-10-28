@@ -240,6 +240,7 @@ struct Element {
 
     std::vector<std::unique_ptr<Element>> children;
     std::vector<const Element*> orderedChildren;
+    int subtreeMaxZIndex = 0;
     bool subtreeNeedsUpdate = true;
     bool subtreeHasDependentVisuals = false;
     bool subtreeHasBackdropBlur = false;
@@ -1768,6 +1769,7 @@ private:
         element.orderedChildren.clear();
         element.orderedChildren.reserve(element.children.size());
         element.subtreeNeedsUpdate = elementNeedsUpdate(element);
+        element.subtreeMaxZIndex = element.zIndex;
         element.subtreeHasDependentVisuals = elementHasDependentVisuals(element);
         element.subtreeHasBackdropBlur = elementHasBackdropBlur(element);
         element.subtreeBlocksRetainedLayer = elementBlocksRetainedLayer(element);
@@ -1776,6 +1778,7 @@ private:
         for (const auto& child : element.children) {
             element.orderedChildren.push_back(child.get());
             rebuildOrderedChildren(*child);
+            element.subtreeMaxZIndex = std::max(element.subtreeMaxZIndex, child->subtreeMaxZIndex);
             element.subtreeNeedsUpdate = element.subtreeNeedsUpdate || child->subtreeNeedsUpdate;
             element.subtreeHasDependentVisuals = element.subtreeHasDependentVisuals || child->subtreeHasDependentVisuals;
             element.subtreeHasBackdropBlur = element.subtreeHasBackdropBlur || child->subtreeHasBackdropBlur;
