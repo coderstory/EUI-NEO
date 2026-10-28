@@ -1215,14 +1215,19 @@ Handle createWindow(const WindowCreateRequest& request) {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     } else {
         configureOpenGLWindowHints();
-        // 透明帧缓冲（磨砂设计 Phase B / 桌宠 sprite 窗）：DWM 尊重重定向表面
-        // alpha 的开关。两条来源：磨砂档位（windowEffect != None，应用全局）或
-        // 窗口自身声明（transparentFramebuffer，桌宠等覆盖窗——不随全局档位
-        // 回落 None 丢透明）。Vulkan 侧无对应能力（compositeAlpha 普遍
-        // OPAQUE），直接不设。hint 会跨 glfwCreateWindow 残留，两态都显式设置。
+        // 透明帧缓冲（磨砂设计 Phase B / 桌宠 sprite 窗）：DWM 尊重重定向
+        // 表面 alpha 的开关。契约：三个来源「或」语义，此处单次设置——
+        // windowEffect（磨砂档位，应用全局）、transparentFramebuffer（窗口
+        // 自身声明，桌宠等覆盖窗——不随全局档位回落 None 丢透明）、
+        // transparent（旧逐窗字段，window_types.h）。三字段由不同调用方按需
+        // 设置，本处是唯一写点，任何来源为真即开。反重构警告：禁止在此之后
+        // 再对 GLFW_TRANSPARENT_FRAMEBUFFER 追加覆盖写——hint 跨
+        // glfwCreateWindow 残留，后写会整体覆盖（曾致 styledmenu 透明失效
+        // 黑边回归，merge 5a4823b 漏去重）。Vulkan 侧无对应能力
+        // （compositeAlpha 普遍 OPAQUE），不设。
         const bool transparentHint =
             request.windowEffect != platform::WindowEffect::None ||
-            request.transparentFramebuffer;
+            request.transparentFramebuffer || request.transparent;
         glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER,
                        transparentHint ? GLFW_TRUE : GLFW_FALSE);
         shareContext = static_cast<GLFWwindow*>(request.parent);
@@ -1230,7 +1235,6 @@ Handle createWindow(const WindowCreateRequest& request) {
     glfwWindowHint(GLFW_VISIBLE, request.visible ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_RESIZABLE, request.resizable ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_DECORATED, request.decorated ? GLFW_TRUE : GLFW_FALSE);
-    glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, request.transparent ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_FLOATING, request.alwaysOnTop ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_MAXIMIZED, request.maximized ? GLFW_TRUE : GLFW_FALSE);
     // 不抢焦点（桌宠设计 G1）：glfwShowWindow 是否把窗口带到前台。hint 跨
