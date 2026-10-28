@@ -785,7 +785,8 @@ int eui_app_run() {
                 windowState.consumeFrameDelta(glfwGetTime()),
                 false,
                 windowState.modalChildWindow == nullptr,
-                [] {});
+                [] {},
+                [&] { return windowMetrics(window); });
         });
     }
     // 系统电源事件（睡眠/唤醒，DevDesk 桌宠 M2 需求）：挂主窗口 WndProc 链
