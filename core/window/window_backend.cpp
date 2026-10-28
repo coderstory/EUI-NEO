@@ -780,6 +780,7 @@ void setWindowCaptionHitTestHandler(Handle, CaptionHitTestHandler, bool) {
 
 void setWindowLiveRenderHandler(Handle, LiveRenderHandler) {
     // SDL2 后端无自绘壳（能力查询恒 false），无模态拖拽循环可活渲染
+}
 
 bool framebufferTransparent(Handle) {
     // SDL2 has no transparent-window flag (it arrived in SDL3), so the
@@ -1627,6 +1628,7 @@ void setWindowLiveRenderHandler(Handle window, LiveRenderHandler handler) {
     (void)window;
     (void)handler;
 #endif
+}
 
 bool framebufferTransparent(Handle window) {
     // Reports what the platform actually granted: without a compositor an

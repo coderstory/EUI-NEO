@@ -240,7 +240,6 @@ struct Element {
 
     std::vector<std::unique_ptr<Element>> children;
     std::vector<const Element*> orderedChildren;
-    int subtreeMaxZIndex = 0;
     bool subtreeNeedsUpdate = true;
     bool subtreeHasDependentVisuals = false;
     bool subtreeHasBackdropBlur = false;

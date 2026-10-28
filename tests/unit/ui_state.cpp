@@ -257,6 +257,10 @@ bool dropdownPopupOpensUpwardOnDemand() {
         downField->frame.y + downField->frame.height) {
         std::cerr << "default popup direction changed unexpectedly\n";
 
+        return false;
+    }
+    return true;
+}
 bool dropdownRetainsUncontrolledOpenState() {
     core::dsl::Ui ui;
     const auto compose = [&] {

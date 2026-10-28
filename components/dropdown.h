@@ -76,7 +76,6 @@ public:
         onOpenChange([&signal](bool value) { signal.set(value); });
         return *this;
     }
-    DropdownBuilder& openUp(bool value = true) { openUp_ = value; return *this; }
     DropdownBuilder& itemHeight(float value) { itemHeight_ = std::max(1.0f, value); return *this; }
     DropdownBuilder& style(const DropdownStyle& value) { style_ = value; return *this; }
     DropdownBuilder& theme(const theme::ThemeColorTokens& tokens) {
