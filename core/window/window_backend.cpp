@@ -1462,6 +1462,13 @@ void getWindowPos(Handle window, int& x, int& y) {
     }
 }
 
+void setWindowAlwaysOnTop(Handle window, bool onTop) {
+    if (window != nullptr) {
+        glfwSetWindowAttrib(static_cast<GLFWwindow*>(window), GLFW_FLOATING,
+                            onTop ? GLFW_TRUE : GLFW_FALSE);
+    }
+}
+
 void setWindowMousePassthrough(Handle window, bool enabled) {
     if (window != nullptr) {
         glfwSetWindowAttrib(static_cast<GLFWwindow*>(window), GLFW_MOUSE_PASSTHROUGH,

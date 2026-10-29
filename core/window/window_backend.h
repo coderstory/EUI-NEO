@@ -54,6 +54,8 @@ void requestWindowClose(Handle window);
 bool windowIsFocused(Handle window);
 // 运行时切换鼠标穿透（整窗点击透到下层；仅无边框窗口有意义）
 void setWindowMousePassthrough(Handle window, bool enabled);
+// 运行时切换置顶（提醒窗「先置顶抢注意、8 秒后让位」类场景；主线程调用）
+void setWindowAlwaysOnTop(Handle window, bool onTop);
 // 主显示器工作区（不含任务栏/Dock），供应用把持久化位置钳制回屏幕内
 void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height);
 // 单个显示器的工作区矩形（屏幕坐标，与 getPrimaryMonitorWorkArea 同一坐标系）
