@@ -99,7 +99,10 @@ public:
             open_ = retainedOpen->open;
         }
         const int count = static_cast<int>(items_.size());
-        const int selected = count > 0 ? std::clamp(selected_, 0, count - 1) : -1;
+        // selected_ 越界（含默认 -1）= 未选态：label 显 placeholder，不 clamp 到首项
+        // （clamp 会把「没选过」伪装成「选了第 0 项」）
+        const int selected =
+            (selected_ >= 0 && selected_ < count) ? selected_ : -1;
         const std::string label = selected >= 0 ? items_[selected] : placeholder_;
         const float height = height_ >= 0.0f ? height_ : metrics_.control.control;
         const float itemHeight = itemHeight_ > 0.0f
