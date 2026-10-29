@@ -982,6 +982,8 @@ int eui_app_run() {
                 if (monitor != nullptr) {
                     glfwGetMonitorContentScale(monitor, &monX, &monY);
                 }
+                const float dpiScale = getDpiScale(window);
+                const float pointerScale = getPointerScale(window);
                 const eui::Color fxClear = app::currentClearColor();
                 std::fprintf(
                     stderr,

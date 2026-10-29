@@ -259,13 +259,19 @@ static NSMenu* g_menu = nil;
 - (void)trayButtonClicked:(id)sender {
     (void)sender;
     NSEvent* event = [NSApp currentEvent];
-    const BOOL is_right = (event != nil && [event type] == NSRightMouseUp);
+    const BOOL is_right = (event != nil && [event type] == NSEventTypeRightMouseUp);
     const NSPoint mouse = [NSEvent mouseLocation];
     const NSRect screen = [[NSScreen mainScreen] frame];
     const int x = (int)mouse.x;
     const int y = (int)(screen.size.height - mouse.y);
     if (eui_tray_menu_requested(x, y, is_right ? 0 : 1) == 0) {
+        // popUpStatusItemMenu: 自 macOS 10.14 起标记废弃，但仍是「同步弹出 +
+        // 与 action 共存」的唯一形态（§4.2 预备改法）；setMenu: 属性化方案
+        // 会让 action 可能不触发，语义不同，故有意保留并挂豁免。
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         [g_status_item popUpStatusItemMenu:g_menu];
+#pragma clang diagnostic pop
     }
 }
 
@@ -365,7 +371,8 @@ static void eui_tray_rebuild_menu(void) {
         [menu_item setTarget:g_target];
         [menu_item setTag:i];
         [menu_item setEnabled:(item->disabled ? NO : YES)];
-        [menu_item setState:(item->checked ? NSOnState : NSOffState)];
+        [menu_item setState:(item->checked ? NSControlStateValueOn
+                                           : NSControlStateValueOff)];
         [g_menu addItem:menu_item];
         [menu_item release];
     }
@@ -428,7 +435,7 @@ int eui_tray_init(const char* icon_path) {
         // trayButtonClicked: 内的 popUpStatusItemMenu:。备选方案 = 恢复 setMenu:。
         [button setTarget:g_target];
         [button setAction:@selector(trayButtonClicked:)];
-        [button sendActionOn:(NSLeftMouseUpMask | NSRightMouseUpMask)];
+        [button sendActionOn:(NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp)];
         if ([g_status_item respondsToSelector:@selector(setVisible:)]) {
             [g_status_item setVisible:YES];
         }

@@ -62,7 +62,7 @@ void buildMenuItems(NSMenu* menu, const std::vector<ContextMenuItem>& items,
         [mi setTarget:leaf ? target : nil];
         [mi setEnabled:item.disabled ? NO : YES];
         if (item.checked) {
-            [mi setState:NSOnState];
+            [mi setState:NSControlStateValueOn];
         }
         [mi setTag:(NSInteger)g_next_command_index++];   // 扁平命令路径表下标
         if (leaf) {
