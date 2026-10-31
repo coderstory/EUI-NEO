@@ -773,6 +773,7 @@ if(EUI_BUILD_TEST_FIXTURES)
     # Explicit source list: tests/probes/ is git-tracked first-class code.
     set(TEST_PROBE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/arabic_bidi_text_probe.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/frame_presentation_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/gpu_image_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/input_runtime_probe.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/probes/render_clear_probe.cpp"
