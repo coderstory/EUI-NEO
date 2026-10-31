@@ -883,6 +883,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/json.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/keyboard_module.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/layout_numeric.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/hit_test_interactive_at.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/open_file_events.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/pet_window_config.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/pointer_input.cpp"

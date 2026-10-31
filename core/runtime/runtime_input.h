@@ -52,6 +52,16 @@ inline std::string Runtime::hitTestInteractive(const PointerEvent& event, float 
     });
 }
 
+inline std::string Runtime::hitTestInteractiveAt(double x, double y, float dpiScale) const {
+    // 测试/驱动设施专用只读查询：逻辑坐标按 dpiScale 换算成物理像素后直接调
+    // hitTestInteractive 纯查询。不走 resolveHoverTarget——它写 hover 缓存，有副作用。
+    PointerEvent event;
+    event.x = x * dpiScale;
+    event.y = y * dpiScale;
+    event.action = PointerAction::Move;
+    return hitTestInteractive(event, dpiScale);
+}
+
 inline std::string Runtime::hitTestFocusable(const PointerEvent& event, float dpiScale) const {
     std::string targetId;
     const RenderTransform identity;

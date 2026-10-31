@@ -66,6 +66,11 @@ public:
 
     void releaseGraphicsResources(bool releaseCachedImageTextures = true);
 
+    /// 只读命中查询：返回 (x, y)（逻辑像素 × dpiScale 换算后）命中的首个可交互元素 id
+    /// （interactive && !disabled，z 序最顶层优先，clip 外 miss）。纯查询，不改
+    /// hover 缓存 / 触发任何回调。测试/驱动设施专用，app 主循环不应依赖。
+    std::string hitTestInteractiveAt(double x, double y, float dpiScale) const;
+
 private:
     template <typename Fn>
     void forEachElement(Fn&& fn) const;
