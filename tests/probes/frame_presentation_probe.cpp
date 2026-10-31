@@ -111,6 +111,10 @@ int main() {
     require(runtime.updateAndRender(
                 window, *backend, metrics(window), 0, false, true, [] {}, [&] { return metrics(window); }),
             "fresh-size frame was not presented");
+    // 第二帧起仍不得再进 firstFrameReady：std::function move 后的源是「有效但未
+    // 指定」，libc++ 仍持有目标 → 每帧重入会让主窗每帧 glfwShowWindow+Focus
+    // 抢前台（2026-10-31 实测 8 秒 454 次，别的 App 抢不走前台）。
+    require(readyCalls == 1, "firstFrameReady re-entered on a later frame");
     require(core::render::lastRenderFrameStats().framebufferWidth == metrics(window).framebufferWidth,
             "presented size differs from drawable");
     const auto presents = core::render::lastRenderFrameStats().backendPresents;

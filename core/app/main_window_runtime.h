@@ -151,6 +151,11 @@ public:
         // buffer. Swapping while hidden can discard its contents on X11.
         if (firstFrameReady_) {
             auto ready = std::move(firstFrameReady_);
+            // move 后的源只是「有效但未指定」，libc++ 实测仍持有目标 → 不清空则本
+            // 分支每帧重入：主窗每帧 glfwShowWindow + glfwFocusWindow（macOS 走
+            // _NXActivateSelf）抢前台，表现为「窗口永远在最前、别的 App 抢不走」
+            // （2026-10-31 实测 8 秒 454 次）。
+            firstFrameReady_ = nullptr;
             ready();
         }
         renderBackend.present();
