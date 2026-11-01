@@ -30,10 +30,18 @@ struct TitleBarAppearance {
     // 没有 alpha 概念（忽略本字段）；macOS 用它把标题栏底做到与内容区**同透明度**
     //（宿主窗口效果档：实色 1.0 / 半透 0.90 / 磨砂 0.55，即窗口 clearColor 的 alpha）。
     float colorAlpha = 1.0f;
+    // macOS 专属：把**内容区延伸进标题栏**（NSWindowStyleMaskFullSizeContentView）。
+    // 关（默认）：标题栏是 AppKit 非客户区，宿主的逐帧绘制进不去 → 标题栏只能是
+    //     一块静态底色，与内容区里流动的背景割裂。
+    // 开：contentView 铺满整窗，GL 视图的 frame 同步放大 → GLFW 的窗口/帧缓冲尺寸
+    //     一并放大 → 宿主的绘制坐标系覆盖标题栏，背景连续。
+    // Windows 无对应概念（自绘标题栏本就在客户区内），忽略此字段。
+    bool extendContentIntoTitleBar = false;
 
     friend bool operator==(const TitleBarAppearance& a, const TitleBarAppearance& b) {
         return a.dark == b.dark && a.customColor == b.customColor &&
-               a.colorAbgr == b.colorAbgr && a.colorAlpha == b.colorAlpha;
+               a.colorAbgr == b.colorAbgr && a.colorAlpha == b.colorAlpha &&
+               a.extendContentIntoTitleBar == b.extendContentIntoTitleBar;
     }
     friend bool operator!=(const TitleBarAppearance& a, const TitleBarAppearance& b) {
         return !(a == b);

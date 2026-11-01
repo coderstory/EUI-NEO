@@ -196,6 +196,81 @@ void fxDump(const char* tag, NSWindow* w) {
 // 窗口带透明帧缓冲 hint 时 GLFW 把窗口背景设成 `[NSColor clearColor]`，而 AppKit
 // **对背景为 clearColor 的非不透明窗不画标题栏底** → 整条标题栏（含交通灯那行）
 // 透出下层窗口/桌面；在黑壁纸下与「全透明」无法区分（用户原始投诉）。
+// —— 内容区延伸进标题栏（FSCV）——
+//
+// 背景：macOS 的标题栏是 AppKit 非客户区，宿主的逐帧绘制（动态背景）进不去，
+// 标题栏只能是 applyTitleBarAppearance 给的一块**静态底色** → 与内容区里流动的
+// 背景割裂（用户投诉「标题栏固定白，和窗体不协调」）。
+//
+// 做法：NSWindowStyleMaskFullSizeContentView + 标题栏透明，让 contentView 铺满
+// 整窗；并把 **GL 视图的 frame 同步放大到整窗** —— GLFW 的 _glfwGetWindowSizeCocoa
+// 与 _glfwGetFramebufferSizeCocoa 都读 [window->ns.view frame]，故窗口逻辑尺寸与
+// 帧缓冲尺寸一并放大，宿主的绘制坐标系随之覆盖标题栏（背景连续）。
+//
+// 为什么必须显式对齐 frame：FSCV 单独设置时 AppKit 只让 contentView「可以」
+// 延伸，不会自动把它和其下的 GL 视图放大 —— 只加 styleMask 会出现「GL 视图仍
+// 停在客户区矩形」的不一致（本仓历史记录：只加 styleMask 会让 GL surface 相对
+// 窗口偏移一个标题栏高）。显式把两者 frame 对齐到整窗即消除该偏移。
+//
+// 关联对象标记：本窗口是否已启用 FSCV —— 挂/摘材质视图（attachMaterialView）会
+// 重排 contentView 的子视图并改 GL 视图 frame，那一步之后必须重新对齐。
+static const void* kExtendContentIntoTitleBarKey = &kExtendContentIntoTitleBarKey;
+
+bool contentExtendsIntoTitleBar(NSWindow* nsWindow) {
+    return nsWindow != nil &&
+           objc_getAssociatedObject(nsWindow, kExtendContentIntoTitleBarKey) != nil;
+}
+
+// 把 contentView 与其下的 GL 视图一并对齐到整窗（幂等，可反复调用）。
+void alignContentToFullWindow(NSWindow* nsWindow) {
+    if (nsWindow == nil) {
+        return;
+    }
+    NSView* content = [nsWindow contentView];
+    if (content == nil) {
+        return;
+    }
+    // contentView 的父是 frameView，其坐标系原点在窗口左上角 —— 故只取 window.frame
+    // 的**尺寸**、origin 归零。（直接用 nsWindow.frame 会带上它在屏幕上的位置，
+    // 把整个内容视图搬偏。）
+    const NSRect winFrame = [nsWindow frame];
+    content.frame = NSMakeRect(0.0, 0.0, winFrame.size.width, winFrame.size.height);
+    content.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+
+    // GL 视图：GLFW 的 GLView（NSOpenGLView 子类）。无材质视图时 contentView 本身
+    // 就是它；挂了材质视图时它降为 contentView 的子视图。
+    NSView* glView = nil;
+    if ([content isKindOfClass:[NSOpenGLView class]]) {
+        glView = content;
+    } else {
+        for (NSView* sub in [content subviews]) {
+            if ([sub isKindOfClass:[NSOpenGLView class]]) {
+                glView = sub;
+                break;
+            }
+        }
+    }
+    if (glView != nil) {
+        glView.frame = content.bounds;
+        glView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    }
+    [nsWindow layoutIfNeeded];
+}
+
+void enableContentExtensionIntoTitleBar(NSWindow* nsWindow) {
+    if (nsWindow == nil) {
+        return;
+    }
+    objc_setAssociatedObject(nsWindow, kExtendContentIntoTitleBarKey, @YES,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [nsWindow setStyleMask:[nsWindow styleMask] | NSWindowStyleMaskFullSizeContentView];
+    [nsWindow setTitlebarAppearsTransparent:YES];
+    // 标题文字由宿主自绘（DevDesk 侧栏品牌区），系统标题隐藏避免同名重复；
+    // 红绿灯保留（macOS 原生交互语义）。
+    [nsWindow setTitleVisibility:NSWindowTitleHidden];
+    alignContentToFullWindow(nsWindow);
+}
+
 // 两套取值，二者互斥，由 applyTitleBarAppearance 决定：
 //   a) 宿主给了自定义底色（customColor）→ 窗口背景 = 该色（含 alpha），标题栏
 //      `titlebarAppearsTransparent=YES` → 标题栏区域直接透出窗口背景色，与内容区
@@ -366,6 +441,11 @@ bool attachMaterialView(NSWindow* nsWindow, bool enabled, float alpha) {
         [material addSubview:strip];
     }
     fxDump("material:on", nsWindow);
+    // 本函数改过 contentView 的子视图结构与 GL 视图 frame → 若该窗口已启用
+    // FSCV（内容区延伸进标题栏），必须重新把两者对齐到整窗，否则背景在标题栏处断掉。
+    if (contentExtendsIntoTitleBar(nsWindow)) {
+        alignContentToFullWindow(nsWindow);
+    }
     return true;
 }
 
@@ -471,6 +551,14 @@ bool applyTitleBarAppearance(void* nativeHandle,
         //（对照：FSCV 方案实测把 GL surface 下移 32pt，已撤回）。
         // 宿主没给自定义色时**必须**回到 alpha=0 兜底 + 关掉 titlebarAppearsTransparent，
         // 否则「标题栏整条透出桌面」的老缺陷会被这段代码重新引入。
+        // 内容区延伸进标题栏（宿主显式要求时）：FSCV + 标题栏透明 + GL 视图对齐整窗。
+        // 只对标题窗生效：无边框 sprite 窗（桌宠）的逐像素透明不能被窗口背景污染，
+        // 且不该被拉成整窗内容。
+        if (appearance.extendContentIntoTitleBar &&
+            ([nsWindow styleMask] & NSWindowStyleMaskTitled) != 0) {
+            enableContentExtensionIntoTitleBar(nsWindow);
+        }
+
         // 只对标题窗生效：无边框 sprite 窗（桌宠）的逐像素透明不能被窗口背景污染。
         if (([nsWindow styleMask] & NSWindowStyleMaskTitled) != 0) {
             if (appearance.customColor) {
