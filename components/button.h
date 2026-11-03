@@ -159,6 +159,9 @@ public:
         return *this;
     }
     ButtonBuilder& onClick(std::function<void()> callback) { onClick_ = std::move(callback); return *this; }
+    // hover 回调透传到 .bg（states 所在元素）：供行卡等宿主把控件 hover 并入自身
+    // hover 集合；不设时行为与旧版完全一致（不改变 states() 三态渲染）。
+    ButtonBuilder& onHover(std::function<void(bool)> callback) { onHover_ = std::move(callback); return *this; }
     ButtonBuilder& onPress(std::function<void()> callback) { onPress_ = std::move(callback); return *this; }
     ButtonBuilder& onRelease(std::function<void()> callback) { onRelease_ = std::move(callback); return *this; }
     ButtonBuilder& onFrame(std::function<void(float)> callback) { onFrame_ = std::move(callback); return *this; }
@@ -231,6 +234,9 @@ public:
                 }
                 if (onFrame_) {
                     bg.onFrame(onFrame_);
+                }
+                if (onHover_) {
+                    bg.onHover(onHover_);
                 }
                 bg.build();
 
@@ -316,6 +322,7 @@ private:
     theme::ThemeMetricTokens metrics_;
     core::Transition transition_;
     std::function<void()> onClick_;
+    std::function<void(bool)> onHover_;
     std::function<void()> onPress_;
     std::function<void()> onRelease_;
     std::function<void(float)> onFrame_;

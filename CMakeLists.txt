@@ -898,6 +898,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/styled_runs.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/svg_source.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/switch_builder_position.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/switch_button_hover.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/text_ellipsis.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/title_bar_appearance.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/toast_action.cpp"

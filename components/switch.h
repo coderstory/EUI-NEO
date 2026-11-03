@@ -66,6 +66,9 @@ public:
         return *this;
     }
     SwitchBuilder& onChange(std::function<void(bool)> callback) { onChange_ = std::move(callback); return *this; }
+    // hover 回调挂在 .hit 命中面上（命中区覆盖轨道整体；带 label 时含文案区），
+    // 与 .states 三态同一元素，保证「可见 hover 态」与「回调」不脱节。
+    SwitchBuilder& onHover(std::function<void(bool)> callback) { onHover_ = std::move(callback); return *this; }
 
     void build() {
         const float fontSize = fontSize_ > 0.0f ? fontSize_ : metrics_.typography.control;
@@ -98,7 +101,7 @@ public:
             root.y(y_);
         }
         root.content([&] {
-            ui_.rect(id_ + ".hit")
+            auto hit = ui_.rect(id_ + ".hit")
                 .size(hitWidth, height_)
                 .states(theme::color(0.0f, 0.0f, 0.0f, 0.0f), style_.rowHover, style_.rowPressed)
                 .radius(std::max(metrics_.radius.small, height_ * 0.20f))
@@ -107,8 +110,11 @@ public:
                     if (onChange) {
                         onChange(nextChecked);
                     }
-                })
-                .build();
+                });
+            if (onHover_) {
+                hit.onHover(onHover_);
+            }
+            hit.build();
 
             ui_.rect(id_ + ".track")
                 .x(contentX)
@@ -156,6 +162,7 @@ private:
     theme::ThemeMetricTokens metrics_;
     core::Transition transition_ = core::Transition::make(0.18f, core::Ease::OutCubic);
     std::function<void(bool)> onChange_;
+    std::function<void(bool)> onHover_;
     std::string label_;
     bool checked_ = false;
     float width_ = 180.0f;
