@@ -85,7 +85,6 @@ public:
         const float contentX = horizontalInset;
         const float labelWidth = std::max(0.0f, width_ - labelX - horizontalInset);
         const float labelLineHeight = fontSize;
-        const float labelY = std::max(0.0f, (height_ - labelLineHeight) * 0.5f);
         const float hitWidth = label_.empty()
             ? trackWidth + horizontalInset * 2.0f
             : std::min(width_, labelX + textWidth(label_, fontSize) + horizontalInset * 2.0f);
@@ -137,15 +136,20 @@ public:
                 .build();
 
             if (!label_.empty()) {
+                // 垂直居中用 ink 口径（Center = 按字形位图上下缘中点对齐），
+                // 文本盒给整行高。旧写法「盒高=fontSize + 公式算 y + Top」把
+                // ink 按 ascender 空隙下挂出盒，行内视觉偏下不居中（池136，
+                // h=28 行最明显）；ink 居中随字体/字号/缩放档自适应，与
+                // styledmenu.h 行标签同口径。
                 ui_.text(id_ + ".label")
                     .x(contentX + labelX)
-                    .y(labelY)
-                    .size(labelWidth, labelLineHeight)
+                    .y(0.0f)
+                    .size(labelWidth, height_)
                     .text(label_)
                     .fontSize(fontSize)
                     .lineHeight(labelLineHeight)
                     .color(style_.text)
-                    .verticalAlign(core::VerticalAlign::Top)
+                    .verticalAlign(core::VerticalAlign::Center)
                     .build();
             }
         }).build();
