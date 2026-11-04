@@ -194,6 +194,9 @@ void hideWindowToTray(GLFWwindow* window, WindowState& windowState, core::render
     app::releaseGraphicsResources();
     core::cancelInput(window);
     glfwHideWindow(window);
+    // 隐藏后本 app 只剩菜单栏图标：切 accessory 收走 Dock 图标与 Cmd+Tab 项
+    //（macOS 菜单栏常驻 app 的常规形态；其余平台空操作）。
+    core::platform::setDockVisible(false);
     windowState.hiddenToTray = true;
     windowState.hideToTrayRequested = false;
     windowState.paintRequested = false;
@@ -206,6 +209,9 @@ void restoreWindowFromTray(GLFWwindow* window, WindowState& windowState) {
         return;
     }
 
+    // 必须先回 regular 再显示/聚焦：accessory 态的 app 不被 AppKit 激活，
+    // 窗口能画出来但拿不到焦点（键盘输入全丢）。
+    core::platform::setDockVisible(true);
     glfwRestoreWindow(window);
     glfwShowWindow(window);
     glfwFocusWindow(window);

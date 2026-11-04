@@ -879,6 +879,10 @@ void activateApp() {
     eui_tray_activate_app();
 }
 
+void setDockVisible(bool visible) {
+    eui_tray_set_dock_visible(visible ? 1 : 0);
+}
+
 void shutdownTray() {
     TrayState& state = trayState();
     if (state.initialized) {

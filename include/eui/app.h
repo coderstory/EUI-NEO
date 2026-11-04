@@ -128,6 +128,19 @@ void requestExit();
  */
 void requestShow();
 /**
+ * @brief Dock 可见性（macOS 菜单栏常驻 app 的「工具态 ↔ 普通态」切换）。
+ *
+ * macOS：映射到 NSApplicationActivationPolicy——true = .regular（显示 Dock
+ * 图标、可 Cmd+Tab 切换、可激活），false = .accessory（只留菜单栏/托盘）。
+ * accessory 态 AppKit 不激活本 app，弹出的窗口拿不到焦点：托盘常驻型宿主
+ * （关窗 ≠ 退出）须在「主窗显示时 true / 隐藏到托盘时 false」之间切换。
+ * 其他平台为空操作——Windows/Linux 没有等价概念。
+ *
+ * 可任意回调里调用（主线程）。同态幂等；切换带 Dock 图标增删动画，只该挂在
+ * 低频跃迁上（窗口显隐），不要逐帧刷。
+ */
+void setDockVisible(bool visible);
+/**
  * @brief 运行时切换标题栏（非客户区）外观，即时生效，无需重启。
  *
  * 覆盖主窗口 + 全部存活子窗口，此后新开的子窗口同样跟随；优先于

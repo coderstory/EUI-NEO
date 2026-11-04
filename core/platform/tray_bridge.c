@@ -335,7 +335,11 @@ static NSImage* eui_tray_image(const char* icon_path) {
     if (image == nil) {
         image = [NSImage imageNamed:NSImageNameApplicationIcon];
     }
-    [image setSize:NSMakeSize(18.0, 18.0)];
+    // 逻辑尺寸按 macOS 菜单栏标准图标口径给满 22pt（原 18pt 缩进一圈，配合
+    // template 图自身的内边距，菜单栏里明显偏小——2026-11-04 真机反馈）。
+    // template 蒙版只取 alpha，尺寸由这里显式定：散装 PNG 的点尺寸不可靠
+    // （系统按 rep 选中的像素档当点用），必须覆盖。
+    [image setSize:NSMakeSize(22.0, 22.0)];
     [image setTemplate:YES];
     return image;
 }
@@ -486,6 +490,19 @@ void eui_tray_activate_app(void) {
         [NSApp unhideWithoutActivation];
     }
     [NSApp activateIgnoringOtherApps:YES];
+}
+
+/* Dock 可见性：菜单栏常驻宿主在「主窗显示 ↔ 隐藏到托盘」之间切换。
+ * accessory 态的 app 不被 AppKit 激活、窗口拿不到焦点——所以显示窗口前必须
+ * 先回 regular。同态重复设置幂等，但切换本身带 Dock 图标增删动画，只该挂在
+ * 低频跃迁上（不要逐帧刷）。 */
+void eui_tray_set_dock_visible(int visible) {
+    const NSApplicationActivationPolicy policy =
+        visible ? NSApplicationActivationPolicyRegular
+                : NSApplicationActivationPolicyAccessory;
+    if ([NSApp activationPolicy] != policy) {
+        [NSApp setActivationPolicy:policy];
+    }
 }
 
 void eui_tray_shutdown(void) {
@@ -1235,6 +1252,11 @@ int eui_tray_consume_exit_requested(void) {
 void eui_tray_activate_app(void) {
 }
 
+/* Linux 无 Dock/激活策略概念（托盘 app 本就不占任务栏）：空操作。 */
+void eui_tray_set_dock_visible(int visible) {
+    (void)visible;
+}
+
 void eui_tray_shutdown(void) {
     if (!g_initialized) {
         return;
@@ -1477,6 +1499,11 @@ int eui_tray_consume_exit_requested(void) {
 void eui_tray_activate_app(void) {
 }
 
+/* Win32：托盘 app 本就不占任务栏，也没有「激活策略」概念：空操作。 */
+void eui_tray_set_dock_visible(int visible) {
+    (void)visible;
+}
+
 void eui_tray_shutdown(void) {
     if (!g_initialized) {
         return;
@@ -1517,6 +1544,10 @@ int eui_tray_consume_exit_requested(void) {
 }
 
 void eui_tray_activate_app(void) {
+}
+
+void eui_tray_set_dock_visible(int visible) {
+    (void)visible;
 }
 
 void eui_tray_shutdown(void) {

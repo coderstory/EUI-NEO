@@ -378,6 +378,8 @@ void hideToTray(SDL_Window* window, WindowState& state) {
         app::releaseGraphicsResources();
     }
     SDL_HideWindow(window);
+    // 与 GLFW 后端同一纪律：只剩菜单栏图标时切 accessory（其余平台空操作）
+    core::platform::setDockVisible(false);
     state.hiddenToTray = true;
     state.hideToTrayRequested = false;
     state.paintRequested = false;
@@ -388,6 +390,8 @@ void restoreFromTray(SDL_Window* window, WindowState& state) {
     if (!state.hiddenToTray) {
         return;
     }
+    // 先回 regular 再显示：accessory 态拿不到焦点
+    core::platform::setDockVisible(true);
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
     state.hiddenToTray = false;

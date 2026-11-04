@@ -380,6 +380,10 @@ bool consumeShowRequest() {
 }
 }
 
+void setDockVisible(bool visible) {
+    core::platform::setDockVisible(visible);
+}
+
 // ---- 自绘窗口壳（主窗口句柄存取 + 控制动线）----
 // 主循环（glfw/sdl2_app_main）创建主窗口后回写；app::xxxMainWindow() 全部经它
 // 落到 core::window。inline 函数内 static 跨 TU 单实例（C++ 语义保证）。

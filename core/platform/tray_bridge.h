@@ -92,6 +92,16 @@ int eui_tray_consume_exit_requested(void);
  * 未初始化托盘也可调用（只动 NSApp，不触碰托盘对象）。
  */
 void eui_tray_activate_app(void);
+/*
+ * Dock 可见性（菜单栏常驻 app 的「工具态 ↔ 普通态」切换）：
+ * - AppKit 后端：visible=1 → NSApplicationActivationPolicyRegular（显示 Dock 图标、
+ *   可被 Cmd+Tab 切换、可激活）；visible=0 → NSApplicationActivationPolicyAccessory
+ *   （只留菜单栏）。accessory 态 AppKit 不激活本 app，窗口拿不到焦点，故宿主
+ *   须在「主窗显示时置 1 / 隐藏到托盘时置 0」。
+ * - 其余后端 / 无后端：空操作。
+ * 未初始化托盘也可调用（只动 NSApp，不触碰托盘对象）。
+ */
+void eui_tray_set_dock_visible(int visible);
 void eui_tray_shutdown(void);
 
 #ifdef __cplusplus

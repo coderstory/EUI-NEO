@@ -112,6 +112,22 @@ bool consumeTrayExitRequested();
  * 抢焦点（GLFW 的 show/focus 不解除应用隐藏）。其他平台为空操作。
  */
 void activateApp();
+
+/**
+ * @brief Dock 可见性（菜单栏常驻 app 的「工具态 ↔ 普通态」切换）。
+ *
+ * macOS：映射到 NSApplicationActivationPolicy——
+ *   true  = .regular   → 显示 Dock 图标、Cmd+Tab 可切换
+ *   false = .accessory → 隐藏 Dock 图标，只在菜单栏/托盘驻留
+ * 托盘常驻型宿主（关窗 ≠ 退出）应在主窗显示时置 true、隐藏到托盘时置 false：
+ * .accessory 态下 AppKit 不会激活本 app，弹出的窗口拿不到焦点。
+ * 其他平台为空操作——Windows/Linux 没有等价概念（托盘 app 本就不占任务栏）。
+ *
+ * 切换有系统侧开销（Dock 图标增删动画），只该挂在「窗口显隐」这类低频跃迁上，
+ * 不要逐帧刷。
+ */
+void setDockVisible(bool visible);
+
 void shutdownTray();
 
 /**
