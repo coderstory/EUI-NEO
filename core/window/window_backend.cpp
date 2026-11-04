@@ -820,6 +820,7 @@ bool beginWindowResize(Handle window, WindowResizeEdge edge) {
 // GET_X_LPARAM / GET_Y_LPARAM（WM_NCHITTEST 的 lParam 拆分；LEAN_AND_MEAN
 // 不自动带入 windowsx.h，负坐标多显示器场景手拆 LOWORD 会丢符号位）
 #include <windowsx.h>
+#include <dwmapi.h>
 #elif defined(__APPLE__)
 // macOS 路径（M0：macos-three-features 设计 §3）：glfwGetCocoaWindow
 // （NSWindow*）填 NativeWindowInfo.platformWindow，M3 桌宠三项消费
@@ -1096,6 +1097,26 @@ LRESULT CALLBACK chromeHitTestWindowProc(HWND hwnd, UINT message, WPARAM wParam,
     return CallWindowProcW(state->previousProc, hwnd, message, wParam, lParam);
 }
 
+// 隐 DWM 系统 1px 描边（need184-②，来源 B7 调研建议）：undecorated 自绘壳补
+// WS_THICKFRAME 后，Win11 DWM 会在窗缘画 1px 系统描边（DWMWA_BORDER_COLOR 默认
+// 随主题），与宿主自绘 ring/圆角观感打架。NONE 隐色；卸载还原 DEFAULT（可逆，
+// 与样式位还原同口径）。Win11 22000+ 属性，旧系统调用失败即静默（无描边可隐）。
+// （dwmapi.h 已在文件头全局区包含；属性枚举 MinGW 缺失时此处补值。）
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef DWMWA_COLOR_NONE
+#define DWMWA_COLOR_NONE 0xFFFFFFFE
+#endif
+#ifndef DWMWA_COLOR_DEFAULT
+#define DWMWA_COLOR_DEFAULT 0xFFFFFFFF
+#endif
+
+void setDwmBorderHidden(HWND hwnd, bool hidden) {
+    const DWORD color = hidden ? DWMWA_COLOR_NONE : DWMWA_COLOR_DEFAULT;
+    ::DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &color, sizeof(color));
+}
+
 void installChromeHitTest(HWND hwnd, CaptionHitTestHandler handler,
                           bool resizable) {
     auto& states = chromeHitTestStates();
@@ -1155,6 +1176,9 @@ void installChromeHitTest(HWND hwnd, CaptionHitTestHandler handler,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                          SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
+    // 自绘壳隐系统 1px 描边（need184-②）：安装在样式补齐之后，FRAMECHANGED
+    // 已让 DWM 重算非客户带，边色属性即刻生效。
+    setDwmBorderHidden(hwnd, true);
 }
 
 void uninstallChromeHitTest(HWND hwnd) {
@@ -1180,6 +1204,8 @@ void uninstallChromeHitTest(HWND hwnd) {
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                          SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
+    // 边色还原默认（与样式位同口径：装卸可逆）
+    setDwmBorderHidden(hwnd, false);
     delete state;
 }
 #endif
