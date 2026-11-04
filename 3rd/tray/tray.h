@@ -271,7 +271,12 @@ static LRESULT CALLBACK _tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam,
         return 0;
       }
       SetForegroundWindow(hwnd);
-      WORD cmd = TrackPopupMenu(hmenu, TPM_LEFTALIGN | TPM_RIGHTBUTTON |
+      /* DevDesk 池135（2026-11-04）：锚点改「光标上方居中」（TPM_CENTERALIGN|
+         TPM_BOTTOMALIGN）——原 TPM_LEFTALIGN 把菜单左上角钉在光标，菜单向
+         右下展开；托盘图标在任务栏底缘时系统向上翻转，观感=弹在鼠标右上。
+         系统仍按屏幕边缘自动翻转，无需自算。 */
+      WORD cmd = TrackPopupMenu(hmenu, TPM_CENTERALIGN | TPM_BOTTOMALIGN |
+                                           TPM_RIGHTBUTTON |
                                            TPM_RETURNCMD | TPM_NONOTIFY,
                                 p.x, p.y, 0, hwnd, NULL);
       SendMessage(hwnd, WM_COMMAND, cmd, 0);
