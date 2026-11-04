@@ -299,9 +299,14 @@ struct StyledMenuRect {
     float height = 0.0f;
 };
 
-// 期望位（左上角）+ 菜单尺寸 + 工作区 → 钳制进工作区的位置：
-// 越界右缘 → 贴右；越界下缘 → 向上翻转（贴光标上沿）；翻转后仍越上界 → 贴顶。
-// 工作区尺寸无效（w/h<=0，无头/查询失败）时原样返回。
+// 期望位（左上角；托盘/光标弹出场景由调用方先做「左下角锚光标」折算，
+// 见 showStyledMenu：desiredY = 光标y - 窗高）+ 菜单尺寸 + 工作区 →
+// 钳制后的位置：护左（越左缘抬回）/ 护右（越右缘贴右）/ 护顶（越上缘贴顶）。
+// **不护底**（bug 135 托盘规格：菜单左下角=光标，底边贴光标、允许伸进
+// 任务栏带——护底/向上翻转会把菜单抬离光标，正是「往右上角迁移」症状
+// 的直接成因）。工作区尺寸无效（w/h<=0，无头/查询失败）时原样返回。
+// 纯函数（无平台/主题依赖），单测锁任务栏带 / 屏幕中部 / 近右缘等场景
+// （tests/unit/styled_menu_clamp_position.cpp）。
 inline StyledMenuRect styledMenuClampPosition(float desiredX, float desiredY,
                                               float width, float height,
                                               float areaX, float areaY,
@@ -311,23 +316,55 @@ inline StyledMenuRect styledMenuClampPosition(float desiredX, float desiredY,
         return rect;
     }
     const float right = areaX + areaWidth;
-    const float bottom = areaY + areaHeight;
     if (rect.x + width > right) {
         rect.x = std::max(areaX, right - width);
     }
     if (rect.x < areaX) {
         rect.x = areaX;
     }
-    if (rect.y + height > bottom) {
-        rect.y = desiredY - height;  // 向上翻转
-    }
-    if (rect.y + height > bottom) {
-        rect.y = std::max(areaY, bottom - height);
-    }
     if (rect.y < areaY) {
         rect.y = areaY;
     }
     return rect;
+}
+
+// 托盘/光标弹出的工作区选择（bug 135）：光标点可能落在工作区外（Windows
+// 托盘光标 y 在任务栏带，即工作区 bottom 之下）——旧实现「包含期望点、
+// 否则取列表首个工作区」在任务栏带必无命中、多屏下回退成错误显示器
+// （菜单被钳去另一屏 =「往右上角迁移」的另一半成因）。新选择规则：
+//   1. 包含光标点的工作区直接命中（多屏定位正确显示器）；
+//   2. 光标在工作区外但落在其容差带（+80px，任务栏高 40-72px 档）内 →
+//      命中该工作区——实现为「最近者胜出」：点到矩形距离排序天然让
+//      ≤80px 的邻带区排第一，无需单独分支；
+//   3. 所有工作区都隔得远 → 取**最近**工作区（点到矩形距离平方最小），
+//      不再取列表首个。
+// 全部无效（空表/尺寸非法）→ nullptr，调用方按「无工作区信息」期望位
+// 原样放行（与 getMonitorWorkAreas 查询失败语义一致）。纯函数，可无头单测。
+inline const core::window::MonitorWorkArea* styledMenuSelectWorkArea(
+    const std::vector<core::window::MonitorWorkArea>& areas,
+    float pointX, float pointY) {
+    const core::window::MonitorWorkArea* nearest = nullptr;
+    float nearestDistanceSq = 0.0f;
+    for (const core::window::MonitorWorkArea& workArea : areas) {
+        if (workArea.width <= 0 || workArea.height <= 0) {
+            continue;
+        }
+        const float areaX = static_cast<float>(workArea.x);
+        const float areaY = static_cast<float>(workArea.y);
+        const float areaRight = areaX + static_cast<float>(workArea.width);
+        const float areaBottom = areaY + static_cast<float>(workArea.height);
+        const float dx = std::max(std::max(areaX - pointX, 0.0f), pointX - areaRight);
+        const float dy = std::max(std::max(areaY - pointY, 0.0f), pointY - areaBottom);
+        const float distanceSq = dx * dx + dy * dy;
+        if (distanceSq <= 0.0f) {
+            return &workArea;  // 距离 0 = 点在矩形内（含边缘），直接命中
+        }
+        if (nearest == nullptr || distanceSq < nearestDistanceSq) {
+            nearest = &workArea;
+            nearestDistanceSq = distanceSq;
+        }
+    }
+    return nearest;
 }
 
 namespace styled_menu_detail {
@@ -440,41 +477,26 @@ inline bool showStyledMenu(const std::string& id,
     const float windowWidth = windowSize.width;
     const float windowHeight = windowSize.height;
 
-    // 位置钳制：选包含期望点的工作区，查不到（无头）则原样
-    float clampedX = screenX;
-    float clampedY = screenY;
+    // 位置锚定 + 钳制（bug 135 托盘规格：菜单**左下角**=光标，从光标向
+    // 右上展开）：期望位 = (光标x, 光标y - 窗高)。旧实现把光标当左上角
+    // 期望位、钳制再护底/翻转——任务栏带光标下菜单被抬离光标、漂向右上。
+    const float desiredX = screenX;
+    const float desiredY = screenY - windowHeight;
+    float clampedX = desiredX;
+    float clampedY = desiredY;
     {
         const std::vector<core::window::MonitorWorkArea> areas =
             core::window::getMonitorWorkAreas();
-        core::window::MonitorWorkArea chosen;
-        bool haveArea = false;
-        for (const core::window::MonitorWorkArea& area : areas) {
-            if (area.width <= 0 || area.height <= 0) {
-                continue;
-            }
-            if (screenX >= static_cast<float>(area.x) &&
-                screenX < static_cast<float>(area.x + area.width) &&
-                screenY >= static_cast<float>(area.y) &&
-                screenY < static_cast<float>(area.y + area.height)) {
-                chosen = area;
-                haveArea = true;
-                break;
-            }
-        }
-        if (!haveArea) {
-            for (const core::window::MonitorWorkArea& area : areas) {
-                if (area.width > 0 && area.height > 0) {
-                    chosen = area;
-                    haveArea = true;
-                    break;
-                }
-            }
-        }
-        if (haveArea) {
+        // 工作区按**光标点**容纳性选择（含任务栏带容差 + 最近回退，见
+        // styledMenuSelectWorkArea），多屏时定位托盘所在的正确显示器；
+        // 查不到（无头/空表）则期望位原样放行
+        const core::window::MonitorWorkArea* chosen =
+            styledMenuSelectWorkArea(areas, screenX, screenY);
+        if (chosen != nullptr) {
             const StyledMenuRect rect = styledMenuClampPosition(
-                screenX, screenY, windowWidth, windowHeight,
-                static_cast<float>(chosen.x), static_cast<float>(chosen.y),
-                static_cast<float>(chosen.width), static_cast<float>(chosen.height));
+                desiredX, desiredY, windowWidth, windowHeight,
+                static_cast<float>(chosen->x), static_cast<float>(chosen->y),
+                static_cast<float>(chosen->width), static_cast<float>(chosen->height));
             clampedX = rect.x;
             clampedY = rect.y;
         }

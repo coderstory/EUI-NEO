@@ -100,7 +100,7 @@ public:
     ButtonBuilder& position(float xValue, float yValue) { return x(xValue).y(yValue); }
     ButtonBuilder& size(float width, float height) { width_ = width; height_ = height; return *this; }
     ButtonBuilder& scale(float value) { scale_ = value; return *this; }
-    ButtonBuilder& text(const std::string& value) { text_ = value; return *this; }
+    ButtonBuilder& text(const std::string& value) { text_ = value; hasExplicitText_ = true; return *this; }
     ButtonBuilder& icon(unsigned int codepoint) { icon_ = core::dsl::utf8(codepoint); return *this; }
     ButtonBuilder& icon(const std::string& value) { icon_ = value; return *this; }
     ButtonBuilder& fontSize(float value) { fontSize_ = value; return *this; }
@@ -176,7 +176,8 @@ public:
         const float font = fontSize_ > 0.0f ? fontSize_ * scale_ : h * 0.46f;
         const float iconFont = iconSize_ > 0.0f ? iconSize_ * scale_ : font * 0.92f;
         const bool hasIcon = !icon_.empty();
-        const bool hasText = !text_.empty();
+        // 文案只在显式 .text() 过才渲染：默认占位 "Button" 曾溢出 icon-only 盒（bug180）
+        const bool hasText = hasExplicitText_ && !text_.empty();
         const float iconWidth = hasIcon ? iconFont * 1.15f : 0.0f;
         const float gap = hasIcon && hasText ? std::max(metrics_.spacing.small * scale_, h * 0.12f) : 0.0f;
         const float labelWidth = hasIcon && hasText
@@ -316,7 +317,7 @@ public:
 private:
     core::dsl::Ui& ui_;
     std::string id_;
-    std::string text_ = "Button";
+    std::string text_;
     std::string icon_;
     ButtonStyle style_;
     theme::ThemeMetricTokens metrics_;
@@ -344,6 +345,7 @@ private:
     bool preserveFocusOnPress_ = false;
     bool hasX_ = false;
     bool hasY_ = false;
+    bool hasExplicitText_ = false;
 };
 
 inline ButtonBuilder button(core::dsl::Ui& ui, const std::string& id) {
