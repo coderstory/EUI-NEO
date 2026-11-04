@@ -709,8 +709,25 @@ float loadGlyphAdvance(const FontFace& face,
     if (isCombiningMark(codepoint)) {
         return 0.0f;
     }
+    // bug190（2026-11-04）：度量路径 advance 记忆化（FontFace::advanceCache）。
+    // 同一 face 实例字号固定（loadFontFace 一次设定），(face, glyphIndex) 唯一
+    // 决定本函数返回值 → 命中即返回，与重算逐位一致；加载失败路径同样确定性
+    // （fontSize*0.5），一并缓存。渲染路径的 advance 取自 shaping 结果
+    // （text.cpp ensureGlyph：glyph.advance = shaped.advance），字形栅格化另
+    // 有 atlas 缓存，度量/渲染口径不受本缓存影响。彩色字体不入缓存（advance
+    // 受 maxGlyphHeight 钳制，键未含钳制因子）。
+    if (!face.colored) {
+        if (const auto cached = face.advanceCache.find(glyphIndex);
+            cached != face.advanceCache.end()) {
+            return cached->second;
+        }
+    }
     if (FT_Load_Glyph(face.face, glyphIndex, kGlyphLoadFlags) != 0) {
-        return fontSize * 0.5f;
+        const float fallbackAdvance = fontSize * 0.5f;
+        if (!face.colored) {
+            face.advanceCache.emplace(glyphIndex, fallbackAdvance);
+        }
+        return fallbackAdvance;
     }
 
     float glyphScale = face.glyphScale;
@@ -718,10 +735,16 @@ float loadGlyphAdvance(const FontFace& face,
     if (face.colored && glyphHeight > 0.0f) {
         glyphScale = std::min(glyphScale, maxGlyphHeight / glyphHeight);
     }
+    float advance = 0.0f;
     if (FT_IS_SCALABLE(face.face)) {
-        return static_cast<float>(face.face->glyph->linearHoriAdvance) / 65536.0f * glyphScale;
+        advance = static_cast<float>(face.face->glyph->linearHoriAdvance) / 65536.0f * glyphScale;
+    } else {
+        advance = static_cast<float>(face.face->glyph->advance.x) / 64.0f * glyphScale;
     }
-    return static_cast<float>(face.face->glyph->advance.x) / 64.0f * glyphScale;
+    if (!face.colored) {
+        face.advanceCache.emplace(glyphIndex, advance);
+    }
+    return advance;
 }
 
 std::uint64_t makeGlyphKey(size_t faceIndex, unsigned int glyphIndex) {

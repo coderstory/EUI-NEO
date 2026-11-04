@@ -44,6 +44,17 @@ struct FontFace {
     float glyphScale = 1.0f;
     bool colored = false;
 
+    // bug190（2026-11-04）：度量路径 advance 记忆化。同一 face 实例的字号在
+    // loadFontFace 里一次性设定后不再变，(face 实例, glyphIndex) 完全决定
+    // advance 返回值；无缓存时 shaping 逐码点 FT_Load_Glyph，CJK 回退字体
+    // 触发 FreeType autohinter autofit（毫秒级/字形），长 CJK 文本页面单帧
+    // compose 可膨胀到分钟级（DevDesk bug190：审核视图千余卡 × 长 CJK 正文）。
+    // mutable：loadGlyphAdvance 持 const FontFace&，缓存命中不改变可观察状态。
+    // 键 = glyphIndex；彩色字体（emoji）的 advance 受 maxGlyphHeight 钳制且
+    // 键未含钳制因子，不入缓存（emoji 字形数少，无度量瓶颈）。线程口径与
+    // 既有 FT_Face 使用一致（shaping 单线程调用，无锁）。
+    mutable std::unordered_map<unsigned int, float> advanceCache;
+
     FontFace() = default;
     FontFace(const FontFace&) = delete;
     FontFace& operator=(const FontFace&) = delete;
@@ -67,6 +78,7 @@ struct FontFace {
         lineGap = other.lineGap;
         glyphScale = other.glyphScale;
         colored = other.colored;
+        advanceCache = std::move(other.advanceCache);
         other.face = nullptr;
         return *this;
     }
