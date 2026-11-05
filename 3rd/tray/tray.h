@@ -271,11 +271,17 @@ static LRESULT CALLBACK _tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam,
         return 0;
       }
       SetForegroundWindow(hwnd);
-      /* DevDesk 池135（2026-11-04）：锚点改「光标上方居中」（TPM_CENTERALIGN|
-         TPM_BOTTOMALIGN）——原 TPM_LEFTALIGN 把菜单左上角钉在光标，菜单向
-         右下展开；托盘图标在任务栏底缘时系统向上翻转，观感=弹在鼠标右上。
-         系统仍按屏幕边缘自动翻转，无需自算。 */
-      WORD cmd = TrackPopupMenu(hmenu, TPM_CENTERALIGN | TPM_BOTTOMALIGN |
+      /* DevDesk 池135（2026-11-05 老板终裁）：托盘菜单锚点 = 「光标左上锚
+         （原生式）」——TPM_LEFTALIGN|TPM_TOPALIGN（win32 TrackPopupMenu 默认
+         语义）：菜单左上角贴光标、向右下展开；托盘图标在任务栏底缘时系统
+         自动上翻（菜单底贴任务栏上缘）。styled 主路径（components/
+         styledmenu.h）同批改用同一语义，两路观感一致。
+         ⚠ 历史冲突备忘：2026-11-04（906e198）曾把本处从 LEFTALIGN|TOPALIGN
+         改成 CENTERALIGN|BOTTOMALIGN（光标上方居中），理由正是「左上锚 +
+         任务栏上翻 → 菜单弹在鼠标右上、观感偏右上」（老板最初上报的症状）；
+         本次按 2026-11-05 终裁改回左上锚。若真机右键目测复现「偏右上」，
+         需老板再拍板（池 bug135 note 已记）。 */
+      WORD cmd = TrackPopupMenu(hmenu, TPM_LEFTALIGN | TPM_TOPALIGN |
                                            TPM_RIGHTBUTTON |
                                            TPM_RETURNCMD | TPM_NONOTIFY,
                                 p.x, p.y, 0, hwnd, NULL);

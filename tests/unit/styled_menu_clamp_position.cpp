@@ -1,17 +1,21 @@
 // tests/unit/styled_menu_clamp_position.cpp
 // styledMenu 托盘锚点（bug 135）纯逻辑单测：
-//   规格（2026-11-03 老板拍板）：弹窗**左下角** = 光标位置（菜单从光标向右
-//   上展开）。旧症状 = 菜单「往右上角迁移」漂到错误位置。
+//   规格（2026-11-05 老板终裁，平台各自语义；演进：2026-11-03 左下角锚）：
+//   - Windows：弹窗**左上角** = 光标位置（原生 TrackPopupMenu 观感，向右下
+//     展开），钳制走 flipUpOnBottomOverflow=true 翻转档（下缘不够 → 底贴
+//     工作区底缘向上展开；右缘不够 → 贴右缘向左展开）；
+//   - 其他平台（macOS）：维持弹窗**左下角** = 光标位置，钳制护左/右/顶
+//     **不护底**（护底把菜单抬离光标 = 旧「往右上角迁移」症状成因）。
 //   覆盖三处缺陷的纯函数面：
-//   1. styledMenuClampPosition 新语义：护左/护右/护顶，**不护底**（菜单底
-//      边贴光标、允许伸进任务栏带；旧实现护底把菜单抬离光标）；
+//   1. styledMenuClampPosition：不护底档（默认参，mac）+ 底缘翻转档（win）
+//      的护左/护右/护顶语义；
 //   2. styledMenuSelectWorkArea 容纳性选择：包含光标点直接命中；光标在任
 //      务栏带（工作区外、+80px 容差档）也命中正确显示器；仍无命中取**最近**
 //      工作区（点到矩形距离），不再取列表首个（旧实现取首个 = 多屏选错显
 //      示器 =「往右上角迁移」的另一半成因）；
 //   3. 无效工作区（w/h<=0）原样返回 / 选择返回空——无头降级语义不变。
 // 纯函数直调（无平台依赖，headless 可跑）。真机托盘右键的最终视觉验收
-// （菜单左下角贴光标）属人工验证范畴。
+// （win：菜单左上角贴光标/翻转观感；mac：左下角贴光标）属人工验证范畴。
 #include "components/styledmenu.h"
 #include "core/window/window_backend.h"
 
@@ -105,6 +109,46 @@ int main() {
             100.0f, -50.0f, menuWidth, 600.0f,
             areaX, areaY, areaWidth, areaHeight);
         check(near(rect.y, areaY), "above top: clamp to top");
+    }
+
+    // ---- 5b. win 左上锚 + 翻转档（flipUpOnBottomOverflow=true，2026-11-05
+    //      老板终裁）：期望位 = 光标本身（desiredY = 光标y），期望底越工作
+    //      区底缘 → 底贴底缘（向上展开，对齐原生 TrackPopupMenu 任务栏观感）
+    {
+        // 光标在任务栏带 y=1048：左上锚 desiredY=1048 → 期望底 1048+187=1235
+        // 越底缘 1015 → 翻转 y = 1015-187 = 828（菜单底 = 任务栏上缘）
+        const StyledMenuRect rect = styledMenuClampPosition(
+            1200.0f, 1048.0f, menuWidth, menuHeight,
+            areaX, areaY, areaWidth, areaHeight, true);
+        check(near(rect.y, areaHeight - menuHeight),
+              "win taskbar cursor: flip up, menu bottom sits on work-area bottom");
+        check(near(rect.x, 1200.0f), "win taskbar cursor: x passes through");
+    }
+    // 托盘在屏幕右下角：右缘 + 底缘同时溢出 → 贴右 + 翻转上
+    {
+        const StyledMenuRect rect = styledMenuClampPosition(
+            1900.0f, 1048.0f, menuWidth, menuHeight,
+            areaX, areaY, areaWidth, areaHeight, true);
+        check(near(rect.x, areaWidth - menuWidth),
+              "win bottom-right tray: clamp to right edge");
+        check(near(rect.y, areaHeight - menuHeight),
+              "win bottom-right tray: flip up past bottom edge");
+    }
+    // 翻转档 + 工作区比菜单矮：翻转值 < areaY → 护顶兜底（保顶可见优先）
+    {
+        const StyledMenuRect rect = styledMenuClampPosition(
+            100.0f, 300.0f, menuWidth, 1200.0f,
+            areaX, areaY, areaWidth, areaHeight, true);
+        check(near(rect.y, areaY),
+              "win flip with undersized work area: top clamp wins");
+    }
+    // 翻转档 + 不越底（光标屏幕中部）：原样放行（翻转不误伤正常锚定）
+    {
+        const StyledMenuRect rect = styledMenuClampPosition(
+            800.0f, 500.0f, menuWidth, menuHeight,
+            areaX, areaY, areaWidth, areaHeight, true);
+        check(near(rect.x, 800.0f) && near(rect.y, 500.0f),
+              "win flip mid-screen: pass-through");
     }
 
     // ---- 6. 无效工作区（w/h<=0，无头/查询失败）：原样返回（降级语义不变）----

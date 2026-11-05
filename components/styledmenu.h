@@ -299,18 +299,22 @@ struct StyledMenuRect {
     float height = 0.0f;
 };
 
-// 期望位（左上角；托盘/光标弹出场景由调用方先做「左下角锚光标」折算，
-// 见 showStyledMenu：desiredY = 光标y - 窗高）+ 菜单尺寸 + 工作区 →
+// 期望位（左上角坐标；锚点语义见 showStyledMenu——win 托盘传「光标」本身
+// 即左上锚，其余平台传「光标y - 窗高」即左下锚）+ 菜单尺寸 + 工作区 →
 // 钳制后的位置：护左（越左缘抬回）/ 护右（越右缘贴右）/ 护顶（越上缘贴顶）。
-// **不护底**（bug 135 托盘规格：菜单左下角=光标，底边贴光标、允许伸进
-// 任务栏带——护底/向上翻转会把菜单抬离光标，正是「往右上角迁移」症状
-// 的直接成因）。工作区尺寸无效（w/h<=0，无头/查询失败）时原样返回。
-// 纯函数（无平台/主题依赖），单测锁任务栏带 / 屏幕中部 / 近右缘等场景
-// （tests/unit/styled_menu_clamp_position.cpp）。
+// flipUpOnBottomOverflow=false（默认，mac 左下角锚档）：**不护底**（菜单底
+// 边贴光标、允许伸进任务栏带——护底/向上翻转会把菜单抬离光标，正是 bug135
+// 「往右上角迁移」症状的直接成因）。=true（win 左上锚档）：**底缘翻转**——
+// 期望底越工作区底缘 → 底贴底缘（对齐 win32 TrackPopupMenu 任务栏场景的
+// 系统上翻观感），随后护顶兜底（工作区比菜单矮时保顶可见优先）。
+// 工作区尺寸无效（w/h<=0，无头/查询失败）时原样返回。
+// 纯函数（无平台/主题依赖），单测锁任务栏带 / 屏幕中部 / 近右缘 / 翻转档
+// 场景（tests/unit/styled_menu_clamp_position.cpp）。
 inline StyledMenuRect styledMenuClampPosition(float desiredX, float desiredY,
                                               float width, float height,
                                               float areaX, float areaY,
-                                              float areaWidth, float areaHeight) {
+                                              float areaWidth, float areaHeight,
+                                              bool flipUpOnBottomOverflow = false) {
     StyledMenuRect rect{desiredX, desiredY, width, height};
     if (areaWidth <= 0.0f || areaHeight <= 0.0f) {
         return rect;
@@ -321,6 +325,12 @@ inline StyledMenuRect styledMenuClampPosition(float desiredX, float desiredY,
     }
     if (rect.x < areaX) {
         rect.x = areaX;
+    }
+    if (flipUpOnBottomOverflow) {
+        const float bottom = areaY + areaHeight;
+        if (rect.y + height > bottom) {
+            rect.y = std::max(areaY, bottom - height);
+        }
     }
     if (rect.y < areaY) {
         rect.y = areaY;
@@ -420,6 +430,8 @@ inline void requestDismiss(std::shared_ptr<StyledMenuRuntime> runtime) {
 /**
  * @brief 在屏幕坐标 (screenX, screenY)（物理像素，左上原点，同 Win32
  *        GetCursorPos / glfwSetWindowPos 语义）弹出一个 styled 菜单独立窗。
+ *        该点按平台解释为锚点：Windows = 菜单左上角（原生 TrackPopupMenu
+ *        观感，见下方锚定注释）；其他平台 = 菜单左下角。
  *
  * @return true = 已入队开窗（异步显示）；false = 构建失败（空项/无可选行），
  *         调用方应降级（如 core::platform::showContextMenu 原生菜单）。
@@ -477,11 +489,28 @@ inline bool showStyledMenu(const std::string& id,
     const float windowWidth = windowSize.width;
     const float windowHeight = windowSize.height;
 
-    // 位置锚定 + 钳制（bug 135 托盘规格：菜单**左下角**=光标，从光标向
-    // 右上展开）：期望位 = (光标x, 光标y - 窗高)。旧实现把光标当左上角
-    // 期望位、钳制再护底/翻转——任务栏带光标下菜单被抬离光标、漂向右上。
+    // 位置锚定 + 钳制（bug 135，锚点语义按平台分支——本组件已有 _WIN32
+    // 布线先例，DevDesk 业务层零平台宏）：
+    // - Windows（2026-11-05 老板终裁）：「光标左上锚（原生式）」= win32
+    //   TrackPopupMenu 默认 TPM_LEFTALIGN|TPM_TOPALIGN 观感——菜单**左上角**
+    //   = 光标，向右下展开；下缘不够向上展开（底贴工作区底缘）、右缘不够
+    //   向左展开（与系统翻转规则一一对应）。⚠ 历史冲突：906e198 曾把原生
+    //   路径改「光标上方居中」（CENTERALIGN|BOTTOMALIGN），理由正是「左上
+    //   锚 + 任务栏上翻 → 菜单弹在光标右上、观感偏右上」；本次按终裁回退
+    //   左上锚（原生路径 tray.h 与本文件同步），若真机复现「偏右上」需再
+    //   拍板（池 bug135 note 已记）。
+    // - 其他平台（macOS 托盘）：维持 2026-11-04 拍板「左下角=光标」（菜单
+    //   从光标向右上展开），钳制护左/右/顶、不护底——护底/上翻会把菜单
+    //   抬离光标（「往右上角迁移」症状成因），mac 行为零变化。
+#if defined(_WIN32)
+    const float desiredX = screenX;
+    const float desiredY = screenY;
+    constexpr bool kFlipUpOnBottomOverflow = true;
+#else
     const float desiredX = screenX;
     const float desiredY = screenY - windowHeight;
+    constexpr bool kFlipUpOnBottomOverflow = false;
+#endif
     float clampedX = desiredX;
     float clampedY = desiredY;
     {
@@ -496,7 +525,8 @@ inline bool showStyledMenu(const std::string& id,
             const StyledMenuRect rect = styledMenuClampPosition(
                 desiredX, desiredY, windowWidth, windowHeight,
                 static_cast<float>(chosen->x), static_cast<float>(chosen->y),
-                static_cast<float>(chosen->width), static_cast<float>(chosen->height));
+                static_cast<float>(chosen->width), static_cast<float>(chosen->height),
+                kFlipUpOnBottomOverflow);
             clampedX = rect.x;
             clampedY = rect.y;
         }
