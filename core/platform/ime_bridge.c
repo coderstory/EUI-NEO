@@ -97,6 +97,28 @@ static void eui_ime_apply_font(HIMC context, double fontHeight) {
     ImmSetCompositionFontW(context, &font);
 }
 
+/* bug245 兜底（Chromium/Windows Terminal 同款做法）：终端光标是自绘的，系统里
+   没有 caret；TSF/CUAS 关闭时部分中文 IME 无视 ImmSetCandidateWindow，直接读
+   GetCaretPos 定位候选窗——没有系统 caret 就落窗口左上角。造一个 1x1 caret
+   跟随光标底部供 IME 查询：
+   - 只在 hwnd 持有焦点时动 caret（caret 是全线程唯一共享资源，非焦点窗口动它
+     会挪走别的窗口的 caret）；
+   - caret 已存在就只 SetCaretPos 挪位置，不重建（CreateCaret 会重置闪烁节拍）；
+   - 焦点丢失后系统可能销毁 caret，GetCaretPos 探测失败会自动重建，无需额外状态。 */
+static void eui_ime_update_fallback_caret(HWND hwnd, LONG x, LONG y) {
+    if (GetFocus() != hwnd) {
+        return;
+    }
+    POINT caretPos;
+    if (!GetCaretPos(&caretPos)) {
+        if (!CreateCaret(hwnd, NULL, 1, 1)) {
+            return;
+        }
+        ShowCaret(hwnd);
+    }
+    SetCaretPos(x, y);
+}
+
 static void eui_ime_apply_cursor_rect(HWND hwnd,
                                       double x,
                                       double y,
@@ -127,33 +149,41 @@ static void eui_ime_apply_cursor_rect(HWND hwnd,
 
     eui_ime_apply_font(context, fontHeight);
 
-    // Keep both IMM placement paths on the same line box.  Some IMEs derive
-    // the candidate position from COMPOSITIONFORM even when CANDIDATEFORM is
-    // supplied; placing the composition point at the line bottom makes them
-    // add a second line of vertical offset.
+    // bug245: standard Win32 IME anchoring trio for self-drawn carets
+    // (winit / Chromium imm32_manager 同款).  两条 IMM 通道都要发：
+    // 只发 CANDIDATEFORM 时，部分中文 IME 的候选窗锚点取自 COMPOSITIONFORM
+    // 或系统 caret，旧实现（CFS_FORCE_POSITION @ 行顶）会被无视 → 候选窗
+    // 不跟光标。坐标为窗口客户区物理像素，runtime 传入前已换算，此处不做
+    // DPI 二次缩放。
     const LONG caretX = eui_ime_round_long(x);
-    const LONG compositionY = eui_ime_round_long(y);
+    const LONG caretY = eui_ime_round_long(y + height); /* 光标 cell 底部 */
 
+    // ① composition 窗：CFS_POINT 锚在光标 cell 底部——拼音候选窗跟随的
+    //   关键通道（winit ime.rs:116-139 同款）。
     COMPOSITIONFORM composition;
     ZeroMemory(&composition, sizeof(composition));
-    composition.dwStyle = CFS_FORCE_POSITION;
+    composition.dwStyle = CFS_POINT;
     composition.ptCurrentPos.x = caretX;
-    composition.ptCurrentPos.y = compositionY;
-    composition.rcArea.left = eui_ime_round_long(x);
-    composition.rcArea.top = eui_ime_round_long(y);
-    composition.rcArea.right = eui_ime_round_long(x + width);
-    composition.rcArea.bottom = eui_ime_round_long(y + height);
+    composition.ptCurrentPos.y = caretY;
     ImmSetCompositionWindow(context, &composition);
 
     CANDIDATEFORM candidate;
     ZeroMemory(&candidate, sizeof(candidate));
     candidate.dwIndex = 0;
-    // CFS_CANDIDATEPOS is only a preferred point and Microsoft Pinyin may
-    // move it below the entire composition area.  Exclude the cursor
-    // rectangle instead, so the IME chooses the adjacent free position.
-    candidate.dwStyle = CFS_EXCLUDE;
-    candidate.rcArea = composition.rcArea;
+    // ② candidate 窗：CFS_EXCLUDE 排除光标 rect，候选窗不得盖住编辑行
+    //   （日韩 IME 认 rcArea）；CFS_CANDIDATEPOS + ptCurrentPos 是 TSF 开启
+    //   时中文 IME 认的锚点（Chromium imm32_manager.cc 同款）。
+    candidate.dwStyle = CFS_EXCLUDE | CFS_CANDIDATEPOS;
+    candidate.ptCurrentPos.x = caretX;
+    candidate.ptCurrentPos.y = caretY;
+    candidate.rcArea.left = eui_ime_round_long(x);
+    candidate.rcArea.top = eui_ime_round_long(y);
+    candidate.rcArea.right = eui_ime_round_long(x + width);
+    candidate.rcArea.bottom = eui_ime_round_long(y + height);
     ImmSetCandidateWindow(context, &candidate);
+
+    // ③ 1x1 系统 caret 兜底（TSF/CUAS 关闭的中文 IME 读 GetCaretPos）。
+    eui_ime_update_fallback_caret(hwnd, caretX, caretY);
 
     ImmReleaseContext(hwnd, context);
 }
