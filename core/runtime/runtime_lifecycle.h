@@ -98,6 +98,7 @@ inline bool Runtime::update(core::window::Handle window, float deltaSeconds, flo
     animating_ = false;
     composeRequested_ = false;
     wantsHandCursor_ = false;
+    wantsIBeamCursor_ = false;
     // U1 尺度契约第一版（纯增量）：本帧全部指针事件由框架在此标注"坐标空间 +
     // 内容缩放系数"，随事件下推到各回调（onPress/onRelease/onMove/onContextMenu/
     // onDrag）。只填新字段，既有坐标语义不变——原始事件是物理像素；
@@ -315,8 +316,17 @@ inline void Runtime::applyCursor(core::window::Handle window) {
     if (!handCursor_) {
         handCursor_ = core::window::createStandardCursor(core::window::CursorType::Hand);
     }
+    if (!ibeamCursor_) {
+        ibeamCursor_ = core::window::createStandardCursor(core::window::CursorType::IBeam);
+    }
 
-    core::window::CursorHandle target = wantsHandCursor_ && handCursor_ ? handCursor_ : arrowCursor_;
+    core::window::CursorHandle target = arrowCursor_;
+    if (wantsHandCursor_ && handCursor_) {
+        target = handCursor_;
+    }
+    if (wantsIBeamCursor_ && ibeamCursor_) {
+        target = ibeamCursor_;
+    }
     if (target != currentCursor_) {
         core::window::setCursor(window, target);
         currentCursor_ = target;
@@ -331,6 +341,10 @@ inline void Runtime::destroyCursors() {
     if (handCursor_) {
         core::window::destroyCursor(handCursor_);
         handCursor_ = nullptr;
+    }
+    if (ibeamCursor_) {
+        core::window::destroyCursor(ibeamCursor_);
+        ibeamCursor_ = nullptr;
     }
     currentCursor_ = nullptr;
 }

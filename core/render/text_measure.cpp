@@ -123,6 +123,26 @@ float TextPrimitive::Impl::measureTextWidth(const std::string& text,
     return measureTextMetrics(text, fontFamily, fontSize, fontWeight).width;
 }
 
+TextPrimitive::FontLineMetrics TextPrimitive::measureFontLineMetrics(const std::string& fontFamily,
+                                                                     float fontSize,
+                                                                     int fontWeight) {
+    FontLineMetrics out;
+    const float size = std::max(1.0f, fontSize);
+    const std::string fontPath = Impl::resolveFontPath(fontFamily, fontWeight);
+    if (fontPath.empty()) {
+        return out;
+    }
+    auto holder = text_detail::loadSharedFontStack(fontPath, size, fontWeight);
+    if (!holder || holder->faces.empty()) {
+        return out;
+    }
+    const text_detail::FontFace& face = holder->faces.front();
+    out.ascent = face.ascent;
+    out.descent = face.descent;
+    out.lineGap = face.lineGap;
+    return out;
+}
+
 TextPrimitive::TextMetrics TextPrimitive::Impl::measureTextMetrics(const std::string& text,
                                                              const std::string& fontFamily,
                                                              float fontSize,

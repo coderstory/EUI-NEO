@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdio> // ImeTrace 临时诊断（bug245；删诊断时连同 updateImeCursorRect 内打印块移除）
+#include "core/platform/ime_bridge.h" // eui_ime_trace_log（win 落 ime-trace.log，其余 no-op）
+
 namespace core::dsl {
 
 inline std::string Runtime::capturedInteractionId() const {
@@ -361,6 +364,20 @@ inline void Runtime::updateImeCursorRect(core::window::Handle window, float dpiS
     imeCursorWindow_ = window;
     imeCursorRect_ = pixelRect;
     imeCursorRectValid_ = true;
+    {
+        // ImeTrace 段2（bug245 临时诊断，≤30 条；EUI 侧最终像素 rect，落 ime-trace.log）
+        static int imeTraceN = 0;
+        if (imeTraceN < 30) {
+            ++imeTraceN;
+            char traceLine[160];
+            std::snprintf(traceLine, sizeof(traceLine),
+                          "ImeTrace: eui pixelRect x=%.1f y=%.1f w=%.1f h=%.1f dpiScale=%.3f",
+                          static_cast<double>(pixelRect.x), static_cast<double>(pixelRect.y),
+                          static_cast<double>(pixelRect.width),
+                          static_cast<double>(pixelRect.height), static_cast<double>(dpiScale));
+            eui_ime_trace_log(traceLine);
+        }
+    }
     core::platform::setImeCursorRect(
         window,
         pixelRect.x,
@@ -397,8 +414,12 @@ inline void Runtime::updateInteraction(
         paintRequested_ = true;
     }
 
-    if (enabled && instance.state.hover && element.cursor == CursorShape::Hand) {
-        wantsHandCursor_ = true;
+    if (enabled && instance.state.hover) {
+        if (element.cursor == CursorShape::Hand) {
+            wantsHandCursor_ = true;
+        } else if (element.cursor == CursorShape::IBeam) {
+            wantsIBeamCursor_ = true;
+        }
     }
 
     if (enabled && topmostHover && element.onMove &&

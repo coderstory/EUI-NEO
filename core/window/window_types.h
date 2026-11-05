@@ -11,7 +11,8 @@ using CursorHandle = void*;
 
 enum class CursorType {
     Arrow,
-    Hand
+    Hand,
+    IBeam
 };
 
 // Edge or corner that starts a compositor-mediated resize. The values match

@@ -293,6 +293,7 @@ private:
     bool composeRequested_ = false;
     bool fullPaintRequested_ = true;
     bool wantsHandCursor_ = false;
+    bool wantsIBeamCursor_ = false;
     bool fullTreeUpdateRequested_ = true;
     bool pruneInstancesRequested_ = true;
     bool previousFrameAnimating_ = false;
@@ -309,6 +310,7 @@ private:
     std::uint64_t updateFrameToken_ = 0;
     core::window::CursorHandle arrowCursor_ = nullptr;
     core::window::CursorHandle handCursor_ = nullptr;
+    core::window::CursorHandle ibeamCursor_ = nullptr;
     core::window::CursorHandle currentCursor_ = nullptr;
     core::window::Handle imeCursorWindow_ = nullptr;
     Rect imeCursorRect_;

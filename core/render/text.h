@@ -41,6 +41,13 @@ public:
         std::vector<float> caretX;
     };
 
+    // 字体行度量（主 face 像素档；等宽终端 cell 行高等场景用）。
+    struct FontLineMetrics {
+        float ascent = 0.0f;
+        float descent = 0.0f; // ≤0（基线向下为负，natural line height = ascent - descent + lineGap）
+        float lineGap = 0.0f;
+    };
+
     TextPrimitive();
     TextPrimitive(float x, float y);
     ~TextPrimitive();
@@ -86,6 +93,11 @@ public:
                                           float fontSize = 16.0f,
                                           int fontWeight = 400);
     static Vec2 measureTextSize(const TextStyle& style);
+    // 字体栈主 face 的像素档行度量（FreeType face metrics，按 fontSize 缩放）。
+    // 字体缺失/加载失败返回全 0。DevDesk 终端 cell 行高来源（need241 度量改造）。
+    static FontLineMetrics measureFontLineMetrics(const std::string& fontFamily,
+                                                  float fontSize,
+                                                  int fontWeight = 400);
     static void setDefaultFontFiles(const std::string& textFontFile, const std::string& iconFontFile);
 
     // Resolve the actual font file path used for the given family + weight.

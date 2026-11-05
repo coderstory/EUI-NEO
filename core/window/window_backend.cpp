@@ -580,7 +580,15 @@ void setClipboardText(const std::string& text) {
 }
 
 CursorHandle createStandardCursor(CursorType type) {
-    return SDL_CreateSystemCursor(type == CursorType::Hand ? SDL_SYSTEM_CURSOR_HAND : SDL_SYSTEM_CURSOR_ARROW);
+    switch (type) {
+        case CursorType::Hand:
+            return SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+        case CursorType::IBeam:
+            return SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_IBEAM);
+        case CursorType::Arrow:
+        default:
+            return SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+    }
 }
 
 void setCursor(Handle, CursorHandle cursor) {
@@ -1441,7 +1449,15 @@ void setClipboardText(const std::string& text) {
 }
 
 CursorHandle createStandardCursor(CursorType type) {
-    return glfwCreateStandardCursor(type == CursorType::Hand ? GLFW_HAND_CURSOR : GLFW_ARROW_CURSOR);
+    switch (type) {
+        case CursorType::Hand:
+            return glfwCreateStandardCursor(GLFW_HAND_CURSOR);
+        case CursorType::IBeam:
+            return glfwCreateStandardCursor(GLFW_IBEAM_CURSOR);
+        case CursorType::Arrow:
+        default:
+            return glfwCreateStandardCursor(GLFW_ARROW_CURSOR);
+    }
 }
 
 void setCursor(Handle window, CursorHandle cursor) {

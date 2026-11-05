@@ -18,6 +18,7 @@
 #include <wingdi.h>
 #include <imm.h>
 #include <stdlib.h>
+#include <stdio.h> /* ImeTrace 临时诊断（bug245） */
 
 #define EUI_IME_FILTER_PROP L"EuiNeoImeFilter"
 
@@ -34,6 +35,49 @@ typedef struct EuiImeFilterState {
 
 static LONG eui_ime_round_long(double value) {
     return (LONG)(value >= 0.0 ? value + 0.5 : value - 0.5);
+}
+
+/* ImeTrace 临时诊断 sink（bug245）：桌面双击启动无控制台，stderr 采不到——落文件。
+   ≤100 行总量自动停写（含 session 头行）；打不开不重试（避免每帧 fopen 刷盘） */
+void eui_ime_trace_log(const char* line) {
+    static FILE* s_traceFile = NULL;
+    static int s_traceLines = 0;
+    if (line == 0 || s_traceLines >= 100) {
+        return;
+    }
+    if (s_traceFile == 0) {
+        char path[MAX_PATH];
+        const char* root = getenv("DEVDESK_DATA_ROOT");
+        const char* up = getenv("USERPROFILE");
+        if (root != 0 && root[0] != '\0') {
+            _snprintf(path, sizeof(path), "%s\\logs", root);
+        } else if (up != 0 && up[0] != '\0') {
+            _snprintf(path, sizeof(path), "%s\\DevDesk\\logs", up);
+        } else {
+            s_traceLines = 100; /* 无法定位数据根 → 停写 */
+            return;
+        }
+        path[MAX_PATH - 1] = '\0';
+        CreateDirectoryA(path, NULL); /* 已存在=ERROR_ALREADY_EXISTS，忽略 */
+        if (strlen(path) + strlen("\\ime-trace.log") < sizeof(path)) {
+            strcat(path, "\\ime-trace.log");
+            s_traceFile = fopen(path, "ab");
+        }
+        if (s_traceFile == 0) {
+            s_traceLines = 100;
+            return;
+        }
+        fputs("==== ImeTrace session ====\n", s_traceFile);
+        s_traceLines++;
+    }
+    fputs(line, s_traceFile);
+    fputc('\n', s_traceFile);
+    fflush(s_traceFile);
+    s_traceLines++;
+    if (s_traceLines >= 100) {
+        fclose(s_traceFile);
+        s_traceFile = 0;
+    }
 }
 
 static void eui_ime_apply_font(HIMC context, double fontHeight) {
@@ -61,6 +105,19 @@ static void eui_ime_apply_cursor_rect(HWND hwnd,
                                       double fontHeight) {
     if (hwnd == 0) {
         return;
+    }
+
+    {
+        /* ImeTrace 段3（bug245 临时诊断，≤30 条；Windows 平台入参） */
+        static int ime_trace_n = 0;
+        if (ime_trace_n < 30) {
+            char traceLine[160];
+            _snprintf(traceLine, sizeof(traceLine),
+                      "ImeTrace: win rect x=%.1f y=%.1f w=%.1f h=%.1f", x, y, width, height);
+            traceLine[sizeof(traceLine) - 1] = '\0'; /* 加固：_snprintf 不保证 NUL 终止 */
+            eui_ime_trace_log(traceLine);
+            ime_trace_n++;
+        }
     }
 
     HIMC context = ImmGetContext(hwnd);
@@ -461,6 +518,10 @@ void eui_ime_set_cursor_rect_with_font(GLFWwindow* window, double x, double y, d
     eui_ime_set_cursor_rect(window, x, y, width, height);
 }
 
+void eui_ime_trace_log(const char* line) {
+    (void)line; /* ImeTrace 文件 sink 仅 win 实现（apple no-op） */
+}
+
 void eui_ime_install_message_filter(GLFWwindow* window) {
     if (window == 0) {
         return;
@@ -555,6 +616,7 @@ void eui_ime_set_cursor_rect_with_font(GLFWwindow* window, double x, double y, d
     (void)fontHeight;
     eui_ime_set_cursor_rect(window, x, y, width, height);
 }
+void eui_ime_trace_log(const char* line) { (void)line; } /* 文件 sink 仅 win（linux/else no-op） */
 void eui_ime_install_message_filter(GLFWwindow* window) { (void)window; }
 void eui_ime_uninstall_message_filter(GLFWwindow* window) { (void)window; }
 int eui_ime_is_composing(GLFWwindow* window) { (void)window; return 0; }
@@ -578,6 +640,10 @@ void eui_ime_set_cursor_rect(GLFWwindow* window, double x, double y, double widt
 void eui_ime_set_cursor_rect_with_font(GLFWwindow* window, double x, double y, double width, double height, double fontHeight) {
     (void)fontHeight;
     eui_ime_set_cursor_rect(window, x, y, width, height);
+}
+
+void eui_ime_trace_log(const char* line) {
+    (void)line; /* 文件 sink 仅 win（else no-op） */
 }
 
 void eui_ime_install_message_filter(GLFWwindow* window) {

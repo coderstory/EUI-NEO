@@ -10,7 +10,8 @@ namespace core {
 
 enum class CursorShape {
     Arrow,
-    Hand
+    Hand,
+    IBeam
 };
 
 enum class InputKey : std::uint16_t {
