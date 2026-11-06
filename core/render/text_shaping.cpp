@@ -18,6 +18,8 @@
 
 #include "core/render/text_internal.h"
 
+#include FT_MODULE_H
+
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -37,7 +39,16 @@ constexpr const char* kDefaultIconFontFile = "Font Awesome 7 Free-Solid-900.otf"
 FT_Library sharedFreeTypeLibrary() {
     static FT_Library library = [] {
         FT_Library created = nullptr;
-        return FT_Init_FreeType(&created) == 0 ? created : nullptr;
+        if (FT_Init_FreeType(&created) != 0) {
+            return static_cast<FT_Library>(nullptr);
+        }
+        // 锁定 truetype interpreter-version=40：与 2.13.3 内建默认相同（零观感
+        // 变化），目的是中和用户机器 FREETYPE_PROPERTIES 环境变量在 FT_Init 时
+        // 注入的分叉（need:132 两端度量一致线）。truetype 驱动仅此一个属性；
+        // cff 驱动 hinting-engine 默认即 adobe 与目标一致，未同锁。
+        const FT_UInt interpreterVersion = 40;
+        FT_Property_Set(created, "truetype", "interpreter-version", &interpreterVersion);
+        return created;
     }();
     return library;
 }
@@ -285,6 +296,18 @@ std::string resolveSystemMonospaceFontPath() {
 #endif
 }
 
+// monospace 族解析共用入口（need:132 F-02）：override（setDefaultMonospaceFontFile）
+// 优先，未设或文件缺失时落系统等宽解析。三个平台分支共用此函数，避免三处重复。
+std::string resolveMonospaceFontPathWithOverride() {
+    const std::string& overridePath = defaultMonospaceFontFileOverride();
+    if (!overridePath.empty()) {
+        if (const std::string existing = existingPath(resolveFontFilePath(overridePath)); !existing.empty()) {
+            return existing;
+        }
+    }
+    return resolveSystemMonospaceFontPath();
+}
+
 std::filesystem::path executableDirectory() {
 #ifdef _WIN32
     std::vector<char> buffer(MAX_PATH);
@@ -386,6 +409,22 @@ std::string resolveDefaultUiFontPath() {
         return existing;
     }
     return resolveSystemUiFontPath();
+}
+
+// default-family 出口的 weight 感知 override 解析（need:132 字体统一线，P0-1）：
+// ≥600 且 bold override 已设 → bold 文件；否则 → regular override；两者均未设
+// 返回空串，调用方落回系统 weight 解析原逻辑。override 设定但文件缺失同样返回
+// 空串（落原逻辑），resolveFontFilePath 按 exeDir/assets 平铺命中随包字体。
+std::string resolveDefaultUiFontPathForWeight(int fontWeight) {
+    const bool preferBold = fontWeight >= 600 && !defaultBoldUiFontFileOverride().empty();
+    const std::string& overridePath = preferBold ? defaultBoldUiFontFileOverride() : defaultUiFontFileOverride();
+    if (overridePath.empty()) {
+        return {};
+    }
+    if (const std::string existing = existingPath(resolveFontFilePath(overridePath)); !existing.empty()) {
+        return existing;
+    }
+    return {};
 }
 
 std::string resolveDefaultIconFontPath() {
@@ -538,7 +577,7 @@ std::string resolveFontPathForFamilyImpl(const std::string& fontFamily, int font
 #ifdef _WIN32
     if (fontFamily == "monospace" || fontFamily == "Mono" ||
         fontFamily == "Cascadia Mono" || fontFamily == "Cascadia Code") {
-        if (const std::string path = resolveSystemMonospaceFontPath(); !path.empty()) {
+        if (const std::string path = resolveMonospaceFontPathWithOverride(); !path.empty()) {
             return path;
         }
     }
@@ -554,6 +593,11 @@ std::string resolveFontPathForFamilyImpl(const std::string& fontFamily, int font
     if (fontFamily == "SimHei") {
         return "C:/Windows/Fonts/simhei.ttf";
     }
+    // need:132：default-family 出口前置 weight 感知 override 检查——随包字体成为
+    // 主面；override 未设时返回空，落下方系统 weight 解析，与 patch 前一致。
+    if (const std::string path = resolveDefaultUiFontPathForWeight(fontWeight); !path.empty()) {
+        return path;
+    }
     // Pick a weight-specific system UI font when available; fall back to the
     // bundled default font only when no matching weight file exists.
     if (const std::string path = resolveSystemUiFontPathForWeightImpl(fontWeight); !path.empty()) {
@@ -563,7 +607,7 @@ std::string resolveFontPathForFamilyImpl(const std::string& fontFamily, int font
 #elif defined(__APPLE__)
     if (fontFamily == "monospace" || fontFamily == "Mono" ||
         fontFamily == "SF Mono" || fontFamily == "Menlo" || fontFamily == "Monaco") {
-        if (const std::string path = resolveSystemMonospaceFontPath(); !path.empty()) {
+        if (const std::string path = resolveMonospaceFontPathWithOverride(); !path.empty()) {
             return path;
         }
     }
@@ -573,6 +617,10 @@ std::string resolveFontPathForFamilyImpl(const std::string& fontFamily, int font
         }
         return resolveDefaultUiFontPath();
     }
+    // need:132：mac 出口与 Windows 同构，前置 weight 感知 override 检查。
+    if (const std::string path = resolveDefaultUiFontPathForWeight(fontWeight); !path.empty()) {
+        return path;
+    }
     if (const std::string path = resolveSystemUiFontPathForWeightImpl(fontWeight); !path.empty()) {
         return path;
     }
@@ -580,7 +628,7 @@ std::string resolveFontPathForFamilyImpl(const std::string& fontFamily, int font
 #else
     (void)fontWeight;
     if (fontFamily == "monospace" || fontFamily == "Mono") {
-        if (const std::string path = resolveSystemMonospaceFontPath(); !path.empty()) {
+        if (const std::string path = resolveMonospaceFontPathWithOverride(); !path.empty()) {
             return path;
         }
         return resolveDefaultUiFontPath();
@@ -823,6 +871,16 @@ std::string& defaultIconFontFileOverride() {
     return value;
 }
 
+std::string& defaultMonospaceFontFileOverride() {
+    static std::string value;
+    return value;
+}
+
+std::string& defaultBoldUiFontFileOverride() {
+    static std::string value;
+    return value;
+}
+
 std::shared_ptr<FontInfoHolder> loadSharedFontStack(const std::string& fontPath, float fontSize, int fontWeight) {
     const std::string cacheKey = fontStackCacheKey(fontPath, fontSize, fontWeight);
     FontStackCache& cache = sharedFontStackCache();
@@ -868,6 +926,9 @@ std::shared_ptr<FontInfoHolder> loadSharedFontStack(const std::string& fontPath,
         }
     };
 
+    // need:132：系统 CJK 先于 override 默认 UI 进链——override 生效时系统 CJK
+    // 是首个正文兜底；override 未设时两行同路径，由上方 in-list 去重保序不变。
+    addLazyFallback(resolvePreferredSystemUiFontPath());
     addLazyFallback(resolveDefaultUiFontPath());
     addLazyFallback(resolveDefaultIconFontPath());
     addLazyFallback(resolveSystemUiFontPath());

@@ -127,6 +127,8 @@ std::string resolveFontPathForFamily(const std::string& fontFamily, int fontWeig
 
 std::string& defaultUiFontFileOverride();
 std::string& defaultIconFontFileOverride();
+std::string& defaultMonospaceFontFileOverride();
+std::string& defaultBoldUiFontFileOverride();
 
 // —— 以下由 text_measure.cpp 提供 ————————————————————————————————
 // 清两套共享缓存（字体栈 + 文本尺寸）。名字沿用拆分前的内部函数名，
@@ -214,6 +216,8 @@ struct TextPrimitive::Impl {
                                           int fontWeight = 400);
     static Vec2 measureTextSize(const TextStyle& style);
     static void setDefaultFontFiles(const std::string& textFontFile, const std::string& iconFontFile);
+    static void setDefaultMonospaceFontFile(const std::string& monospaceFontFile);
+    static void setDefaultBoldUiFontFile(const std::string& boldUiFontFile);
 
     void prepare();
     void render(int windowWidth, int windowHeight);

@@ -99,6 +99,13 @@ public:
                                                   float fontSize,
                                                   int fontWeight = 400);
     static void setDefaultFontFiles(const std::string& textFontFile, const std::string& iconFontFile);
+    // 等宽族（monospace/Mono/Cascadia/SF Mono/Menlo/Monaco）解析覆盖入口：设定后
+    // monospace 分支优先解析该文件；未设或文件缺失时落系统等宽解析。
+    static void setDefaultMonospaceFontFile(const std::string& monospaceFontFile);
+    // 正文字体 bold 变体 override（need:132 字体统一线）：fontWeight≥600 且本项
+    // 已设时 default-family 主面用 bold 文件，否则用 regular override；两者均未
+    // 设时完全回落系统 weight 解析。
+    static void setDefaultBoldUiFontFile(const std::string& boldUiFontFile);
 
     // Resolve the actual font file path used for the given family + weight.
     // Returns the absolute path of the TTF/OTF/TTC file that would be opened

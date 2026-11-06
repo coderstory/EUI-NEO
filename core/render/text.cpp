@@ -519,6 +519,22 @@ void TextPrimitive::Impl::setDefaultFontFiles(const std::string& textFontFile, c
     text_detail::clearSharedFontStackCache();
 }
 
+void TextPrimitive::Impl::setDefaultMonospaceFontFile(const std::string& monospaceFontFile) {
+    if (text_detail::defaultMonospaceFontFileOverride() == monospaceFontFile) {
+        return;
+    }
+    text_detail::defaultMonospaceFontFileOverride() = monospaceFontFile;
+    text_detail::clearSharedFontStackCache();
+}
+
+void TextPrimitive::Impl::setDefaultBoldUiFontFile(const std::string& boldUiFontFile) {
+    if (text_detail::defaultBoldUiFontFileOverride() == boldUiFontFile) {
+        return;
+    }
+    text_detail::defaultBoldUiFontFileOverride() = boldUiFontFile;
+    text_detail::clearSharedFontStackCache();
+}
+
 void TextPrimitive::Impl::prepare() {
     if (layoutDirty_) {
         rebuildLayout();
@@ -778,6 +794,12 @@ Vec2 TextPrimitive::measureTextSize(const TextStyle& style) {
 }
 void TextPrimitive::setDefaultFontFiles(const std::string& textFontFile, const std::string& iconFontFile) {
     Impl::setDefaultFontFiles(textFontFile, iconFontFile);
+}
+void TextPrimitive::setDefaultMonospaceFontFile(const std::string& monospaceFontFile) {
+    Impl::setDefaultMonospaceFontFile(monospaceFontFile);
+}
+void TextPrimitive::setDefaultBoldUiFontFile(const std::string& boldUiFontFile) {
+    Impl::setDefaultBoldUiFontFile(boldUiFontFile);
 }
 void TextPrimitive::render(int windowWidth, int windowHeight) { impl_->render(windowWidth, windowHeight); }
 
