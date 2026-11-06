@@ -91,7 +91,32 @@ constexpr CGFloat kChromeSymbolSize = 8.0;
 // standardWindowButton 返 nil、performClose/performMiniaturize 蜂鸣——Apple 语义）。
 // Tietze 实证：改 .resizable / styleMask 变更 / setTitle: 会自动重显已隐藏钮，
 // 所有重挂钩子都汇到这里。
-void euiHideNativeWindowButtons(NSWindow* nsWindow) {
+// macOS 全屏规则（老板 2026-11-06）：全屏态**交还系统**——显示原生红绿灯，
+// 由 AppKit 自己处理「鼠标移到屏幕顶部浮现系统标题栏」的原生行为；不自绘任何
+// 全屏退出钮。非全屏态才隐藏原生钮、用自绘两钮（Windows 同款）。
+// macOS 全屏规则（老板 2026-11-06）：全屏态必须撤掉自绘壳的 FSCV 三连，
+// 让 AppKit 用**原生全屏标题栏**（鼠标移顶部浮现，内含红绿灯 + 标题）。
+// 不撤的话 titlebarAppearsTransparent + titleVisibility=Hidden 会让全屏条
+// 透明且无内容 = 「浮现出来啥都没有」。
+void euiApplyFullscreenTitlebar(NSWindow* nsWindow, BOOL fullscreen) {
+    if (nsWindow == nil) {
+        return;
+    }
+    if (fullscreen) {
+        // 撤自绘壳三连 → 系统全屏条恢复原生外观与红绿灯
+        [nsWindow setTitlebarAppearsTransparent:NO];
+        [nsWindow setTitleVisibility:NSWindowTitleVisible];
+        NSUInteger mask = [nsWindow styleMask];
+        mask &= ~NSWindowStyleMaskFullSizeContentView;
+        [nsWindow setStyleMask:mask];
+    } else {
+        [nsWindow setStyleMask:[nsWindow styleMask] | NSWindowStyleMaskFullSizeContentView];
+        [nsWindow setTitlebarAppearsTransparent:YES];
+        [nsWindow setTitleVisibility:NSWindowTitleHidden];
+    }
+}
+
+void euiSetNativeWindowButtonsHidden(NSWindow* nsWindow, BOOL hidden) {
     if (nsWindow == nil) {
         return;
     }
@@ -101,9 +126,21 @@ void euiHideNativeWindowButtons(NSWindow* nsWindow) {
         [nsWindow standardWindowButton:NSWindowZoomButton],
     };
     for (NSButton* button : buttons) {
-        if (button != nil && !button.isHidden) {
-            button.hidden = YES;
+        if (button != nil && button.isHidden != hidden) {
+            button.hidden = hidden;
         }
+    }
+}
+
+// 兼容旧调用名（drawRect 兜底防线用）：非全屏才隐藏
+void euiHideNativeWindowButtons(NSWindow* nsWindow) {
+    if (nsWindow == nil) {
+        return;
+    }
+    const bool fullscreen =
+        ([nsWindow styleMask] & NSWindowStyleMaskFullScreen) != 0;
+    if (!fullscreen) {
+        euiSetNativeWindowButtonsHidden(nsWindow, YES);
     }
 }
 
@@ -112,7 +149,7 @@ void euiHideNativeWindowButtons(NSWindow* nsWindow) {
 void euiChromeReapply(NSWindow* nsWindow);
 
 @interface EUIWindowChromeButtonView : NSView
-@property (nonatomic, assign) NSInteger kind;  // 0=close 1=minimize 2=fullscreen
+@property (nonatomic, assign) NSInteger kind;  // 0=close 1=minimize 2=fullscreen 3=exit-fullscreen
 @end
 
 @implementation EUIWindowChromeButtonView {
@@ -207,50 +244,36 @@ void euiChromeReapply(NSWindow* nsWindow);
     NSRect bounds = self.bounds;
     CGFloat cx = bounds.size.width / 2.0;
     CGFloat cy = bounds.size.height / 2.0;
-    NSColor* fillColor = core::platform::euiChromeColor(fill);
-    NSBezierPath* dot = [NSBezierPath
-        bezierPathWithOvalInRect:NSMakeRect(cx - kChromeDotDiameter / 2.0,
-                                            cy - kChromeDotDiameter / 2.0,
-                                            kChromeDotDiameter, kChromeDotDiameter)];
-    [core::platform::euiChromeColor(fill) setFill];
-    [dot fill];
-    if (focused) {
-        // 1px 常驻描边 = hover 深档（设计 §5：描边常驻，仅失焦态去描边）
-        uint32_t stroke = core::platform::euiChromeStrokeFor(self.kind);
-        if (stroke != 0) {
-            NSBezierPath* ring = [NSBezierPath
-                bezierPathWithOvalInRect:NSMakeRect(cx - kChromeDotDiameter / 2.0 - 0.5,
-                                                    cy - kChromeDotDiameter / 2.0 - 0.5,
-                                                    kChromeDotDiameter + 1.0,
-                                                    kChromeDotDiameter + 1.0)];
-            ring.lineWidth = 1.0;
-            [core::platform::euiChromeColor(stroke) setStroke];
-            [ring stroke];
-        }
-        // 符号 8px：关闭=×（白）；最小化=−、全屏=双三角（色=底色挖空）
-        NSBezierPath* glyph = [NSBezierPath bezierPath];
-        glyph.lineWidth = 1.2;
-        [core::platform::euiChromeColor(symbol) setStroke];
-        CGFloat s = kChromeSymbolSize / 2.0;
-        if (self.kind == 0) {
-            [glyph moveToPoint:NSMakePoint(cx - s, cy - s)];
-            [glyph lineToPoint:NSMakePoint(cx + s, cy + s)];
-            [glyph moveToPoint:NSMakePoint(cx - s, cy + s)];
-            [glyph lineToPoint:NSMakePoint(cx + s, cy - s)];
-        } else if (self.kind == 1) {
-            [glyph moveToPoint:NSMakePoint(cx - s, cy)];
-            [glyph lineToPoint:NSMakePoint(cx + s, cy)];
-        } else {
-            CGFloat t = kChromeSymbolSize;
-            [glyph moveToPoint:NSMakePoint(cx - t / 2, cy - t / 2)];
-            [glyph lineToPoint:NSMakePoint(cx - t / 2, cy + t / 2)];
-            [glyph lineToPoint:NSMakePoint(cx + t / 2, cy)];
-            [glyph moveToPoint:NSMakePoint(cx + t / 2, cy + t / 2)];
-            [glyph lineToPoint:NSMakePoint(cx + t / 2, cy - t / 2)];
-            [glyph lineToPoint:NSMakePoint(cx - t / 2, cy)];
-        }
-        [glyph stroke];
+
+    // Windows 同款（need:140，老板 2026-11-06 改口径）：整格矩形底（常态透明，
+    // hover 灰底 / 关闭钮 hover 红底）+ 居中线性图标。取代原红绿灯圆点+描边。
+    if (focused && fill != 0) {
+        // 底色内缩 2px：贴窗口右缘的钮若整格铺满，hover 块会顶到窗口边界
+        //（老板 2026-11-06 实测「跑窗口外面」）；内缩留呼吸位也与 Windows 观感一致
+        [core::platform::euiChromeColor(fill) setFill];
+        NSRectFill(NSInsetRect(bounds, 2.0, 2.0));
     }
+
+    // 图标：色取 symbol（失焦态=textDisabled 灰）
+    NSBezierPath* glyph = [NSBezierPath bezierPath];
+    glyph.lineWidth = 1.2;
+    [core::platform::euiChromeColor(symbol) setStroke];
+    CGFloat s = kChromeSymbolSize / 2.0;
+    if (self.kind == 0) {
+        // 关闭 = ×
+        [glyph moveToPoint:NSMakePoint(cx - s, cy - s)];
+        [glyph lineToPoint:NSMakePoint(cx + s, cy + s)];
+        [glyph moveToPoint:NSMakePoint(cx - s, cy + s)];
+        [glyph lineToPoint:NSMakePoint(cx + s, cy - s)];
+    } else if (self.kind == 1) {
+        // 最小化 = −
+        [glyph moveToPoint:NSMakePoint(cx - s, cy)];
+        [glyph lineToPoint:NSMakePoint(cx + s, cy)];
+    } else {
+        // 最大化/还原 = 空心方框（Windows 同款语义；mac 走 zoom）
+        [glyph appendBezierPathWithRect:NSMakeRect(cx - s, cy - s, s * 2.0, s * 2.0)];
+    }
+    [glyph stroke];
 }
 
 // VoiceOver（F-07）：随 NSView 层叠免费拿的可达性
@@ -289,14 +312,10 @@ void euiChromeReapply(NSWindow* nsWindow);
         return;
     }
     if (event.clickCount >= 2) {
-        // 双击按系统偏好分支 zoom / 最小化（F-06）；全屏中 overlay 已退场不达此处
-        const BOOL mini = [[NSUserDefaults standardUserDefaults]
-            boolForKey:@"AppleMiniaturizeOnDoubleClick"];
-        if (mini) {
-            [win miniaturize:nil];
-        } else {
-            [win zoom:nil];
-        }
+        // 老板 2026-11-06 最终口径：双击标题栏 = 进/出全屏（与 Windows 双击=
+        // 最大化/还原 对应；Windows 侧无全屏钮，mac 侧亦不设全屏钮）。
+        // 全屏态下 overlay 保留在条带位置，双击仍可达 → 可再次双击退出。
+        [win toggleFullScreen:nil];
         return;
     }
     [win performWindowDragWithEvent:event];
@@ -319,7 +338,12 @@ void euiChromeReapply(NSWindow* nsWindow) {
     if (nsWindow == nil) {
         return;
     }
-    euiHideNativeWindowButtons(nsWindow);
+    const bool isFullscreenNow =
+        ([nsWindow styleMask] & NSWindowStyleMaskFullScreen) != 0;
+    // 全屏=交还系统（撤 FSCV 三连 + 显示原生钮，AppKit 管顶部浮现标题栏）；
+    // 非全屏=自绘壳（加回 FSCV 三连 + 隐藏原生钮）
+    euiApplyFullscreenTitlebar(nsWindow, isFullscreenNow ? YES : NO);
+    euiSetNativeWindowButtonsHidden(nsWindow, isFullscreenNow ? NO : YES);
     EUIWindowChromeOverlayView* overlay = objc_getAssociatedObject(
         nsWindow, kCustomChromeOverlayKey);
     if (overlay == nil) {
@@ -327,6 +351,9 @@ void euiChromeReapply(NSWindow* nsWindow) {
     }
     const bool fullscreen =
         ([nsWindow styleMask] & NSWindowStyleMaskFullScreen) != 0;
+    // 老板 2026-11-06 最终口径：两钮（关/最小）、无全屏钮；全屏走双击标题栏。
+    // **全屏态完全交还 macOS**：overlay 整条退场、不画任何自绘钮，原生红绿灯由
+    // 上一段恢复可见 → AppKit 自己处理「鼠标移到屏幕顶部浮现系统标题栏」。
     if (overlay.hidden != (BOOL)fullscreen) {
         overlay.hidden = (BOOL)fullscreen;
     }
@@ -903,18 +930,28 @@ void euiChromeButtonColors(NSInteger kind, BOOL pressed, BOOL active, BOOL focus
                                            : kind == 1 ? g_titlebarSkin.minimize
                                                        : g_titlebarSkin.fullscreen;
     if (!focused) {
-        fill = g_titlebarSkin.unfocused;
-        symbol = 0;
+        // 失焦：不铺底（Windows 同款），图标走 unfocused 灰
+        fill = 0;
+        symbol = g_titlebarSkin.unfocused;
         return;
     }
     fill = pressed && skin.pressed != 0 ? skin.pressed
            : active && skin.hover != 0  ? skin.hover
                                         : skin.normal;
     if (!active) {
-        symbol = 0;
+        // 常态（非 hover）：无底色，图标用 iconNormal（Windows 同款常驻可见）。
+        // iconNormal=0 时沿用旧彩点语义（不画图标），保持向后兼容。
+        symbol = g_titlebarSkin.iconNormal;
         return;
     }
-    symbol = kind == 0 ? g_titlebarSkin.closeSymbol : fill;
+    // hover/pressed：关闭钮图标=白（closeSymbol，红底白叉）；其余用 iconHover
+    //（旧实现取 fill=底色 → 矩形覆盖后图标同色不可见，老板 2026-11-06 实测）
+    if (kind == 0) {
+        symbol = g_titlebarSkin.closeSymbol;
+    } else {
+        symbol = g_titlebarSkin.iconHover != 0 ? g_titlebarSkin.iconHover
+                                               : g_titlebarSkin.iconNormal;
+    }
 }
 
 std::uint32_t euiChromeStrokeFor(NSInteger kind) {
@@ -964,11 +1001,17 @@ void installCustomWindowChrome(void* nativeWindowHandle) {
              0.0, content.bounds.size.height - kChromeBarHeight,
              content.bounds.size.width, kChromeBarHeight)];
     overlay.wantsLayer = NO;
-    for (NSInteger i = 0; i < 3; ++i) {
+    // Windows 同款布局（need:140 老板 2026-11-06 最终口径）：**两钮**置右缘连排，
+    // 自右向左 = 关闭(0) / 最小化(1)——与 Windows 完全同构（Windows 侧亦无全屏钮）。
+    // 全屏走「双击标题栏」（Windows 侧双击=最大化，mac 侧双击=进/出全屏），
+    // 故不设第三钮、也不设全屏态退出钮。
+    for (NSInteger i = 0; i < 2; ++i) {
+        const CGFloat w = content.bounds.size.width;
         EUIWindowChromeButtonView* button = [[EUIWindowChromeButtonView alloc]
-            initWithFrame:NSMakeRect(kChromeButtonW * i, 0.0, kChromeButtonW,
+            initWithFrame:NSMakeRect(w - kChromeButtonW * (i + 1), 0.0, kChromeButtonW,
                                      kChromeBarHeight)];
         button.kind = i;
+        button.autoresizingMask = NSViewMinXMargin;
         [overlay addSubview:button];
     }
     overlay.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;

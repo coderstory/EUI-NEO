@@ -782,6 +782,12 @@ bool windowIsMaximized(Handle window) {
             SDL_WINDOW_MAXIMIZED) != 0;
 }
 
+bool windowIsFullscreen(Handle window) {
+    return window != nullptr &&
+           (SDL_GetWindowFlags(static_cast<SDL_Window*>(window)) &
+            (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0;
+}
+
 void setWindowCaptionHitTestHandler(Handle, CaptionHitTestHandler, bool) {
     // SDL2 后端无标题栏命中钩子（能力查询恒 false，正常宿主不会走到安装）
 }
@@ -1669,6 +1675,11 @@ bool windowIsMaximized(Handle window) {
     return window != nullptr &&
            glfwGetWindowAttrib(static_cast<GLFWwindow*>(window), GLFW_MAXIMIZED) ==
                GLFW_TRUE;
+}
+
+bool windowIsFullscreen(Handle window) {
+    return window != nullptr &&
+           glfwGetWindowMonitor(static_cast<GLFWwindow*>(window)) != nullptr;
 }
 
 void setWindowCaptionHitTestHandler(Handle window, CaptionHitTestHandler handler,

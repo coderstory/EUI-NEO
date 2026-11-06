@@ -82,6 +82,12 @@ struct CustomTitlebarSkin {
     CustomTitlebarButtonSkin fullscreen;
     std::uint32_t closeSymbol = 0;  // 关闭钮 hover/pressed 符号色（符号最小化/全屏钮=底色挖空）
     std::uint32_t unfocused = 0;    // 窗口非 key 时三钮统一灰点
+    // 常态图标色（Windows 同款线性钮必需）：常态无底色 → 图标必须常驻可见。
+    // 0 = 沿用旧彩点语义（非 hover 态不画图标）。
+    std::uint32_t iconNormal = 0;
+    // hover 时非关闭钮的图标色：hover 有底色，图标须用高对比深色才可见
+    //（旧「符号=底色挖空」在矩形底色上同色自盖 = 图标消失，2026-11-06 老板实测）。
+    std::uint32_t iconHover = 0;
     friend bool operator==(const CustomTitlebarSkin& a, const CustomTitlebarSkin& b) {
         const auto eq = [](const CustomTitlebarButtonSkin& x, const CustomTitlebarButtonSkin& y) {
             return x.normal == y.normal && x.hover == y.hover && x.pressed == y.pressed &&
@@ -89,7 +95,8 @@ struct CustomTitlebarSkin {
         };
         return eq(a.close, b.close) && eq(a.minimize, b.minimize) &&
                eq(a.fullscreen, b.fullscreen) && a.closeSymbol == b.closeSymbol &&
-               a.unfocused == b.unfocused;
+               a.unfocused == b.unfocused && a.iconNormal == b.iconNormal &&
+               a.iconHover == b.iconHover;
     }
     friend bool operator!=(const CustomTitlebarSkin& a, const CustomTitlebarSkin& b) {
         return !(a == b);

@@ -451,6 +451,14 @@ bool mainWindowMaximized() {
     return core::window::windowIsMaximized(detail::mainWindowHandleSlot());
 }
 
+bool mainWindowFullscreen() {
+    if (core::window::Handle handle = detail::mainWindowHandleSlot();
+        handle == nullptr) {
+        return false;
+    }
+    return core::window::windowIsFullscreen(detail::mainWindowHandleSlot());
+}
+
 void setTitleBarAppearance(const core::platform::TitleBarAppearance& appearance) {
     detail::titleBarAppearanceOverride() = appearance;
     // 唤醒可能 glfwWaitEvents 中的主循环，让外观在下一帧生效

@@ -129,6 +129,9 @@ void restoreWindow(Handle window);
 void iconifyWindow(Handle window);
 // 窗口当前是否最大化（自绘按钮切换 maximize/还原图标用；handle 空恒 false）。
 bool windowIsMaximized(Handle window);
+// 主窗是否处于原生全屏（mac 原生 fullscreen / Windows 亦返回 false）。
+// 宿主据此在自绘壳全屏态让出标题条占位（need:140）。
+bool windowIsFullscreen(Handle window);
 
 // 标题栏命中回调：坐标/尺寸均为客户区**物理像素**，原点=窗口左上；返回 true =
 // 该点属于标题栏拖拽区。仅 Windows 实装——WM_NCHITTEST 按回调返回 HTCAPTION

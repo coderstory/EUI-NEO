@@ -215,6 +215,8 @@ void restoreMainWindow();
 void iconifyMainWindow();
 void closeMainWindow();
 bool mainWindowMaximized();
+// 主窗是否处于原生全屏（need:140：全屏态宿主让出标题条占位、内容铺满）。
+bool mainWindowFullscreen();
 bool initialize(eui::window::Handle window);
 bool update(eui::window::Handle window, float deltaSeconds, int windowWidth, int windowHeight, float dpiScale, float pointerScale);
 bool update(eui::window::Handle window, float deltaSeconds, int windowWidth, int windowHeight, float dpiScale, float pointerScale, bool updateRequested);
