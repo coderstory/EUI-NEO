@@ -199,6 +199,13 @@ struct CaptionHitQuery {
 // .decorated(false) 与自绘标题栏是否参与布局——**不支持平台必须保系统标题栏**，
 // 否则窗口不可拖拽/不可 resize（GLFW borderless 原生三无）。纯平台查询。
 bool customWindowChromeSupported();
+// 自绘窗口钮是否由平台层渲染与交互（macOS NSView 覆盖层，need:140）：true 时宿主
+// DSL 标题条不画窗口钮（热区让位给系统层，DSL 只画品牌文本等宿主元素），
+// Windows = false 维持 DSL 画钮。纯平台查询。
+bool customWindowChromeButtonsNative();
+// 注入 macOS 自绘窗口钮皮肤（主题 token 换算后的色值；主窗口句柄内部解析）。
+// 仅 macOS 生效，其他平台无操作。主题切换后重复调用幂等。
+void setCustomTitlebarSkin(core::platform::CustomTitlebarSkin skin);
 // 主窗口控制（自绘标题栏按钮消费；等价系统标题栏三键语义，全部主线程调用）。
 // closeMainWindow 与用户点系统 X 完全同路（托盘模式 = 隐藏到托盘）。
 // maximizeMainWindow / restoreMainWindow 不做「已最大化再点」的翻转——按钮的

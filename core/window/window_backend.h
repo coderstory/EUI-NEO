@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/window/window_types.h"
+#include "core/platform/window_effect.h"
 
 #include <functional>
 #include <string>
@@ -112,8 +113,14 @@ bool queryImeComposition(Handle window, std::string& text, bool& composing);
 // customWindowChromeSupported() 恒 false，宿主据此不请求 undecorated）。
 
 // 本平台是否支持自绘窗口壳。纯平台查询（无窗口/GL 依赖，可在任何时刻调用）：
-// Windows（GLFW）= true；macOS / Linux / SDL2 = false。
+// Windows（GLFW，WM_NCHITTEST 接管）与 macOS（GLFW，NSView 覆盖层接管，
+// need:140 路线 B）= true；Linux / SDL2 = false。
 bool customWindowChromeSupported();
+
+// 自绘窗口钮是否由平台层（macOS NSView 覆盖层）承担渲染与交互：macOS = true
+//（宿主 DSL 只画品牌文本，钮热区让位给系统层）；Windows = false（宿主 DSL
+// 画钮，本层 WM_NCHITTEST 接管）。纯平台查询。
+bool customWindowChromeButtonsNative();
 
 // 窗口控制三键的运行时动作（自绘标题栏按钮消费；等价系统标题栏语义，两后端均可用）。
 // restoreWindow 同时承担「还原最大化」与「解除最小化」两个语义（GLFW/SDL 同构）。
@@ -145,5 +152,12 @@ void setWindowCaptionHitTestHandler(Handle window, CaptionHitTestHandler handler
 // 台无该模态循环问题，恒无操作。
 using LiveRenderHandler = std::function<void()>;
 void setWindowLiveRenderHandler(Handle window, LiveRenderHandler handler);
+
+// macOS 自绘窗口壳（need:140 路线 B）：隐藏原生红绿灯 + NSView 覆盖层自绘钮/
+// 拖拽/双击 + 重挂钩子；色值经 setCustomTitlebarSkin 注入（宿主主题 token）。
+// 仅 macOS 实装，其余平台无操作；install 须在窗口 show 之前调用（首帧无闪现）。
+// 详见 core/platform/window_effect.h 同名契约区。
+void installCustomWindowChrome(Handle window);
+void setCustomTitlebarSkin(Handle window, const core::platform::CustomTitlebarSkin& skin);
 
 } // namespace core::window

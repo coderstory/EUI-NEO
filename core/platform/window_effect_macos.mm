@@ -61,6 +61,292 @@
 }
 @end
 
+// ---- 自绘窗口壳覆盖层（need:140 路线 B）----
+// 条带 40 逻辑 px（与宿主 titlebarHeight() 契约同值）；左缘三钮热区 46×40 连排
+// x∈[0,138)，其余整条 = 拖拽/双击区。覆盖层位于 GL 视图上方，吞掉条带事件不转
+// responder 链 → GLFW 输入层从未进入按下态，无「mouse-up 不送达」问题。
+const void* kCustomChromeOverlayKey = &kCustomChromeOverlayKey;
+@class EUIWindowChromeOverlayView;
+
+// 主题皮肤快照（宿主经 setCustomTitlebarSkin 注入；主线程单线程读写）
+core::platform::CustomTitlebarSkin g_titlebarSkin;
+// 已挂覆盖层弱引用集合（按窗口关联对象各存一份，此处只做皮肤更新广播；weak 表
+// 随窗口释放自动清空——不学全局单例，互抢教训见 kMaterialViewKey 注释）
+NSHashTable* g_chromeOverlays;
+
+namespace core::platform {
+NSColor* euiChromeColor(std::uint32_t rgba);
+void euiChromeButtonColors(NSInteger kind, BOOL pressed, BOOL active, BOOL focused,
+                           std::uint32_t& fill, std::uint32_t& symbol);
+std::uint32_t euiChromeStrokeFor(NSInteger kind);
+}  // namespace core::platform
+
+constexpr CGFloat kChromeBarHeight = 40.0;
+constexpr CGFloat kChromeButtonW = 46.0;
+constexpr CGFloat kChromeButtonCount = 3.0;
+constexpr CGFloat kChromeDotDiameter = 12.0;
+constexpr CGFloat kChromeSymbolSize = 8.0;
+
+// 三钮重隐（幂等）：setHidden:YES 禁 removeFromSuperview（remove 后
+// standardWindowButton 返 nil、performClose/performMiniaturize 蜂鸣——Apple 语义）。
+// Tietze 实证：改 .resizable / styleMask 变更 / setTitle: 会自动重显已隐藏钮，
+// 所有重挂钩子都汇到这里。
+void euiHideNativeWindowButtons(NSWindow* nsWindow) {
+    if (nsWindow == nil) {
+        return;
+    }
+    NSButton* buttons[3] = {
+        [nsWindow standardWindowButton:NSWindowCloseButton],
+        [nsWindow standardWindowButton:NSWindowMiniaturizeButton],
+        [nsWindow standardWindowButton:NSWindowZoomButton],
+    };
+    for (NSButton* button : buttons) {
+        if (button != nil && !button.isHidden) {
+            button.hidden = YES;
+        }
+    }
+}
+
+// 幂等重挂：重隐三钮 + overlay frame 同步 + 重绘（全屏中 overlay 保持退场）。
+// 定义在 OverlayView @implementation 之后（需完整类型）；此前仅前向声明。
+void euiChromeReapply(NSWindow* nsWindow);
+
+@interface EUIWindowChromeButtonView : NSView
+@property (nonatomic, assign) NSInteger kind;  // 0=close 1=minimize 2=fullscreen
+@end
+
+@implementation EUIWindowChromeButtonView {
+    BOOL _hovered;
+    BOOL _pressed;
+    NSTrackingArea* _tracking;
+}
+
+- (BOOL)isFlipped {
+    return YES;  // 顶左坐标，与宿主 DSL 布局同系
+}
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_tracking != nil) {
+        [self removeTrackingArea:_tracking];
+    }
+    _tracking = [[NSTrackingArea alloc]
+        initWithRect:self.bounds
+             options:NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways
+               owner:self
+            userInfo:nil];
+    [self addTrackingArea:_tracking];
+}
+
+- (void)mouseEntered:(NSEvent*)event {
+    (void)event;
+    _hovered = YES;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)mouseExited:(NSEvent*)event {
+    (void)event;
+    _hovered = NO;
+    _pressed = NO;
+    [self setNeedsDisplay:YES];
+}
+
+// 首点仅激活（macOS 原生语义）：非 key 窗首次点击只激活窗口，不触发钮动作。
+- (void)mouseDown:(NSEvent*)event {
+    (void)event;
+    NSWindow* win = self.window;
+    if (win != nil && !win.keyWindow) {
+        [win makeKeyWindow];
+        return;
+    }
+    _pressed = YES;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)mouseUp:(NSEvent*)event {
+    if (!_pressed) {
+        return;
+    }
+    _pressed = NO;
+    [self setNeedsDisplay:YES];
+    NSWindow* win = self.window;
+    if (win == nil) {
+        return;
+    }
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    if (!NSPointInRect(point, self.bounds)) {
+        return;  // 按住拖出 = 取消
+    }
+    switch (self.kind) {
+    case 0:
+        // performClose: → GLFW windowShouldClose delegate → 宿主 close 回调（可 veto）
+        [win performClose:nil];
+        break;
+    case 1:
+        [win miniaturize:nil];  // = glfwIconifyWindow 同链（cocoa_window.m miniaturize:）
+        break;
+    default:
+        [win toggleFullScreen:nil];
+        break;
+    }
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    NSWindow* win = self.window;
+    // 兜底防线：drawRect 顺带确认钮隐藏态（Tietze 重显的最后一道网）
+    euiHideNativeWindowButtons(win);
+    const bool focused = win != nil && win.keyWindow;
+    uint32_t fill = 0, symbol = 0;
+    const bool active = focused && (_hovered || _pressed);
+    core::platform::euiChromeButtonColors(self.kind, _pressed, active, focused, fill,
+                                          symbol);
+    if (fill == 0 && symbol == 0) {
+        return;  // 主题未注入：不画（避免黑块），色值到达后下一帧补
+    }
+    NSRect bounds = self.bounds;
+    CGFloat cx = bounds.size.width / 2.0;
+    CGFloat cy = bounds.size.height / 2.0;
+    NSColor* fillColor = core::platform::euiChromeColor(fill);
+    NSBezierPath* dot = [NSBezierPath
+        bezierPathWithOvalInRect:NSMakeRect(cx - kChromeDotDiameter / 2.0,
+                                            cy - kChromeDotDiameter / 2.0,
+                                            kChromeDotDiameter, kChromeDotDiameter)];
+    [core::platform::euiChromeColor(fill) setFill];
+    [dot fill];
+    if (focused) {
+        // 1px 常驻描边 = hover 深档（设计 §5：描边常驻，仅失焦态去描边）
+        uint32_t stroke = core::platform::euiChromeStrokeFor(self.kind);
+        if (stroke != 0) {
+            NSBezierPath* ring = [NSBezierPath
+                bezierPathWithOvalInRect:NSMakeRect(cx - kChromeDotDiameter / 2.0 - 0.5,
+                                                    cy - kChromeDotDiameter / 2.0 - 0.5,
+                                                    kChromeDotDiameter + 1.0,
+                                                    kChromeDotDiameter + 1.0)];
+            ring.lineWidth = 1.0;
+            [core::platform::euiChromeColor(stroke) setStroke];
+            [ring stroke];
+        }
+        // 符号 8px：关闭=×（白）；最小化=−、全屏=双三角（色=底色挖空）
+        NSBezierPath* glyph = [NSBezierPath bezierPath];
+        glyph.lineWidth = 1.2;
+        [core::platform::euiChromeColor(symbol) setStroke];
+        CGFloat s = kChromeSymbolSize / 2.0;
+        if (self.kind == 0) {
+            [glyph moveToPoint:NSMakePoint(cx - s, cy - s)];
+            [glyph lineToPoint:NSMakePoint(cx + s, cy + s)];
+            [glyph moveToPoint:NSMakePoint(cx - s, cy + s)];
+            [glyph lineToPoint:NSMakePoint(cx + s, cy - s)];
+        } else if (self.kind == 1) {
+            [glyph moveToPoint:NSMakePoint(cx - s, cy)];
+            [glyph lineToPoint:NSMakePoint(cx + s, cy)];
+        } else {
+            CGFloat t = kChromeSymbolSize;
+            [glyph moveToPoint:NSMakePoint(cx - t / 2, cy - t / 2)];
+            [glyph lineToPoint:NSMakePoint(cx - t / 2, cy + t / 2)];
+            [glyph lineToPoint:NSMakePoint(cx + t / 2, cy)];
+            [glyph moveToPoint:NSMakePoint(cx + t / 2, cy + t / 2)];
+            [glyph lineToPoint:NSMakePoint(cx + t / 2, cy - t / 2)];
+            [glyph lineToPoint:NSMakePoint(cx - t / 2, cy)];
+        }
+        [glyph stroke];
+    }
+}
+
+// VoiceOver（F-07）：随 NSView 层叠免费拿的可达性
+- (BOOL)isAccessibilityElement {
+    return YES;
+}
+
+- (NSAccessibilityRole)accessibilityRole {
+    return NSAccessibilityButtonRole;
+}
+
+- (NSString*)accessibilityLabel {
+    return self.kind == 0 ? @"关闭" : (self.kind == 1 ? @"最小化" : @"全屏");
+}
+
+@end
+
+@interface EUIWindowChromeOverlayView : NSView
+@end
+
+@implementation EUIWindowChromeOverlayView
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+// 条带其余区域永远归本层（拖拽/双击），不透给 GL 视图；子钮优先命中。
+- (NSView*)hitTest:(NSPoint)point {
+    NSView* hit = [super hitTest:point];
+    return hit != nil ? hit : self;
+}
+
+- (void)mouseDown:(NSEvent*)event {
+    NSWindow* win = self.window;
+    if (win == nil) {
+        return;
+    }
+    if (event.clickCount >= 2) {
+        // 双击按系统偏好分支 zoom / 最小化（F-06）；全屏中 overlay 已退场不达此处
+        const BOOL mini = [[NSUserDefaults standardUserDefaults]
+            boolForKey:@"AppleMiniaturizeOnDoubleClick"];
+        if (mini) {
+            [win miniaturize:nil];
+        } else {
+            [win zoom:nil];
+        }
+        return;
+    }
+    [win performWindowDragWithEvent:event];
+}
+
+// 重挂钩子统一入口：全屏进出 / resize / key 变化 / 系统属性变更 / title KVO
+- (void)chromeWindowNotification:(NSNotification*)notification {
+    (void)notification;
+    euiChromeReapply(self.window);
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+@end
+
+// 幂等重挂（定义在此：需 OverlayView 完整类型；被通知回调与 install 调用）
+void euiChromeReapply(NSWindow* nsWindow) {
+    if (nsWindow == nil) {
+        return;
+    }
+    euiHideNativeWindowButtons(nsWindow);
+    EUIWindowChromeOverlayView* overlay = objc_getAssociatedObject(
+        nsWindow, kCustomChromeOverlayKey);
+    if (overlay == nil) {
+        return;
+    }
+    const bool fullscreen =
+        ([nsWindow styleMask] & NSWindowStyleMaskFullScreen) != 0;
+    if (overlay.hidden != (BOOL)fullscreen) {
+        overlay.hidden = (BOOL)fullscreen;
+    }
+    if (!fullscreen) {
+        NSRect bounds = [nsWindow contentView].bounds;
+        NSRect frame = overlay.frame;
+        frame.size.width = bounds.size.width;
+        frame.origin.y = bounds.size.height - kChromeBarHeight;
+        if (!NSEqualRects(frame, overlay.frame)) {
+            overlay.frame = frame;
+        }
+        // setNeedsDisplay 不递归子视图（非 layer-backed view 各有绘制面）：
+        // 子钮不重画会出现「注入后仍空点」的时序缺帧
+        [overlay setNeedsDisplay:YES];
+        for (NSView* child in overlay.subviews) {
+            [child setNeedsDisplay:YES];
+        }
+    }
+}
+
 namespace core::platform {
 
 namespace {
@@ -597,6 +883,127 @@ bool applyTitleBarAppearance(void* nativeHandle,
         std::fflush(stderr);
     }
     return true;
+}
+
+// ---- 自绘窗口壳桥接（接口契约见 window_effect.h）----
+
+NSColor* euiChromeColor(std::uint32_t rgba) {
+    return [NSColor
+        colorWithSRGBRed:((rgba >> 24) & 255) / 255.0
+                   green:((rgba >> 16) & 255) / 255.0
+                    blue:((rgba >> 8) & 255) / 255.0
+                   alpha:(rgba & 255) / 255.0];
+}
+
+// kind×态 → 填充色与符号色（设计 §5 状态表）：失焦全灰点（textDisabled）；
+// 符号仅 hover/pressed 显现且关闭钮用白符号、最小化/全屏符号=底色挖空。
+void euiChromeButtonColors(NSInteger kind, BOOL pressed, BOOL active, BOOL focused,
+                           std::uint32_t& fill, std::uint32_t& symbol) {
+    const CustomTitlebarButtonSkin& skin = kind == 0   ? g_titlebarSkin.close
+                                           : kind == 1 ? g_titlebarSkin.minimize
+                                                       : g_titlebarSkin.fullscreen;
+    if (!focused) {
+        fill = g_titlebarSkin.unfocused;
+        symbol = 0;
+        return;
+    }
+    fill = pressed && skin.pressed != 0 ? skin.pressed
+           : active && skin.hover != 0  ? skin.hover
+                                        : skin.normal;
+    if (!active) {
+        symbol = 0;
+        return;
+    }
+    symbol = kind == 0 ? g_titlebarSkin.closeSymbol : fill;
+}
+
+std::uint32_t euiChromeStrokeFor(NSInteger kind) {
+    const CustomTitlebarButtonSkin& skin = kind == 0   ? g_titlebarSkin.close
+                                           : kind == 1 ? g_titlebarSkin.minimize
+                                                       : g_titlebarSkin.fullscreen;
+    return skin.stroke;
+}
+
+bool customWindowChromeOverlaySupported() {
+    return true;
+}
+
+void setCustomTitlebarSkin(void* nativeWindowHandle, const CustomTitlebarSkin& skin) {
+    (void)nativeWindowHandle;
+    g_titlebarSkin = skin;
+    if (g_chromeOverlays == nil) {
+        return;
+    }
+    for (NSView* overlay in g_chromeOverlays) {
+        [overlay setNeedsDisplay:YES];
+        for (NSView* child in overlay.subviews) {
+            [child setNeedsDisplay:YES];
+        }
+    }
+}
+
+void installCustomWindowChrome(void* nativeWindowHandle) {
+    NSWindow* nsWindow = (__bridge NSWindow*)nativeWindowHandle;
+    if (nsWindow == nil) {
+        return;
+    }
+    if (objc_getAssociatedObject(nsWindow, kCustomChromeOverlayKey) != nil) {
+        euiChromeReapply(nsWindow);  // 幂等重入
+        return;
+    }
+    // FSCV 三连 + GL 视图对齐整窗（既有能力；回退 = 不调本函数即现状）
+    enableContentExtensionIntoTitleBar(nsWindow);
+    euiHideNativeWindowButtons(nsWindow);
+
+    NSView* content = [nsWindow contentView];
+    if (content == nil) {
+        return;
+    }
+    EUIWindowChromeOverlayView* overlay =
+        [[EUIWindowChromeOverlayView alloc] initWithFrame:NSMakeRect(
+             0.0, content.bounds.size.height - kChromeBarHeight,
+             content.bounds.size.width, kChromeBarHeight)];
+    overlay.wantsLayer = NO;
+    for (NSInteger i = 0; i < 3; ++i) {
+        EUIWindowChromeButtonView* button = [[EUIWindowChromeButtonView alloc]
+            initWithFrame:NSMakeRect(kChromeButtonW * i, 0.0, kChromeButtonW,
+                                     kChromeBarHeight)];
+        button.kind = i;
+        [overlay addSubview:button];
+    }
+    overlay.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+    [content addSubview:overlay positioned:NSWindowAbove relativeTo:nil];
+    objc_setAssociatedObject(nsWindow, kCustomChromeOverlayKey, overlay,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (g_chromeOverlays == nil) {
+        g_chromeOverlays = [NSHashTable weakObjectsHashTable];
+    }
+    [g_chromeOverlays addObject:overlay];
+
+    // 重挂钩子（全部汇到 euiChromeReapply：重隐三钮 + frame 同步；F-05）：
+    // 全屏进出（Tietze：styleMask 重写自动重显钮）、resize、key 变化（失焦灰点）、
+    // backing/occlusion 变化（space/显示器切换）。DidUpdate 每事件循环兜底
+    //（setTitle:/styleMask 等任何 AppKit 重显路径的最后防线；reapply 幂等轻量）
+    NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+    NSArray<NSString*>* names = @[
+        NSWindowWillEnterFullScreenNotification,
+        NSWindowDidEnterFullScreenNotification,
+        NSWindowWillExitFullScreenNotification,
+        NSWindowDidExitFullScreenNotification,
+        NSWindowDidResizeNotification,
+        NSWindowDidBecomeKeyNotification,
+        NSWindowDidResignKeyNotification,
+        NSWindowDidChangeBackingPropertiesNotification,
+        NSWindowDidChangeOcclusionStateNotification,
+        NSWindowDidUpdateNotification,
+    ];
+    for (NSString* name in names) {
+        [center addObserver:overlay
+                   selector:@selector(chromeWindowNotification:)
+                       name:name
+                     object:nsWindow];
+    }
+    [overlay setNeedsDisplay:YES];
 }
 
 } // namespace core::platform

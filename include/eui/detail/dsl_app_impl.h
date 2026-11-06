@@ -402,6 +402,17 @@ bool customWindowChromeSupported() {
     return core::window::customWindowChromeSupported();
 }
 
+bool customWindowChromeButtonsNative() {
+    return core::window::customWindowChromeButtonsNative();
+}
+
+void setCustomTitlebarSkin(core::platform::CustomTitlebarSkin skin) {
+    if (core::window::Handle handle = detail::mainWindowHandleSlot();
+        handle != nullptr) {
+        core::window::setCustomTitlebarSkin(handle, skin);
+    }
+}
+
 void maximizeMainWindow() {
     if (core::window::Handle handle = detail::mainWindowHandleSlot();
         handle != nullptr) {

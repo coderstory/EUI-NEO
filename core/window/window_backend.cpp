@@ -1606,10 +1606,44 @@ std::vector<MonitorWorkArea> getMonitorWorkAreas() {
 bool customWindowChromeSupported() {
 #if defined(_WIN32)
     return true;
+#elif defined(__APPLE__)
+    // macOS：NSView 覆盖层自绘壳（window_effect_macos.mm——隐藏红绿灯 + 自绘
+    // 钮/拖拽/双击 + 重挂钩子）。窗口仍 GLFW decorated 创建（子方案①：保留
+    // Titled mask，红绿灯 setHidden 隐藏而非移除）。
+    return true;
 #else
-    // macOS：GLFW undecorated = NSWindowStyleMaskBorderless，无红绿灯、不可
-    // resize、不可拖拽，且本层无等价命中钩子——宿主应保系统标题栏
     return false;
+#endif
+}
+
+bool customWindowChromeButtonsNative() {
+#if defined(__APPLE__)
+    return true;  // 钮渲染/交互由平台 NSView 层承担，宿主 DSL 只画品牌文本
+#else
+    return false;
+#endif
+}
+
+void installCustomWindowChrome(Handle window) {
+#if defined(__APPLE__)
+    if (window != nullptr) {
+        core::platform::installCustomWindowChrome(
+            glfwGetCocoaWindow(static_cast<GLFWwindow*>(window)));
+    }
+#else
+    (void)window;
+#endif
+}
+
+void setCustomTitlebarSkin(Handle window, const core::platform::CustomTitlebarSkin& skin) {
+#if defined(__APPLE__)
+    if (window != nullptr) {
+        core::platform::setCustomTitlebarSkin(
+            glfwGetCocoaWindow(static_cast<GLFWwindow*>(window)), skin);
+    }
+#else
+    (void)window;
+    (void)skin;
 #endif
 }
 

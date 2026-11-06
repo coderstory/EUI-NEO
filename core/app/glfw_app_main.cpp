@@ -720,6 +720,9 @@ int eui_app_run() {
         glfwSetWindowTitle(window, title);
     }
     installWindowCallbacks(window, windowState);
+    // macOS 自绘窗口壳（need:140 路线 B）：隐藏红绿灯 + NSView 自绘钮 + 重挂钩子。
+    // 必须在首帧 show 之前装（无红绿灯闪现）；Windows/Linux 无操作。
+    core::window::installCustomWindowChrome(window);
     // 标题栏外观启动快照（DslAppConfig::darkTitleBar；之后变更走下方帧内联动）
     applyTitleBarAppearanceToWindow(window);
     core::platform::TitleBarAppearance appliedTitleBar = app::currentTitleBarAppearance();

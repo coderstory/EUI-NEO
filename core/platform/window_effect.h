@@ -60,6 +60,54 @@ bool applyTitleBarAppearance(void* nativeWindowHandle, const TitleBarAppearance&
 // 平台或句柄无效 → false，静默降级不抛不刷日志；能力缓存避免逐帧重试）。
 bool applyWindowEffect(void* nativeWindowHandle, WindowEffect effect);
 
+// ---- macOS 自绘窗口壳（need:140 路线 B：隐藏红绿灯 + NSView 层叠自绘钮）----
+// 机制全在本平台层（window_effect_macos.mm）：三钮 setHidden:YES（禁 removeFromSuperview，
+// 保 performClose/performMiniaturize 语义）+ 覆盖层 NSView 渲染彩点钮/拖拽/双击 +
+// 全屏进出/setTitle/styleMask 变更的重挂钩子。色值零硬编码，宿主经 setCustomTitlebarSkin
+// 注入主题 token。非 macOS 平台全部无操作（宿主按 customWindowChromeOverlaySupported()
+// 分流，Windows 走既有 WM_NCHITTEST 自绘壳，行为不变）。
+
+// 单钮皮肤：normal/hover/pressed 三态底色 + stroke（1px 常驻描边，= hover 深档）。
+struct CustomTitlebarButtonSkin {
+    std::uint32_t normal = 0;   // 0xRRGGBBAA
+    std::uint32_t hover = 0;
+    std::uint32_t pressed = 0;
+    std::uint32_t stroke = 0;
+};
+
+// 三钮皮肤 + 关闭钮符号色（白）+ 失焦灰点色（宿主 textDisabled）。
+struct CustomTitlebarSkin {
+    CustomTitlebarButtonSkin close;
+    CustomTitlebarButtonSkin minimize;
+    CustomTitlebarButtonSkin fullscreen;
+    std::uint32_t closeSymbol = 0;  // 关闭钮 hover/pressed 符号色（符号最小化/全屏钮=底色挖空）
+    std::uint32_t unfocused = 0;    // 窗口非 key 时三钮统一灰点
+    friend bool operator==(const CustomTitlebarSkin& a, const CustomTitlebarSkin& b) {
+        const auto eq = [](const CustomTitlebarButtonSkin& x, const CustomTitlebarButtonSkin& y) {
+            return x.normal == y.normal && x.hover == y.hover && x.pressed == y.pressed &&
+                   x.stroke == y.stroke;
+        };
+        return eq(a.close, b.close) && eq(a.minimize, b.minimize) &&
+               eq(a.fullscreen, b.fullscreen) && a.closeSymbol == b.closeSymbol &&
+               a.unfocused == b.unfocused;
+    }
+    friend bool operator!=(const CustomTitlebarSkin& a, const CustomTitlebarSkin& b) {
+        return !(a == b);
+    }
+};
+
+// 本平台是否由平台层承担自绘窗口钮的渲染与交互（macOS = true，NSView 覆盖层；
+// Windows = false——自绘钮由宿主 DSL 绘制、WM_NCHITTEST 接管）。纯平台查询。
+bool customWindowChromeOverlaySupported();
+
+// 注入/更新自绘钮皮肤（宿主主题切换后调用；幂等）。仅 macOS 实装，其他平台无操作。
+void setCustomTitlebarSkin(void* nativeWindowHandle, const CustomTitlebarSkin& skin);
+
+// 安装自绘窗口壳：隐藏原生三钮 + 挂覆盖层 + 挂重挂钩子。须在窗口 show 之前调用
+//（启动首帧无红绿灯闪现）。幂等、仅 macOS 实装，其他平台无操作；仅主窗调用
+//（macOS 子窗不套自绘壳，保留系统标题栏——开放 6a/6b 留 PM 拍板）。
+void installCustomWindowChrome(void* nativeWindowHandle);
+
 // WindowEffect → DWM_SYSTEMBACKDROP_TYPE 值（纯函数，单测/实现共用）。
 // spike 结论（2026-09-22）：DWMSBT_AUTO(0) 不可靠（只画默认标题栏后面、可能
 // 被内部启发式关掉），必须显式选 NONE/材质档之一。
