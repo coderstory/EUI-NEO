@@ -102,6 +102,17 @@ void euiApplyFullscreenTitlebar(NSWindow* nsWindow, BOOL fullscreen) {
     if (nsWindow == nil) {
         return;
     }
+    // **幂等闩（P0 回归修复 2026-11-06）**：本函数被 euiChromeReapply 调用，而
+    // reapply 挂在 NSWindowDidUpdateNotification = 每事件循环触发。无条件调
+    // setStyleMask: 会每帧重建窗口视图层级 → UI 全部点击失效（老板实测）。
+    // 只在「全屏态相对上次记录发生变化」时才真正切换 styleMask。
+    static const void* kAppliedFullscreenKey = &kAppliedFullscreenKey;
+    NSNumber* applied = objc_getAssociatedObject(nsWindow, kAppliedFullscreenKey);
+    if (applied != nil && applied.boolValue == (fullscreen != NO)) {
+        return;  // 状态未变：不碰 styleMask
+    }
+    objc_setAssociatedObject(nsWindow, kAppliedFullscreenKey, @(fullscreen != NO),
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (fullscreen) {
         // 撤自绘壳三连 → 系统全屏条恢复原生外观与红绿灯
         [nsWindow setTitlebarAppearsTransparent:NO];
@@ -300,10 +311,21 @@ void euiChromeReapply(NSWindow* nsWindow);
     return YES;
 }
 
-// 条带其余区域永远归本层（拖拽/双击），不透给 GL 视图；子钮优先命中。
+// 条带其余区域归本层（拖拽/双击），**条带之外必须透给 GL 视图**。
+// P0 回归教训（2026-11-06 老板实测「整个窗体双击都全屏 / 点击全无反应」）：
+// 若本视图 frame 因布局时机被撑成全窗，旧实现 return self 会吞掉整窗事件。
+// 故此处显式自检：点不在本视图 bounds 内一律返回 nil（事件穿透）。
 - (NSView*)hitTest:(NSPoint)point {
+    // **P0 根因修复（2026-11-06 老板实测「整个窗体双击都全屏 / 点击全无反应」）**：
+    // 旧实现 `return hit != nil ? hit : self` —— 当点落在本视图 frame 之外时
+    // [super hitTest:] 返回 nil，旧代码仍返回 self ⇒ **整个窗口的点击都被本层吞掉**。
+    // 正确语义：点不在条带内一律返回 nil（事件穿透给 GL 内容视图）。
+    // 注意 point 是**父视图坐标系**，故用 self.frame 判定（不是 bounds）。
+    if (!NSPointInRect(point, self.frame)) {
+        return nil;
+    }
     NSView* hit = [super hitTest:point];
-    return hit != nil ? hit : self;
+    return hit != nil ? hit : self;   // 条带内空白区归本层（拖拽/双击）
 }
 
 - (void)mouseDown:(NSEvent*)event {
@@ -1025,8 +1047,12 @@ void installCustomWindowChrome(void* nativeWindowHandle) {
 
     // 重挂钩子（全部汇到 euiChromeReapply：重隐三钮 + frame 同步；F-05）：
     // 全屏进出（Tietze：styleMask 重写自动重显钮）、resize、key 变化（失焦灰点）、
-    // backing/occlusion 变化（space/显示器切换）。DidUpdate 每事件循环兜底
-    //（setTitle:/styleMask 等任何 AppKit 重显路径的最后防线；reapply 幂等轻量）
+    // backing/occlusion 变化（space/显示器切换）。
+    // **NSWindowDidUpdateNotification 已移除（P0 回归 2026-11-06 老板实测）**：
+    // 该通知在每次事件循环迭代都发，reapply 内 setNeedsDisplay 会排重绘 → 又触发
+    // DidUpdate → 无限重绘循环，事件队列被淹没导致**全 UI 点击失效**。
+    // 其余 9 个钩子已覆盖所有真实需要的重挂时机（全屏进出 4 个 + resize + key 2 个
+    // + backing + occlusion），无需每事件循环兜底。
     NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
     NSArray<NSString*>* names = @[
         NSWindowWillEnterFullScreenNotification,
@@ -1038,7 +1064,6 @@ void installCustomWindowChrome(void* nativeWindowHandle) {
         NSWindowDidResignKeyNotification,
         NSWindowDidChangeBackingPropertiesNotification,
         NSWindowDidChangeOcclusionStateNotification,
-        NSWindowDidUpdateNotification,
     ];
     for (NSString* name in names) {
         [center addObserver:overlay

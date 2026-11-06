@@ -914,6 +914,21 @@ std::shared_ptr<FontInfoHolder> loadSharedFontStack(const std::string& fontPath,
     if (!addLoadedFace(fontPath) &&
         !addLoadedFace(resolveDefaultUiFontPath()) &&
         !addLoadedFace(resolveSystemUiFontPath())) {
+        // 2026-11-06 修复「字号拖动中文本全消失」：原来直接 return {} → 空 holder
+        // → 该帧所有文本渲染失败（全空白）。字号滑块快速拖动时缓存 16 槽被打满、
+        // face 加载失败会走到这里。改为**回退到缓存中任一可用 stack**（同 weight
+        // 优先、否则取最近使用），宁可字号略有偏差也不整屏空白。
+        const FontStackCacheEntry* fallback = nullptr;
+        for (const auto& kv : cache.entries) {
+            if (kv.second.holder && !kv.second.holder->faces.empty()) {
+                if (fallback == nullptr || kv.second.lastUsed > fallback->lastUsed) {
+                    fallback = &kv.second;
+                }
+            }
+        }
+        if (fallback != nullptr) {
+            return fallback->holder;
+        }
         return {};
     }
 
