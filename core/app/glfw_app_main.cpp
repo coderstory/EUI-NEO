@@ -1057,6 +1057,12 @@ int eui_app_run() {
         const bool anyAnimating = windowState.anyAnimating(anyRenderableManagedWindowAnimating(childWindows));
         if (anyAnimating) {
             glfwPollEvents();
+        } else if (core::platform::framePacerActive()) {
+            // 帧步调器在岗（bug#194 20fps 泵）：空闲等待改 1/4 泵周期限时，泵线程
+            // 的帧请求必在 25ms 内被主循环消费。glfwPostEmptyEvent 跨线程在
+            // macOS/Cocoa 唤不醒挂起的 glfwWaitEvents（GLFW 已知限制），只能靠
+            // 限时等待兜底；泵不岗时走下方无限挂起，零泵零成本语义不变。
+            glfwWaitEventsTimeout(0.025);
         } else {
             glfwWaitEvents();
         }

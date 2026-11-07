@@ -939,6 +939,21 @@ void requestFrame() {
     window::postEmptyEvent();
 }
 
+namespace {
+std::atomic<bool>& framePacer() {
+    static std::atomic<bool> pacer{false};
+    return pacer;
+}
+} // namespace
+
+void setFramePacerActive(bool active) {
+    framePacer().store(active, std::memory_order_release);
+}
+
+bool framePacerActive() {
+    return framePacer().load(std::memory_order_acquire);
+}
+
 void requestUiUpdate() {
     uiUpdateRequested().store(true);
     requestFrame();

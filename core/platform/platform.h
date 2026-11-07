@@ -158,6 +158,11 @@ int pollOpenFiles();
 
 void setImeCursorRect(window::Handle window, float x, float y, float width, float height);
 void requestFrame();
+// 帧步调器在岗标志（bug#194 20fps 泵）：在岗期间 glfw 主循环空闲等待改限时，
+// 保证泵线程的帧请求能在半个泵周期内被消费——glfwPostEmptyEvent 跨线程在
+// macOS/Cocoa 上唤醒不了挂起的 glfwWaitEvents（GLFW 已知限制），不能依赖它。
+void setFramePacerActive(bool active);
+bool framePacerActive();
 void requestUiUpdate();
 bool consumeUiUpdate();
 bool consumeFrameRequest();
