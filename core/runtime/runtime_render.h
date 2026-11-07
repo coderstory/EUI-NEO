@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 namespace core::dsl {
 
 // A resize event can arrive many frames before the user releases the mouse.
@@ -60,7 +62,8 @@ private:
                                           const Rect& subtreePixels,
                                           const Rect* dirtyRect,
                                           bool hasScissor,
-                                          const Rect& scissorRect) const;
+                                          const Rect& scissorRect,
+                                          float textureScale = 1.0f) const;
 
     bool hasUnreadyRetainedImage(const Element& element) const;
 
@@ -110,6 +113,8 @@ private:
                                 const runtime::PaintBoundsInstance& bounds,
                                 std::uint64_t signature,
                                 int stableFrameThreshold,
+                                float layerScale,
+                                int reuseFrames,
                                 int windowWidth,
                                 int windowHeight,
                                 float dpiScale,
@@ -175,7 +180,19 @@ inline std::vector<Vec2> scaledPolygonPoints(const std::vector<Vec2>& points, fl
     return result;
 }
 
+// need217：retained 层 opt-in 参数的统一归一口径。scale <=0/>=1 恒等回 1.0
+// （缺省元素渲染行为与旧版逐值一致），reuseFrames 负值归 0。
+inline float effectiveRetainedLayerScale(const Element& element) {
+    const float value = element.retainedLayerScale;
+    return (value > 0.0f && value < 1.0f) ? value : 1.0f;
+}
+
+inline int effectiveRetainedLayerReuseFrames(const Element& element) {
+    return std::max(0, element.retainedLayerReuseFrames);
+}
+
 inline void RuntimeRenderer::renderDirect(core::render::RenderBackend& renderBackend, int windowWidth, int windowHeight, float dpiScale, const Rect* dirtyRect) {
+    const auto renderDirectT0 = std::chrono::steady_clock::now();
     const RenderTransform identity;
     const bool hasScissor = dirtyRect != nullptr;
     const Rect scissor = dirtyRect ? *dirtyRect : Rect{};
@@ -186,6 +203,12 @@ inline void RuntimeRenderer::renderDirect(core::render::RenderBackend& renderBac
     for (const Element* root : roots) {
         renderElement(renderBackend, *root, windowWidth, windowHeight, dpiScale, identity, dirtyRect, hasScissor, scissor);
     }
+    // need217 帧耗口径：CPU 侧提交耗时累计（一帧可按 dirty rect 多次进 renderDirect，
+    // beginRenderFrameStats 每帧清零）。
+    core::render::currentRenderFrameStats().renderDirectCpuNs +=
+        static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - renderDirectT0).count());
 }
 
 inline void RuntimeRenderer::prepareTextElement(
@@ -400,7 +423,13 @@ inline void RuntimeRenderer::renderElementChildren(
     std::size_t index = 0;
     while (index < children.size()) {
         std::size_t runEnd = index;
-        while (runEnd < children.size() && isRetainedSiblingCandidate(*children[runEnd])) {
+        // need217：缩放/降频 opt-in 必须整段 run 一致，混档即截断——缺省元素两两
+        // 恒等（1.0/0），纯缺省树的 run 划分与旧版逐值一致。
+        const float runScale = effectiveRetainedLayerScale(*children[index]);
+        const int runReuseFrames = effectiveRetainedLayerReuseFrames(*children[index]);
+        while (runEnd < children.size() && isRetainedSiblingCandidate(*children[runEnd]) &&
+               effectiveRetainedLayerScale(*children[runEnd]) == runScale &&
+               effectiveRetainedLayerReuseFrames(*children[runEnd]) == runReuseFrames) {
             ++runEnd;
         }
 
@@ -445,7 +474,8 @@ inline bool RuntimeRenderer::isRetainedLayerGeometryCandidate(
     const Rect& subtreePixels,
     const Rect* dirtyRect,
     bool hasScissor,
-    const Rect& scissorRect) const {
+    const Rect& scissorRect,
+    float textureScale) const {
     if (!bounds.hasSubtree ||
         bounds.drawCost < 8) {
         return false;
@@ -453,8 +483,10 @@ inline bool RuntimeRenderer::isRetainedLayerGeometryCandidate(
     if (subtreePixels.width < 24.0f || subtreePixels.height < 24.0f) {
         return false;
     }
-    const float area = subtreePixels.width * subtreePixels.height;
-    if (area < 4096.0f || area > 2048.0f * 2048.0f) {
+    // 面积口径按缩放后纹理面积（need217）：textureScale==1（缺省）与旧口径逐值一致；
+    // 低清 opt-in 让超 2048² 的大背景（如 Retina 全窗流质）得以进 layer。
+    const float scaledArea = subtreePixels.width * textureScale * subtreePixels.height * textureScale;
+    if (scaledArea < 4096.0f || scaledArea > 2048.0f * 2048.0f) {
         return false;
     }
     if (dirtyRect != nullptr && !intersects(subtreePixels, *dirtyRect)) {
@@ -477,7 +509,8 @@ inline bool RuntimeRenderer::isRetainedLayerCandidate(
                                           subtreePixels,
                                           dirtyRect,
                                           hasScissor,
-                                          scissorRect)) {
+                                          scissorRect,
+                                          effectiveRetainedLayerScale(element))) {
         return false;
     }
     if (element.subtreeHasDependentVisuals ||
@@ -561,12 +594,15 @@ inline bool RuntimeRenderer::renderRetainedSiblingRun(
         combined.drawCost += bounds->second.drawCost;
     }
 
+    const float runScale = effectiveRetainedLayerScale(*children[begin]);
+    const int runReuseFrames = effectiveRetainedLayerReuseFrames(*children[begin]);
     const Rect subtreePixels = toPixelRect(combined.subtree, dpiScale);
     if (!isRetainedLayerGeometryCandidate(combined,
                                           subtreePixels,
                                           dirtyRect,
                                           hasScissor,
-                                          scissorRect)) {
+                                          scissorRect,
+                                          runScale)) {
         return false;
     }
 
@@ -587,7 +623,9 @@ inline bool RuntimeRenderer::renderRetainedSiblingRun(
                                                               end,
                                                               combined,
                                                               dpiScale),
-                                  2,
+                                  runReuseFrames > 0 ? 1 : 2,
+                                  runScale,
+                                  runReuseFrames,
                                   windowWidth,
                                   windowHeight,
                                   dpiScale,
@@ -786,7 +824,9 @@ inline bool RuntimeRenderer::renderRetainedLayer(core::render::RenderBackend& re
                                   1,
                                   boundsIt->second,
                                   retainedLayerSignature(element, boundsIt->second, dpiScale),
-                                  2,
+                                  effectiveRetainedLayerReuseFrames(element) > 0 ? 1 : 2,
+                                  effectiveRetainedLayerScale(element),
+                                  effectiveRetainedLayerReuseFrames(element),
                                   windowWidth,
                                   windowHeight,
                                   dpiScale,
@@ -804,6 +844,8 @@ inline bool RuntimeRenderer::renderRetainedElements(
     const runtime::PaintBoundsInstance& bounds,
     std::uint64_t signature,
     int stableFrameThreshold,
+    float layerScale,
+    int reuseFrames,
     int windowWidth,
     int windowHeight,
     float dpiScale,
@@ -829,30 +871,53 @@ inline bool RuntimeRenderer::renderRetainedElements(
         return false;
     }
 
+    // need217 目标缩放：纹理按 scale 建小，层内仍按逻辑尺寸投影（renderElement 收
+    // layerWidth/Height），viewport 低清 → 光栅化阶段统一超采样，合成时经
+    // drawLayerTexture 双线性放大铺回 layerBounds。scale==1（缺省）时 tex==逻辑
+    // 尺寸，与旧版逐值一致。
+    const float effectiveScale = (layerScale > 0.0f && layerScale < 1.0f) ? layerScale : 1.0f;
+    const int texWidth = std::max(1, static_cast<int>(std::ceil(static_cast<float>(layerWidth) * effectiveScale)));
+    const int texHeight = std::max(1, static_cast<int>(std::ceil(static_cast<float>(layerHeight) * effectiveScale)));
+
     const bool sameGeometry = layer.handle != nullptr &&
                               closeEnough(layer.bounds, layerBounds) &&
-                              layer.width == layerWidth &&
-                              layer.height == layerHeight;
+                              closeEnough(layer.scale, effectiveScale) &&
+                              layer.width == texWidth &&
+                              layer.height == texHeight;
     const bool sameLayer = layer.valid &&
                            sameGeometry &&
                            layer.signature == signature;
-    if (!sameLayer) {
+    // need217 签名降频：窗口内签名/几何漂移不重建，沿用旧纹理（陈旧复用）。几何漂移
+    // 在容忍范围（连续漂移内容的常态），只要求 scale 一致——档位变化必须立即重建。
+    const bool staleReuse = reuseFrames > 0 &&
+                            layer.valid &&
+                            closeEnough(layer.scale, effectiveScale) &&
+                            !sameLayer &&
+                            layer.rebuildAge < reuseFrames;
+    if (staleReuse) {
+        ++layer.rebuildAge;
+        ++core::render::currentRenderFrameStats().retainedLayerHits;
+    } else if (!sameLayer) {
         const bool geometryResize = layer.handle != nullptr && !sameGeometry;
-        const int requiredStableFrames = geometryResize
-            ? kRetainedLayerResizeStableFrames
-            : stableFrameThreshold;
+        // need217：降频 opt-in 跳过 16 帧几何稳定等待——连续漂移内容无稳态可等，
+        // 且低清重建本身廉价；stableFrameThreshold 由调用方按 opt-in 传 1。
+        const int requiredStableFrames = (reuseFrames > 0 || !geometryResize)
+            ? stableFrameThreshold
+            : kRetainedLayerResizeStableFrames;
         const bool pendingMatches =
             layer.pendingSignature == signature &&
             closeEnough(layer.pendingBounds, layerBounds) &&
-            layer.pendingWidth == layerWidth &&
-            layer.pendingHeight == layerHeight;
+            layer.pendingWidth == texWidth &&
+            layer.pendingHeight == texHeight &&
+            closeEnough(layer.pendingScale, effectiveScale);
         if (pendingMatches) {
             layer.pendingStableFrames = std::min(layer.pendingStableFrames + 1, requiredStableFrames);
         } else {
             layer.pendingSignature = signature;
             layer.pendingBounds = layerBounds;
-            layer.pendingWidth = layerWidth;
-            layer.pendingHeight = layerHeight;
+            layer.pendingWidth = texWidth;
+            layer.pendingHeight = texHeight;
+            layer.pendingScale = effectiveScale;
             layer.pendingStableFrames = 1;
         }
         ++core::render::currentRenderFrameStats().retainedLayerMisses;
@@ -863,17 +928,19 @@ inline bool RuntimeRenderer::renderRetainedElements(
         layer.valid = false;
         layer.signature = signature;
         layer.bounds = layerBounds;
-        layer.width = layerWidth;
-        layer.height = layerHeight;
+        layer.width = texWidth;
+        layer.height = texHeight;
+        layer.scale = effectiveScale;
+        layer.rebuildAge = 0;
         layer.pendingStableFrames = 0;
         if (layer.handle == nullptr) {
-            layer.handle = renderBackend.createLayer(layerWidth, layerHeight);
-        } else if (!renderBackend.resizeLayer(layer.handle, layerWidth, layerHeight)) {
+            layer.handle = renderBackend.createLayer(texWidth, texHeight);
+        } else if (!renderBackend.resizeLayer(layer.handle, texWidth, texHeight)) {
             renderBackend.destroyLayer(layer.handle);
-            layer.handle = renderBackend.createLayer(layerWidth, layerHeight);
+            layer.handle = renderBackend.createLayer(texWidth, texHeight);
         }
         if (layer.handle == nullptr ||
-            !renderBackend.beginLayerFrame(layer.handle, layerWidth, layerHeight)) {
+            !renderBackend.beginLayerFrame(layer.handle, texWidth, texHeight)) {
             return false;
         }
 
@@ -885,7 +952,7 @@ inline bool RuntimeRenderer::renderRetainedElements(
             1.0f
         };
         ++core::render::currentRenderFrameStats().clearCalls;
-        renderBackend.setScissor(false, {}, layerHeight);
+        renderBackend.setScissor(false, {}, texHeight);
         renderBackend.clear({0.0f, 0.0f, 0.0f, 0.0f});
         RetainedLayerRenderScope scope(retainedLayerRenderDisabled_);
         for (std::size_t index = 0; index < elementCount; ++index) {
@@ -899,9 +966,14 @@ inline bool RuntimeRenderer::renderRetainedElements(
         renderBackend.endLayerFrame();
         layer.valid = true;
         ++core::render::currentRenderFrameStats().retainedLayerRebuilds;
-        return false;
+        if (reuseFrames == 0) {
+            return false;
+        }
+        // need217：降频 opt-in 重建帧直接落新纹理（低清重建已含当前内容），不再
+        // return false 触发全分辨率直渲兜底——落到下方共用 draw 块。
     } else {
         layer.pendingStableFrames = 0;
+        ++layer.rebuildAge;
         ++core::render::currentRenderFrameStats().retainedLayerHits;
     }
 

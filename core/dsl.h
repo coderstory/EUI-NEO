@@ -138,6 +138,16 @@ struct Element {
     float radius = 0.0f;
     float blur = 0.0f;
     float opacity = 1.0f;
+    /// retained 层离屏纹理目标缩放（need217）。1.0（缺省）=全分辨率，渲染行为与
+    /// 旧版逐值一致；(0,1) 开区间 = 纹理按 scale 建小、层内按逻辑尺寸投影、合成时
+    /// 双线性放大（朦胧观感）；<=0 或 >=1 一律按 1.0 处理。子树 blur/border 的表观
+    /// 厚度会随放大变厚 1/scale，含重 blur/描边的内容 opt-in 前需自评。
+    float retainedLayerScale = 1.0f;
+    /// retained 层签名降频（need217）：签名/几何失配后仍沿用旧纹理的帧数窗口。
+    /// 0（缺省）=失配即走既有 pending 稳帧重建路径；>0 =窗口内陈旧复用（计入
+    /// retainedLayerHits），到期按 stableFrameThreshold 档重建并跳过 16 帧几何
+    /// 稳定等待——连续漂移内容无稳态可等，只适合容忍陈旧帧的装饰性背景。
+    int retainedLayerReuseFrames = 0;
     std::vector<Vec2> polygonPoints;
 
     std::string text;
@@ -375,6 +385,16 @@ public:
     Derived& size(SizeValue widthValue, SizeValue heightValue) {
         element_->width = widthValue;
         element_->height = heightValue;
+        return self();
+    }
+
+    Derived& retainedLayerScale(float value) {
+        element_->retainedLayerScale = value;
+        return self();
+    }
+
+    Derived& retainedLayerReuseFrames(int value) {
+        element_->retainedLayerReuseFrames = std::max(0, value);
         return self();
     }
 

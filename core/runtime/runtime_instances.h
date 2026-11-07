@@ -207,7 +207,10 @@ struct RetainedLayerInstance {
     std::uint64_t pendingSignature = 0;
     int pendingWidth = 0;
     int pendingHeight = 0;
+    float pendingScale = 1.0f;
     int pendingStableFrames = 0;
+    float scale = 1.0f;
+    int rebuildAge = 0;
     bool valid = false;
     bool seen = false;
 };

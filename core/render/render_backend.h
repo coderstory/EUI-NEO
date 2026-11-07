@@ -86,6 +86,8 @@ struct RenderFrameStats {
     int retainedLayerMisses = 0;
     int retainedLayerDraws = 0;
     int retainedLayerRebuilds = 0;
+    // renderDirect 的 CPU 侧累计耗时（含低清重建与逐元素提交；need217 帧耗口径）。
+    std::uint64_t renderDirectCpuNs = 0;
 };
 
 enum class RenderCacheBlitMode {
