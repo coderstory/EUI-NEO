@@ -166,16 +166,16 @@ public:
                     .size(width_, popupHeight)
                     // 弹层展开档位：open 时把 popup 子树抬到常规内容档之上
                     // （sidebar 60 / card_slider 信息层 250 / 其它 dropdown
-                    // 字段 20 等；与 card_slider 输入层 900 等值，等值时退化
+                    // 字段 0 等；与 card_slider 输入层 900 等值，等值时退化
                     // 为 DOM 序），仍在 dialog(1000)/colorpicker、datepicker、
                     // timepicker(1000)/contextmenu(1050)/toast(1100) 之下——
                     // 模态层照常盖住展开的下拉。等值 z 碰撞背景：两个
-                    // 纵向相邻 dropdown 的子树上界同为默认 zIndex_=20，兄弟
+                    // 纵向相邻 dropdown 的子树上界同为字段档 0，兄弟
                     // 稳定排序（core/dsl.h rebuildOrderedChildren）保持 DOM
                     // 序 → 后绘的下方字段盖住上方展开弹层（DevDesk settings
                     // 桌宠卡「皮肤」弹层被新增「大小」行遮挡，2026-09-30）。
                     // subtreeMaxZIndex 逃逸只解决「高 z 盖低 z」，等值档位
-                    // 必须由 open 态升档；关闭态归 0，子树上界回到字段档 20，
+                    // 必须由 open 态升档；关闭态归 0，子树上界回到字段档 0，
                     // DOM 序与既有行为逐位一致。已知边界：两个 dropdown 同时
                     // open 时同为 900，仍按 DOM 序（宿主侧普遍单开互斥）。
                     .zIndex(open_ ? kPopupOpenZIndex : 0)
@@ -262,11 +262,16 @@ private:
     float width_ = 260.0f;
     float height_ = -1.0f;
     float itemHeight_ = 0.0f;
-    int zIndex_ = 20;
+    // 字段档缺省 0（原 20 是 closed 命中残留根因：hitTest 按子树
+    // subtreeMaxZIndex 逆序命中，closed dropdown 恒抬 20 会压过同域低 z
+    // 交互元素——DevDesk bug162 机制层根修，2026-11-07）；展开态由 popup
+    // 子树 z900 自抬整树（见 kPopupOpenZIndex），字段档无需参与。显式
+    // zIndex(n) 的宿主语义不变。
+    int zIndex_ = 0;
 
     // 弹层展开态的 z 档位（挂在 id+".popup" 子树，经 subtreeMaxZIndex 把整个
     // dropdown 抬到后续兄弟之上）。900：高于常规内容档（sidebar 60、
-    // card_slider 信息层 250、其它 dropdown 字段 20 等），与 card_slider
+    // card_slider 信息层 250、其它 dropdown 字段 0 等），与 card_slider
     // 输入层（components/workshop/card_slider.h 的 mouseArea 900）为等值档、
     // 等值时退化为 DOM 序；低于 dialog/colorpicker/datepicker/timepicker
     // 1000 / contextmenu 1050 / toast 1100，模态层不被穿。

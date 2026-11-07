@@ -67,10 +67,17 @@ public:
             pointerHalfWidth_ + metrics_.typography.lineGapRelaxed,
             tooltipWidth - pointerHalfWidth_ - metrics_.typography.lineGapRelaxed);
 
+        // ignoreLayout：tooltip 画进行/列闭包时不再占流式布局槽位（幽灵占位
+        // 机制层根修；此前依赖宿主把 tooltip 挪到根作用域规避，如 DevDesk
+        // md.help.icon.tooltip，bug149）。布局侧 layoutOverlayChildren 仍按
+        // 自报 x/y 相对容器定位——stack/根作用域下位置逐位不变；行/列闭包下
+        // 从「被流式排布」变为「按 x/y 悬浮」，现无宿主处于该形态
+        // （2026-11-07 波及面核验：DevDesk 6 处 + EUI 图表 3 处全在 stack）。
         ui_.stack(id_)
             .x(tooltipX)
             .y(tooltipY)
             .size(tooltipWidth, stackHeight)
+            .ignoreLayout()
             .zIndex(zIndex_)
             .hoverOpacityFrom(sourceId_)
             .content([&] {
