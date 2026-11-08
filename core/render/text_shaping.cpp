@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <initializer_list>
 #include <limits>
@@ -47,7 +48,17 @@ FT_Library sharedFreeTypeLibrary() {
         // 注入的分叉（need:132 两端度量一致线）。truetype 驱动仅此一个属性；
         // cff 驱动 hinting-engine 默认即 adobe 与目标一致，未同锁。
         const FT_UInt interpreterVersion = 40;
-        FT_Property_Set(created, "truetype", "interpreter-version", &interpreterVersion);
+        if (const FT_Error propertyError =
+                FT_Property_Set(created, "truetype", "interpreter-version", &interpreterVersion);
+            propertyError != 0) {
+            // 锁定失败不致命（渲染栈照常可用），但会静默回到 FREETYPE_PROPERTIES 在
+            // FT_Init 时注入的分叉态，度量可能在两端漂移——必须留可见信号。
+            // 此处仍在静态初始化早期，EUI 无日志设施，退化 stdio（同 vulkan_backend 口径）。
+            std::fprintf(stderr,
+                         "EUI Text: FT_Property_Set(truetype/interpreter-version=40) failed: %d; "
+                         "FREETYPE_PROPERTIES may skew glyph metrics\n",
+                         static_cast<int>(propertyError));
+        }
         return created;
     }();
     return library;
