@@ -956,6 +956,99 @@ public:
         return merged;
     }
 
+    // ── 点→显示码点反查（need264 文本拖选）──────────────────────────────
+    // hitRectsForDisplayRange 的逆问题：块局部坐标 (x, y)（与上方矩形输出同一
+    // 块局部坐标系，调用方先经自己的几何表把内容系 y 定到块）反查最近字形边界
+    // 的显示码点偏移，钳到 [0, 块显示文本码点数]。与渲染同源：逐子块走同一布局
+    // 通路（cachedInlineLayout / Code|Html 虚拟行近似 / cell 包围盒），子块纵向
+    // 排布与 estimateHeight 同式（estimateBlockHeight + blockGap），段内边界用
+    // 逐码点增量 advance（与折行决策同款累加，同字体无 kerning 可加性成立，
+    // 见 layoutInlineRunsWithStyle 折行注释）。
+    struct MarkdownPointHit {
+        std::size_t cp = 0;
+        bool ok = false;  // false = 文档无显示文本（如 Divider-only），cp 无意义
+    };
+
+    static MarkdownPointHit displayCpForPoint(const std::string& markdown,
+                                              float width,
+                                              const MarkdownStyle& style,
+                                              float x, float y) {
+        MarkdownPointHit hit;
+        if (width <= 0.0f) {
+            return hit;
+        }
+        const std::shared_ptr<const detail::MarkdownDocument> document =
+            detail::cachedMarkdownDocument(markdown);
+        const std::vector<detail::MarkdownBlock>& blocks = document->blocks;
+        // 子块几何录制（单遍）：每个渲染单元（md4c 子块 / 表格行组）的块局部
+        // 纵向范围与显示码点基址——纵向排布与 estimateHeight 同式。
+        struct LocalBlock {
+            std::size_t index;
+            std::size_t groupEnd;
+            std::size_t cpBase;
+            float yTop;
+            float height;
+        };
+        std::vector<LocalBlock> locals;
+        std::size_t cp = 0;
+        float yAcc = 0.0f;
+        for (std::size_t i = 0; i < blocks.size(); ++i) {
+            if (i > 0) {
+                ++cp;  // 块间 '\n'
+            }
+            const detail::MarkdownBlock& b = blocks[i];
+            std::size_t groupEnd = i + 1;
+            float blockH = 0.0f;
+            const bool isRowGroup =
+                b.kind == detail::MarkdownBlockKind::TableRow;
+            if (isRowGroup) {
+                while (groupEnd < blocks.size() &&
+                       blocks[groupEnd].kind == detail::MarkdownBlockKind::TableRow) {
+                    ++groupEnd;
+                }
+                blockH = estimateTableHeight(blocks, i, groupEnd, width, style);
+            } else {
+                blockH = estimateBlockHeight(b, width, style);
+            }
+            locals.push_back({i, groupEnd, cp, yAcc, blockH});
+            cp += blockDisplayCp(blocks, i, groupEnd);
+            yAcc += blockH + style.blockGap;
+            if (isRowGroup) {
+                // 组内其余行并入本渲染单元（hitRectsForDisplayRange 同式
+                // i = end - 1）——否则每行重复成 local 且码点重复计账。
+                i = groupEnd - 1;
+            }
+        }
+        if (locals.empty()) {
+            return hit;
+        }
+        // 命中子块：纵向包含 y 优先；全部未含（浮点/近似缝隙）取中心最近兜底
+        // ——保证恒有非越界返回。
+        const LocalBlock* chosen = nullptr;
+        const LocalBlock* nearest = &locals.front();
+        float nearestDist = std::numeric_limits<float>::max();
+        for (const LocalBlock& lb : locals) {
+            if (blocks[lb.index].kind == detail::MarkdownBlockKind::Divider) {
+                continue;  // 无显示文本，不做命中对象
+            }
+            if (y >= lb.yTop && y < lb.yTop + lb.height) {
+                chosen = &lb;
+                break;
+            }
+            const float dist = std::fabs(y - (lb.yTop + lb.height * 0.5f));
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearest = &lb;
+            }
+        }
+        if (chosen == nullptr) {
+            chosen = nearest;
+        }
+        resolveCpInBlock(blocks, chosen->index, chosen->groupEnd, width, style,
+                         x, y - chosen->yTop, chosen->cpBase, hit);
+        return hit;
+    }
+
     MarkdownBuilder& markdown(std::string value) { markdown_ = std::move(value); return *this; }
     MarkdownBuilder& x(float value) { x_ = value; hasX_ = true; return *this; }
     MarkdownBuilder& y(float value) { y_ = value; hasY_ = true; return *this; }
@@ -1152,22 +1245,24 @@ private:
                 const float runFontSize = code ? std::max(1.0f, fontSize - 1.0f) : fontSize;
                 const int weight = heading || seg.run.style.strong ? 700 : 400;
                 const float chipInset = chip ? 6.0f : 0.0f;
+                // 边界口径（need264 复核修正）：chip 文本真实绘制在 seg.x+6、宽
+                // seg.width-12（renderInlineSegment textInset），段内前缀边界 =
+                // chipInset + 前缀 measure——旧式在内层再 +6 是双重内衬，首字形
+                // 盒虚胖 12px 且内部边界右偏 6px（高亮/选区盖到邻字）。
                 const float x0 = seg.x + chipInset +
                     (localStart == 0
                          ? 0.0f
                          : std::min(seg.width,
                                     detail::measureMarkdownTextWidth(
                                         firstNCodepoints(seg.text, localStart),
-                                        family, runFontSize, weight) +
-                                        (chip ? 6.0f : 0.0f)));
-                const float x1 = seg.x + chipInset +
-                    (localEnd >= segCps
-                         ? seg.width
-                         : std::min(seg.width,
-                                    detail::measureMarkdownTextWidth(
-                                        firstNCodepoints(seg.text, localEnd),
-                                        family, runFontSize, weight) +
-                                        (chip ? 6.0f : 0.0f)));
+                                        family, runFontSize, weight)));
+                const float x1 = (localEnd >= segCps)
+                    ? seg.x + seg.width  // 段尾 = segment 右缘（chip 含右内衬，不再外扩）
+                    : seg.x + chipInset +
+                          std::min(seg.width,
+                                   detail::measureMarkdownTextWidth(
+                                       firstNCodepoints(seg.text, localEnd),
+                                       family, runFontSize, weight));
                 MarkdownHitRect r;
                 r.x = xOff + x0;
                 r.y = yOff + seg.y;
@@ -1202,15 +1297,33 @@ private:
             xOff += textX;
             yOff = style.quotePadding;
         }
+        std::size_t beginLocal = cpBegin;
+        std::size_t endLocal = cpEnd;
         if (b.kind == detail::MarkdownBlockKind::ListItem) {
             const float markerWidth = b.task ? 34.0f : 24.0f;
             const std::string prefix = detail::markdownListPrefix(b);
-            cp += countCodepoints(prefix);  // marker 不参与高亮矩形（与渲染一致）
+            // marker 码点域对齐（need264 复核）：displayTextOf 把 prefix 计入显示
+            // 文本，渲染也真实画出 .mark 文本（renderListItem，右对齐 markerWidth
+            // 盒 + 内容起点 markerWidth+8）——矩形按该盒补齐，否则 marker 之后的
+            // 命中/选区在 rect 域整体左漂 prefixCps 码点。
+            const std::size_t prefixCps = countCodepoints(prefix);
+            const std::size_t mBegin = std::max(cpBegin, cp);
+            const std::size_t mEnd = std::min(cpEnd, cp + prefixCps);
+            if (mEnd > mBegin) {
+                rects.push_back(MarkdownHitRect{xOff, yOff, markerWidth,
+                                                style.bodyLineHeight});
+            }
+            cp += prefixCps;
+            // 内容段域换算：rectsForInlineRuns 的 segment 域自 0 起（纯内容），
+            // 查询区间须自显示域平移 prefixCps——否则列表内容高亮/选区整体错位
+            // prefixCps 码点（旧实现两处同时漂：marker 无矩形 + 内容不平移）。
+            beginLocal = cpBegin > prefixCps ? cpBegin - prefixCps : 0;
+            endLocal = cpEnd > prefixCps ? cpEnd - prefixCps : 0;
             textWidth = std::max(0.0f, contentWidth - markerWidth - 8.0f);
             xOff += markerWidth + 8.0f;
         }
         rectsForInlineRuns(rects, b.runs, textWidth, fontSize, lineHeight,
-                           heading, style, xOff, yOff, cp, cpBegin, cpEnd);
+                           heading, style, xOff, yOff, cp, beginLocal, endLocal);
     }
 
     // Code/Html：ui.text .wrap() 真排无 inline 布局可查，矩形按 estimateMarkdownTextHeight
@@ -1285,7 +1398,10 @@ private:
     }
 
     // 表格：cell 级近似（包围盒高亮，见 displayTextOf 已知近似）；返回推进后的
-    // 全局码点游标。
+    // 全局码点游标。码点域口径（need264 复核对齐）：行显示文本 = 行内 cell 直接
+    // 串接（appendBlockDisplayText 同式，cell 间无分隔）、行间 '\n'——旧实现按
+    // cell 逐个计账，与 displayTextOf（行串接）漂 (cells-1)×rows 级码点，表格内
+    // 及其后命中/选区映射整体错位。
     static std::size_t rectsForTable(std::vector<MarkdownHitRect>& rects,
                                      const std::vector<detail::MarkdownBlock>& blocks,
                                      std::size_t begin,
@@ -1316,15 +1432,29 @@ private:
                         ->measuredHeight);
             }
             rowHeight += style.tableCellPadding * 2.0f;
+            // 行显示码点与 cell 前缀表（cell 串接域内各 cell 的子区间）
+            std::vector<std::size_t> cellPrefix(b.cells.size() + 1, 0);
             for (std::size_t cell = 0; cell < b.cells.size(); ++cell) {
                 std::string cellText;
                 for (const detail::MarkdownRun& run : b.cells[cell].runs) {
                     cellText += detail::displayText(run);
                 }
-                const std::size_t cellCps = countCodepoints(cellText);
-                const std::size_t cellBegin = cp;
-                cp += cellCps;
-                if (cellCps == 0 || cellBegin >= cpEnd || cellBegin + cellCps <= cpBegin) {
+                cellPrefix[cell + 1] =
+                    cellPrefix[cell] + countCodepoints(cellText);
+            }
+            const std::size_t rowCps = cellPrefix.back();
+            const std::size_t rowBegin = cp;
+            cp += rowCps;
+            if (row + 1 < end) {
+                ++cp;  // 行间 '\n'（displayTextOf 块间分隔同式）
+            }
+            if (rowCps == 0 || rowBegin >= cpEnd || rowBegin + rowCps <= cpBegin) {
+                continue;
+            }
+            for (std::size_t cell = 0; cell < b.cells.size(); ++cell) {
+                const std::size_t cellBegin = rowBegin + cellPrefix[cell];
+                const std::size_t cellEnd = rowBegin + cellPrefix[cell + 1];
+                if (cellEnd <= cpBegin || cellBegin >= cpEnd) {
                     continue;
                 }
                 MarkdownHitRect r;
@@ -1337,6 +1467,340 @@ private:
             y += rowHeight;
         }
         return cp;
+    }
+
+    // ── 点→码点反查内部件（与 displayCpForPoint 配对）────────────────────
+
+    // 渲染单元（md4c 子块 / 表格行组）的显示文本码点数：直接借
+    // appendBlockDisplayText 拼文本再计数（行组行间 '\n' 与 displayTextOf 同式）。
+    static std::size_t blockDisplayCp(const std::vector<detail::MarkdownBlock>& blocks,
+                                      std::size_t begin, std::size_t end) {
+        std::string text;
+        for (std::size_t row = begin; row < end; ++row) {
+            if (row > begin) {
+                text += '\n';
+            }
+            appendBlockDisplayText(blocks[row], text);
+        }
+        return countCodepoints(text);
+    }
+
+    // 命中子块内的点→局部码点解析：按块种类分派到与 rects* 同参数的解析件。
+    static void resolveCpInBlock(const std::vector<detail::MarkdownBlock>& blocks,
+                                 std::size_t index, std::size_t groupEnd,
+                                 float width, const MarkdownStyle& style,
+                                 float x, float yLocal, std::size_t cpBase,
+                                 MarkdownPointHit& hit) {
+        const detail::MarkdownBlock& b = blocks[index];
+        const float quoteInset =
+            static_cast<float>(std::max(0, b.quoteDepth)) * 8.0f;
+        const float listInset =
+            static_cast<float>(std::max(0, b.listDepth - 1)) * style.listIndent;
+        const float contentWidth =
+            std::max(0.0f, width - quoteInset - listInset);
+        if (b.kind == detail::MarkdownBlockKind::Divider) {
+            return;  // 无显示文本（ok 保持 false，cp 无意义）
+        }
+        hit.ok = true;
+        if (b.kind == detail::MarkdownBlockKind::Code ||
+            b.kind == detail::MarkdownBlockKind::Html) {
+            hit.cp = cpBase + resolveCpInPlainTextBlock(
+                b, contentWidth, style, quoteInset + listInset, x, yLocal);
+        } else if (b.kind == detail::MarkdownBlockKind::TableRow) {
+            hit.cp = resolveCpInTableRowGroup(blocks, index, groupEnd,
+                                              contentWidth, style,
+                                              quoteInset + listInset, x, yLocal,
+                                              cpBase);
+        } else {
+            hit.cp = cpBase + resolveCpInInlineBlock(b, contentWidth, style,
+                                                     quoteInset + listInset,
+                                                     x, yLocal);
+        }
+    }
+
+    // Paragraph/Heading/Quote/ListItem：insets 与 rectsForInlineBlock 同式镜像。
+    static std::size_t resolveCpInInlineBlock(const detail::MarkdownBlock& b,
+                                              float contentWidth,
+                                              const MarkdownStyle& style,
+                                              float insetX, float x, float y) {
+        const bool heading = b.kind == detail::MarkdownBlockKind::Heading;
+        const float fontSize =
+            heading ? detail::markdownHeadingSize(style, b.headingLevel)
+                    : style.bodySize;
+        const float lineHeight =
+            heading ? fontSize + 6.0f : style.bodyLineHeight;
+        float xOff = insetX;
+        float yOff = 0.0f;
+        float textWidth = contentWidth;
+        if (b.quoteDepth > 0) {
+            const float panelX = 3.0f + 8.0f;
+            const float textX = panelX + style.quotePadding;
+            textWidth = std::max(0.0f, contentWidth - panelX - style.quotePadding * 2.0f);
+            xOff += textX;
+            yOff = style.quotePadding;
+        }
+        std::size_t localCp = 0;
+        if (b.kind == detail::MarkdownBlockKind::ListItem) {
+            const float markerWidth = b.task ? 34.0f : 24.0f;
+            const std::string prefix = detail::markdownListPrefix(b);
+            localCp = countCodepoints(prefix);
+            // 点落在 marker 文本盒（首行带内、x < 内容起点）：按盒宽线性分桶
+            // （右对齐渲染的近似，1-4 码点短串够用）；折叠行带以下照常走内容域。
+            const std::size_t prefixCps = localCp;
+            const float contentStart = markerWidth + 8.0f;
+            if (prefixCps > 0 && y < yOff + style.bodyLineHeight &&
+                x < xOff + contentStart) {
+                const float t =
+                    std::clamp((x - xOff) / std::max(1.0f, markerWidth), 0.0f, 1.0f);
+                return std::min(
+                    prefixCps,
+                    static_cast<std::size_t>(t * static_cast<float>(prefixCps) + 0.5f));
+            }
+            textWidth = std::max(0.0f, contentWidth - markerWidth - 8.0f);
+            xOff += markerWidth + 8.0f;
+        }
+        return localCp + resolveCpInInlineRuns(b.runs, textWidth, fontSize,
+                                               lineHeight, heading, style,
+                                               xOff, yOff, x, y);
+    }
+
+    // run 序列 → 段定位 + 段内最近前缀边界。段矩形几何与 rectsForInlineRuns 完全
+    // 同源（同一 cachedInlineLayout 与显示流走法）；段内用逐码点增量 advance 找
+    // 「x 左侧完整字形的最大个数」（半字宽内归前界——最近边界语义）。
+    static std::size_t resolveCpInInlineRuns(const std::vector<detail::MarkdownRun>& runs,
+                                             float textWidth, float fontSize,
+                                             float lineHeight, bool heading,
+                                             const MarkdownStyle& style,
+                                             float xOff, float yOff,
+                                             float x, float y) {
+        const std::shared_ptr<const InlineLayoutEntry> layout =
+            cachedInlineLayout(runs, textWidth, fontSize, lineHeight, heading,
+                               core::HorizontalAlign::Left, style);
+        const std::vector<InlineSegment>& segments = layout->segments;
+        std::string stream;
+        for (const detail::MarkdownRun& run : runs) {
+            stream += detail::displayText(run);
+        }
+        std::size_t byte = 0;  // 流内字节游标（走法与 rectsForInlineRuns 逐行同款）
+        std::size_t pos = 0;   // 流内码点游标（= 显示文本域）
+        auto cpStep = [](const std::string& s, std::size_t i) {
+            const unsigned char c = static_cast<unsigned char>(s[i]);
+            const std::size_t step =
+                c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1;
+            return std::min(step, s.size() - i);
+        };
+        const InlineSegment* best = nullptr;
+        std::size_t bestBegin = 0;
+        std::size_t firstBegin = 0;  // 全段最小 segBegin（上方越界 → 块首）
+        std::size_t lastEnd = 0;     // 全段最大 segBegin+segCps（下方越界 → 块末）
+        float bestDist = std::numeric_limits<float>::max();
+        for (const InlineSegment& seg : segments) {
+            if (seg.text.empty() || seg.text == "\n") {
+                continue;
+            }
+            // 跳过被 layout 丢弃的空白（含 '\n' 折行）
+            while (byte < stream.size()) {
+                const unsigned char c = static_cast<unsigned char>(stream[byte]);
+                if (std::isspace(c) == 0) {
+                    break;
+                }
+                ++pos;
+                byte += cpStep(stream, byte);
+            }
+            const std::size_t segBegin = pos;
+            const std::size_t segCps = countCodepoints(seg.text);
+            const bool aligned =
+                stream.compare(byte, seg.text.size(), seg.text) == 0;
+            byte = std::min(stream.size(), byte + seg.text.size());
+            pos += segCps;
+            if (!aligned) {
+                continue;  // 失配段不出候选（宁漏勿滥，同 rect 路径）
+            }
+            firstBegin = std::min(firstBegin, segBegin);
+            lastEnd = std::max(lastEnd, segBegin + segCps);
+            const float rx = xOff + seg.x;
+            const float ry = yOff + seg.y;
+            const float cx = std::clamp(x, rx, rx + seg.width);
+            const float cy = std::clamp(y, ry, ry + lineHeight);
+            const float dx = cx - x;
+            const float dy = cy - y;
+            const float dist = dx * dx + dy * dy;
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = &seg;
+                bestBegin = segBegin;
+            }
+        }
+        if (best == nullptr) {
+            return 0;
+        }
+        // 纵向越界钳制（need264）：点在全部段所在行之下/之上时直接给块末/块首
+        // ——「最近行再取段内边界」会把下方越界钳到末行首段段尾（非块末）。
+        if (y > yOff + best->y + lineHeight) {
+            return lastEnd;
+        }
+        if (y < yOff + best->y) {
+            return firstBegin;
+        }
+        const bool code = best->run.kind == detail::MarkdownRunKind::InlineCode;
+        const bool chip = runIsChip(best->run);
+        const std::string family = code ? style.codeFontFamily : style.fontFamily;
+        const float runFontSize = code ? std::max(1.0f, fontSize - 1.0f) : fontSize;
+        const int weight = heading || best->run.style.strong ? 700 : 400;
+        const float chipInset = chip ? 6.0f : 0.0f;
+        const float xLocal = x - (xOff + best->x + chipInset);
+        const std::size_t segCps = countCodepoints(best->text);
+        if (xLocal <= 0.0f) {
+            return bestBegin;
+        }
+        if (chip && xLocal >= best->width - chipInset * 2.0f) {
+            return bestBegin + segCps;  // chip 右内衬之外 → 段尾
+        }
+        float acc = 0.0f;
+        std::size_t k = 0;
+        for (const std::string& part :
+             detail::splitMarkdownTextIntoCodepoints(best->text)) {
+            if (part.empty()) {
+                continue;
+            }
+            const float w =
+                detail::measureMarkdownTextWidth(part, family, runFontSize, weight);
+            if (acc + w * 0.5f > xLocal) {
+                break;  // 落点进字形前半 → 边界归该字之前（最近边界）
+            }
+            acc += w;
+            ++k;
+        }
+        return bestBegin + std::min(k, segCps);
+    }
+
+    // Code/Html：虚拟行近似行定位（与 rectsForPlainTextBlock 的行切分逐行同构：
+    // y = codePadding + lineIdx×lh，行内字符位 = (x - insetX - codePadding)/avgW）。
+    static std::size_t resolveCpInPlainTextBlock(const detail::MarkdownBlock& b,
+                                                 float contentWidth,
+                                                 const MarkdownStyle& style,
+                                                 float insetX, float x,
+                                                 float y) {
+        const std::string text = b.kind == detail::MarkdownBlockKind::Code
+                                     ? detail::codeBlockDisplayText(b)
+                                     : detail::plainText(b.runs);
+        const float textWidth =
+            std::max(0.0f, contentWidth - style.codePadding * 2.0f);
+        const float lh = style.codeSize + 6.0f;
+        const float avgW = std::max(1.0f, style.codeSize * 0.56f);
+        const int charsPerLine = std::max(
+            1, static_cast<int>(std::floor(std::max(1.0f, textWidth) / avgW)));
+        int lineIdx = y <= style.codePadding
+                          ? 0
+                          : static_cast<int>(std::floor((y - style.codePadding) / lh));
+        std::size_t walked = 0;
+        std::size_t start = 0;
+        int line = 0;
+        while (start <= text.size()) {
+            const std::size_t nl = text.find('\n', start);
+            const std::size_t end = nl == std::string::npos ? text.size() : nl;
+            const std::string piece = text.substr(start, end - start);
+            std::size_t inPiece = 0;
+            while (true) {
+                const std::size_t lineLen = std::min(
+                    piece.size() - inPiece, static_cast<std::size_t>(charsPerLine));
+                if (lineLen == 0 && inPiece >= piece.size()) {
+                    break;
+                }
+                if (line == lineIdx) {
+                    const float charX = x - (insetX + style.codePadding);
+                    const std::size_t off =
+                        charX <= 0.0f
+                            ? 0
+                            : std::min(lineLen,
+                                       static_cast<std::size_t>(
+                                           std::floor(charX / avgW)));
+                    return walked + off;
+                }
+                walked += lineLen;
+                ++line;
+                inPiece += lineLen;
+                if (inPiece >= piece.size()) {
+                    break;
+                }
+            }
+            if (nl == std::string::npos) {
+                break;  // 末 piece 无 '\n'（与 rect 路径同式：钳制不计幻影换行）
+            }
+            walked += 1;  // '\n' 本身（与 rect 路径同式）
+            start = nl + 1;
+        }
+        return walked;  // y 越过末虚拟行 → 文本末（钳制语义）
+    }
+
+    // 表格行组：行/单元格定位与 rectsForTable 几何同式（cellWidth 均分、行高
+    // = cell 布局最大 measuredHeight + 2×padding）；cell 内走 inline 解析。
+    static std::size_t resolveCpInTableRowGroup(
+        const std::vector<detail::MarkdownBlock>& blocks, std::size_t begin,
+        std::size_t end, float contentWidth, const MarkdownStyle& style,
+        float insetX, float x, float y, std::size_t cpBase) {
+        float yRow = 0.0f;
+        std::size_t cp = 0;  // 组内局部码点游标（含行间 '\n'）
+        for (std::size_t row = begin; row < end; ++row) {
+            const detail::MarkdownBlock& b = blocks[row];
+            const std::size_t cellCount = std::max<std::size_t>(1, b.cells.size());
+            const float cellWidth = contentWidth / static_cast<float>(cellCount);
+            float rowHeight = 0.0f;
+            for (std::size_t cell = 0; cell < cellCount; ++cell) {
+                const std::vector<detail::MarkdownRun>& runs =
+                    cell < b.cells.size() ? b.cells[cell].runs
+                                          : std::vector<detail::MarkdownRun>{};
+                rowHeight = std::max(
+                    rowHeight,
+                    cachedInlineLayout(runs,
+                                       std::max(0.0f, cellWidth - style.tableCellPadding * 2.0f),
+                                       style.bodySize, style.bodyLineHeight,
+                                       b.tableHeader, core::HorizontalAlign::Left,
+                                       style)
+                        ->measuredHeight);
+            }
+            rowHeight += style.tableCellPadding * 2.0f;
+            if (y >= yRow && y < yRow + rowHeight && !b.cells.empty()) {
+                const float xLocal = x - insetX;
+                const std::size_t cellIdx =
+                    xLocal <= 0.0f
+                        ? 0
+                        : std::min(cellCount - 1,
+                                   static_cast<std::size_t>(std::floor(xLocal / cellWidth)));
+                if (cellIdx < b.cells.size()) {
+                    std::size_t cellBase = cp;  // 本行内目标 cell 之前的 cell 码点
+                    for (std::size_t cell = 0; cell < cellIdx; ++cell) {
+                        std::string cellText;
+                        for (const detail::MarkdownRun& run : b.cells[cell].runs) {
+                            cellText += detail::displayText(run);
+                        }
+                        cellBase += countCodepoints(cellText);
+                    }
+                    const std::size_t local =
+                        resolveCpInInlineRuns(b.cells[cellIdx].runs,
+                                              std::max(0.0f, cellWidth - style.tableCellPadding * 2.0f),
+                                              style.bodySize, style.bodyLineHeight,
+                                              b.tableHeader, style,
+                                              insetX + static_cast<float>(cellIdx) * cellWidth +
+                                                  style.tableCellPadding,
+                                              yRow + style.tableCellPadding,
+                                              x, y);
+                    return cpBase + cellBase + local;
+                }
+            }
+            yRow += rowHeight;
+            std::string rowText;
+            for (std::size_t cell = 0; cell < b.cells.size(); ++cell) {
+                for (const detail::MarkdownRun& run : b.cells[cell].runs) {
+                    rowText += detail::displayText(run);
+                }
+            }
+            cp += countCodepoints(rowText);
+            if (row + 1 < end) {
+                ++cp;  // 行间 '\n'
+            }
+        }
+        return cpBase + cp;  // y 越过末行 → 行组文本末（钳制语义）
     }
 
     static bool runIsChip(const detail::MarkdownRun& run) {
