@@ -503,6 +503,10 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
         core::window::destroyWindow(window);
         return {};
     }
+    // 子窗口应用应用图标（bug259-B，与 glfw 后端同缝）：主窗在 app::initialize
+    // 里 applyWindowIcon，子窗此前缺失 → 标题栏系统默认图标。同一 iconPath 解析
+    // 源（DslAppConfig::iconPath），幂等安全。
+    app::detail::applyWindowIcon(window);
     // clearColor 运行时覆盖（app::setClearColor）对后续新开子窗口同样生效；
     // 自管背景的窗口（ignoreClearColorOverride，如桌宠 sprite 窗）除外
     if (request.followClearColorOverride) {
@@ -745,6 +749,16 @@ int eui_app_run() {
     state.initializeTray();
     state.renderBackend = renderBackend.get();
     app::MainWindowRuntime mainWindowRuntime(state, [&] {
+        // 托盘态启动（bug259-A，与 glfw 后端同缝）：宿主查询 true = 首帧不 show，
+        // 直接落托盘态。
+        if (app::dslAppConfig().mainWindowStartHiddenProvider &&
+            app::dslAppConfig().mainWindowStartHiddenProvider()) {
+            state.hiddenToTray = true;
+            state.hideToTrayRequested = false;
+            app::detail::requestFullPaint();
+            core::platform::requestFrame();
+            return;
+        }
         SDL_ShowWindow(window);
         app::detail::requestFullPaint();
         core::platform::requestFrame();

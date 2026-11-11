@@ -62,6 +62,12 @@ struct DslAppConfig {
     // 拖拽区。仅 customWindowChromeSupported() 平台生效；坐标为逻辑单位
     //（CaptionHitQuery 注释见 eui/app.h）。回调主线程触发，须快速返回
     std::function<bool(const CaptionHitQuery&)> captionHitTestHandlerValue;
+    // 首帧启动隐藏查询（托盘态启动：OS 关联启动 .md / --minimized）。非空且
+    // 首帧 ready 时返回 true = 主窗不调 glfwShowWindow，直接落托盘态
+    //（hiddenToTray），托盘左键/Show 菜单照常唤起（bug259-A：旧路径首帧无条件
+    // show，宿主 compose 里再 closeMainWindow 藏回，主窗闪现一帧被用户看见）。
+    // 宿主须在 app run 前完成旗标捕获；返回值只消费一次。
+    std::function<bool()> mainWindowStartHiddenProvider;
 
     DslAppConfig& title(std::string value) { titleValue = std::move(value); return *this; }
     DslAppConfig& pageId(std::string value) { pageIdValue = std::move(value); return *this; }
@@ -146,6 +152,10 @@ struct DslAppConfig {
         return *this;
     }
     DslAppConfig& fps(double value) { fpsValue = value; return *this; }
+    DslAppConfig& mainWindowStartHidden(std::function<bool()> provider) {
+        mainWindowStartHiddenProvider = std::move(provider);
+        return *this;
+    }
     DslAppConfig& iconPath(std::string value) { iconPathValue = std::move(value); return *this; }
     DslAppConfig& textFont(std::string value) { textFontFileValue = std::move(value); return *this; }
     DslAppConfig& iconFont(std::string value) { iconFontFileValue = std::move(value); return *this; }

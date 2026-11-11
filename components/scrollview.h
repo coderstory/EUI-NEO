@@ -59,6 +59,18 @@ public:
         return *this;
     }
 
+    // 内容高供给缝：非空时以「调用方几何表」直接给内容总高，跳过整篇 scratch
+    // 测量 pass（长文档逐帧全量构建 + layout 成本 O(文档)，bug259-C 的主根因）。
+    // 调用方必须与渲染同源（同一测量函数同一宽度），否则滚动区与真实排版高度
+    // 不一致（底不到顶/提前到底）。参数 = 本帧 (contentWidth, viewportHeight)；
+    // 首次以 scrollview 全宽调用（滚动条占位未定），滚动条出现后以减去占位的
+    // contentWidth 再调一次——两次都应走调用方缓存。
+    ScrollViewBuilder& contentHeightProvider(
+        std::function<float(float contentWidth, float viewportHeight)> fn) {
+        contentHeightFn_ = std::move(fn);
+        return *this;
+    }
+
     template <typename ComposeFn>
     ScrollViewBuilder& content(ComposeFn&& compose) {
         content_ = std::forward<ComposeFn>(compose);
@@ -66,10 +78,13 @@ public:
     }
 
     void build() {
-        MeasureCache* cache = contentKey_.empty() ? nullptr : &ui_.state<MeasureCache>(id_ + ".measure");
-        const float initialContentHeight = contentKey_.empty()
-            ? measureContentHeight(width_, height_)
-            : cachedContentHeight(*cache, width_, height_);
+        MeasureCache* cache = contentKey_.empty() && !contentHeightFn_
+            ? nullptr : &ui_.state<MeasureCache>(id_ + ".measure");
+        const float initialContentHeight = contentHeightFn_
+            ? contentHeightFn_(width_, height_)
+            : (contentKey_.empty()
+                ? measureContentHeight(width_, height_)
+                : cachedContentHeight(*cache, width_, height_));
         const bool scrollable = initialContentHeight > height_;
         const float scrollbarWidth = scrollbarWidth_ >= 0.0f ? scrollbarWidth_ : metrics_.control.scrollbar;
         const float scrollbarGap = scrollbarGap_ >= 0.0f ? scrollbarGap_ : metrics_.spacing.section;
@@ -80,7 +95,8 @@ public:
             ? std::max(0.0f, width_)
             : std::max(0.0f, width_ - scrollWidth - scrollGap);
         const float contentHeight = scrollable
-            ? (contentKey_.empty() ? measureContentHeight(contentWidth, height_) : cachedContentHeight(*cache, contentWidth, height_))
+            ? (contentHeightFn_ ? contentHeightFn_(contentWidth, height_)
+                : (contentKey_.empty() ? measureContentHeight(contentWidth, height_) : cachedContentHeight(*cache, contentWidth, height_)))
             : initialContentHeight;
         const float maxOffset = std::max(0.0f, contentHeight - height_);
         const float currentOffset = std::clamp(offset_, 0.0f, maxOffset);
@@ -204,6 +220,7 @@ private:
     float offset_ = 0.0f;
     float gap_ = 0.0f;
     float step_ = 0.0f;
+    std::function<float(float contentWidth, float viewportHeight)> contentHeightFn_;
     float scrollbarWidth_ = -1.0f;
     float scrollbarGap_ = -1.0f;
     bool scrollbarOverlay_ = false;  // UAT6 K 批覆盖式悬浮滚动条

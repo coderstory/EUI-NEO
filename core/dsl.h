@@ -1524,6 +1524,10 @@ public:
         layout(screen.width, screen.height);
     }
 
+    // 本帧元素总数（index_ 即当帧元素集合，O(1)）。性能诊断用（bug259 每帧建元数
+    // 取证），也为后续布局告警/容量画像留通用缝。
+    std::size_t elementCount() const { return index_.size(); }
+
     Element* find(const std::string& id) {
         const auto it = index_.find(resolveId(id));
         return it == index_.end() ? nullptr : it->second;

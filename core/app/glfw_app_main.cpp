@@ -474,6 +474,10 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     managed->state.paintRequested = true;
     // 新子窗口跟随当前标题栏外观（运行时联动，Phase A）
     applyTitleBarAppearanceToWindow(childWindow);
+    // 子窗口应用应用图标（bug259-B）：主窗在 app::initialize 里 applyWindowIcon，
+    // 子窗此前缺失 → 查看器等子窗标题栏是系统默认图标。同一 iconPath 解析源
+    //（DslAppConfig::iconPath，exe 目录 / assets 解析），幂等安全。
+    app::detail::applyWindowIcon(childWindow);
     // 新子窗口跟随当前窗口效果（磨砂 Phase C）：创建期透明 hint + backdrop 档位。
     // 透明 hint 来源另有 transparentFramebuffer 声明（sprite 窗），backdrop
     // 档位尊重逐窗覆盖（None = 不叠系统材质，透明像素直出桌面）
@@ -763,6 +767,18 @@ int eui_app_run() {
         return -1;
     }
     app::MainWindowRuntime mainWindowRuntime(windowState, [&] {
+        // 托盘态启动（bug259-A：OS 关联启动 .md / --minimized）：宿主查询缝返回
+        // true 时首帧【不 show】，直接落托盘态——托盘左键/Show 菜单照常唤起。
+        // 旧路径此处无条件 glfwShowWindow，宿主 compose 里再 closeMainWindow 藏回，
+        // 主窗可见一帧（首帧渲染后到次帧隐藏前）被用户看见。
+        if (app::dslAppConfig().mainWindowStartHiddenProvider &&
+            app::dslAppConfig().mainWindowStartHiddenProvider()) {
+            windowState.hiddenToTray = true;
+            windowState.hideToTrayRequested = false;
+            app::detail::requestFullPaint();
+            core::platform::requestFrame();
+            return;
+        }
         glfwShowWindow(window);
         app::detail::requestFullPaint();
         core::platform::requestFrame();
