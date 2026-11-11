@@ -1327,7 +1327,9 @@ private:
     }
 
     // Code/Html：ui.text .wrap() 真排无 inline 布局可查，矩形按 estimateMarkdownTextHeight
-    // 同式虚拟行近似（声明处的已知近似；等宽代码下贴合）。
+    // 同式虚拟行近似（声明处的已知近似；等宽代码下贴合）。计账口径 = 码点
+    // （need264 P1 复核：旧 walk 按字节计（piece.size()/lineLen），CJK 注释代码块
+    // 的 hit.cp 膨胀为字节偏移 → 与显示文本域/选区切片错位越尾；ASCII 块逐位不变）。
     static void rectsForPlainTextBlock(std::vector<MarkdownHitRect>& rects,
                                        const detail::MarkdownBlock& b,
                                        float contentWidth,
@@ -1349,23 +1351,21 @@ private:
             std::max(0.0f, contentWidth - style.codePadding * 2.0f);
         const float lh = style.codeSize + 6.0f;
         const float avgW = std::max(1.0f, style.codeSize * 0.56f);
-        const int charsPerLine = std::max(
-            1, static_cast<int>(std::floor(std::max(1.0f, textWidth) / avgW)));
+        const std::size_t charsPerLine = std::max<std::size_t>(
+            1, static_cast<std::size_t>(
+                   std::floor(std::max(1.0f, textWidth) / avgW)));
         float y = static_cast<float>(style.codePadding);
-        std::size_t walked = 0;
+        std::size_t walked = 0;  // 码点计（虚拟行块游标）
         std::size_t start = 0;
-        int line = 0;
         while (start <= text.size()) {
             const std::size_t nl = text.find('\n', start);
             const std::size_t end = nl == std::string::npos ? text.size() : nl;
             const std::string piece = text.substr(start, end - start);
+            const std::size_t pieceCps = countCodepoints(piece);
             std::size_t inPiece = 0;
-            while (true) {
-                const std::size_t lineLen = std::min(
-                    piece.size() - inPiece, static_cast<std::size_t>(charsPerLine));
-                if (lineLen == 0 && inPiece >= piece.size()) {
-                    break;
-                }
+            while (inPiece < pieceCps) {
+                const std::size_t lineLen =
+                    std::min(pieceCps - inPiece, charsPerLine);
                 const std::size_t lineBegin = blockBegin + walked;
                 const std::size_t localStart =
                     cpBegin > lineBegin ? std::min(cpBegin - lineBegin, lineLen) : 0;
@@ -1381,19 +1381,14 @@ private:
                     rects.push_back(r);
                 }
                 walked += lineLen;
-                ++line;
                 y += lh;
                 inPiece += lineLen;
-                if (inPiece >= piece.size()) {
-                    break;
-                }
             }
             if (nl == std::string::npos) {
                 break;
             }
-            walked += 1;  // '\n' 本身
+            walked += 1;  // '\n' 本身（1 码点）
             start = nl + 1;
-            (void)line;
         }
     }
 
@@ -1544,17 +1539,38 @@ private:
             const float markerWidth = b.task ? 34.0f : 24.0f;
             const std::string prefix = detail::markdownListPrefix(b);
             localCp = countCodepoints(prefix);
-            // 点落在 marker 文本盒（首行带内、x < 内容起点）：按盒宽线性分桶
-            // （右对齐渲染的近似，1-4 码点短串够用）；折叠行带以下照常走内容域。
+            // 点落在 marker 文本盒（首行带内、x < 内容起点）：marker 渲染为
+            // markerWidth 盒内【右对齐】文本（renderListItem .mark），按字形宽
+            // 反推桶位——字形右缘贴盒右、左侧留白 → x ≤ 字形左缘 = marker 前
+            // （cp0）；字形内逐码点半字宽边界（与 inline 段内同语义）；
+            // 字形右与内容起点之间的空隙 → marker 末。折叠行带以下照常走内容域。
             const std::size_t prefixCps = localCp;
             const float contentStart = markerWidth + 8.0f;
             if (prefixCps > 0 && y < yOff + style.bodyLineHeight &&
                 x < xOff + contentStart) {
-                const float t =
-                    std::clamp((x - xOff) / std::max(1.0f, markerWidth), 0.0f, 1.0f);
-                return std::min(
-                    prefixCps,
-                    static_cast<std::size_t>(t * static_cast<float>(prefixCps) + 0.5f));
+                const float glyphSpan = detail::measureMarkdownTextWidth(
+                    prefix, style.fontFamily, style.bodySize, 400);
+                const float glyphLeft =
+                    xOff + std::max(0.0f, markerWidth - glyphSpan);
+                if (x <= glyphLeft) {
+                    return 0;
+                }
+                float acc = 0.0f;
+                std::size_t k = 0;
+                for (const std::string& part :
+                     detail::splitMarkdownTextIntoCodepoints(prefix)) {
+                    if (part.empty()) {
+                        continue;
+                    }
+                    const float w = detail::measureMarkdownTextWidth(
+                        part, style.fontFamily, style.bodySize, 400);
+                    if (acc + w * 0.5f > x - glyphLeft) {
+                        break;
+                    }
+                    acc += w;
+                    ++k;
+                }
+                return std::min(prefixCps, k);
             }
             textWidth = std::max(0.0f, contentWidth - markerWidth - 8.0f);
             xOff += markerWidth + 8.0f;
@@ -1591,8 +1607,7 @@ private:
         };
         const InlineSegment* best = nullptr;
         std::size_t bestBegin = 0;
-        std::size_t firstBegin = 0;  // 全段最小 segBegin（上方越界 → 块首）
-        std::size_t lastEnd = 0;     // 全段最大 segBegin+segCps（下方越界 → 块末）
+        std::size_t lastEnd = 0;  // 全段最大 segBegin+segCps（下方越界 → 块末）
         float bestDist = std::numeric_limits<float>::max();
         for (const InlineSegment& seg : segments) {
             if (seg.text.empty() || seg.text == "\n") {
@@ -1616,7 +1631,6 @@ private:
             if (!aligned) {
                 continue;  // 失配段不出候选（宁漏勿滥，同 rect 路径）
             }
-            firstBegin = std::min(firstBegin, segBegin);
             lastEnd = std::max(lastEnd, segBegin + segCps);
             const float rx = xOff + seg.x;
             const float ry = yOff + seg.y;
@@ -1634,13 +1648,14 @@ private:
         if (best == nullptr) {
             return 0;
         }
-        // 纵向越界钳制（need264）：点在全部段所在行之下/之上时直接给块末/块首
-        // ——「最近行再取段内边界」会把下方越界钳到末行首段段尾（非块末）。
+        // 纵向越界钳制（need264）：点在全部段所在行之下时直接给块末——「最近行
+        // 再取段内边界」会把下方越界钳到末行首段段尾（非块末）；上方越界语义上
+        // 即块首 0（首段 segBegin 恒 0，无需记录）。
         if (y > yOff + best->y + lineHeight) {
             return lastEnd;
         }
         if (y < yOff + best->y) {
-            return firstBegin;
+            return 0;
         }
         const bool code = best->run.kind == detail::MarkdownRunKind::InlineCode;
         const bool chip = runIsChip(best->run);
@@ -1676,6 +1691,8 @@ private:
 
     // Code/Html：虚拟行近似行定位（与 rectsForPlainTextBlock 的行切分逐行同构：
     // y = codePadding + lineIdx×lh，行内字符位 = (x - insetX - codePadding)/avgW）。
+    // 计账口径 = 码点（need264 P1 复核，与 rect 路径同刀：旧按字节计对 CJK 注释
+    // 代码块 hit.cp 膨胀为字节偏移）。
     static std::size_t resolveCpInPlainTextBlock(const detail::MarkdownBlock& b,
                                                  float contentWidth,
                                                  const MarkdownStyle& style,
@@ -1688,25 +1705,26 @@ private:
             std::max(0.0f, contentWidth - style.codePadding * 2.0f);
         const float lh = style.codeSize + 6.0f;
         const float avgW = std::max(1.0f, style.codeSize * 0.56f);
-        const int charsPerLine = std::max(
-            1, static_cast<int>(std::floor(std::max(1.0f, textWidth) / avgW)));
-        int lineIdx = y <= style.codePadding
-                          ? 0
-                          : static_cast<int>(std::floor((y - style.codePadding) / lh));
-        std::size_t walked = 0;
+        const std::size_t charsPerLine = std::max<std::size_t>(
+            1, static_cast<std::size_t>(
+                   std::floor(std::max(1.0f, textWidth) / avgW)));
+        const std::size_t lineIdx =
+            y <= style.codePadding
+                ? 0
+                : static_cast<std::size_t>(
+                      std::floor((y - style.codePadding) / lh));
+        std::size_t walked = 0;  // 码点计
+        std::size_t line = 0;    // 虚拟行序号（与 rect 路径 chunk 序一致）
         std::size_t start = 0;
-        int line = 0;
         while (start <= text.size()) {
             const std::size_t nl = text.find('\n', start);
             const std::size_t end = nl == std::string::npos ? text.size() : nl;
             const std::string piece = text.substr(start, end - start);
+            const std::size_t pieceCps = countCodepoints(piece);
             std::size_t inPiece = 0;
-            while (true) {
-                const std::size_t lineLen = std::min(
-                    piece.size() - inPiece, static_cast<std::size_t>(charsPerLine));
-                if (lineLen == 0 && inPiece >= piece.size()) {
-                    break;
-                }
+            while (inPiece < pieceCps) {
+                const std::size_t lineLen =
+                    std::min(pieceCps - inPiece, charsPerLine);
                 if (line == lineIdx) {
                     const float charX = x - (insetX + style.codePadding);
                     const std::size_t off =
@@ -1720,14 +1738,11 @@ private:
                 walked += lineLen;
                 ++line;
                 inPiece += lineLen;
-                if (inPiece >= piece.size()) {
-                    break;
-                }
             }
             if (nl == std::string::npos) {
                 break;  // 末 piece 无 '\n'（与 rect 路径同式：钳制不计幻影换行）
             }
-            walked += 1;  // '\n' 本身（与 rect 路径同式）
+            walked += 1;  // '\n' 本身（与 rect 路径同式，1 码点；不推进虚拟行）
             start = nl + 1;
         }
         return walked;  // y 越过末虚拟行 → 文本末（钳制语义）
