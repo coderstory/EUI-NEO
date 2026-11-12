@@ -240,6 +240,12 @@ struct Element {
     float scrollStep = 48.0f;
     float scrollDragTravel = 0.0f;
     float scrollThumbTravel = 0.0f;
+    // 横向滚动轴（DevDesk git 管理器 F-07⑥ 真横滚，2026-11-13）：默认 false=纵向
+    //（既有语义不变）。true 时该元素的 scrollState 偏移沿 X 轴生效——内容平移
+    // translate.x、thumb 位移沿宽度、thumb 拖拽映射 dragDeltaX（见
+    // scrollTransformForElement / updateRuntimeScrollDrag）。滚轮仍只作用纵向
+    //（ScrollEvent.y）；横向靠拖拽 thumb / 悬停横向条上滚轮。
+    bool scrollHorizontal = false;
     float sliderValue = 0.0f;
     float sliderWidth = 0.0f;
     float sliderKnobSize = 0.0f;
@@ -828,6 +834,7 @@ public:
     Derived& scrollContentFrom(const std::string& id);
     Derived& scrollDragFrom(const std::string& id, float travel);
     Derived& scrollThumbFrom(const std::string& id, float travel);
+    Derived& scrollHorizontal(bool value = true);
     Derived& sliderState(const std::string& id,
                          float value,
                          float width,
@@ -2015,6 +2022,12 @@ template <typename Derived>
 Derived& BuilderBase<Derived>::scrollThumbFrom(const std::string& id, float travel) {
     element_->scrollThumbSourceId = ui_->resolveId(id);
     element_->scrollThumbTravel = std::max(0.0f, travel);
+    return self();
+}
+
+template <typename Derived>
+Derived& BuilderBase<Derived>::scrollHorizontal(bool value) {
+    element_->scrollHorizontal = value;
     return self();
 }
 

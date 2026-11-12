@@ -276,7 +276,7 @@ private:
 
     void beginRuntimeScrollDrag(const Element& element);
 
-    void updateRuntimeScrollDrag(const Element& element, double dragDeltaY, float dpiScale);
+    void updateRuntimeScrollDrag(const Element& element, double dragDeltaX, double dragDeltaY, float dpiScale);
 
     float sliderValueFromPointer(const Element& element, double pointerX, float dpiScale) const;
 

@@ -171,14 +171,22 @@ inline Transform scrollTransformForElement(const Element& element,
             if (std::fabs(offset) <= scrollTransformMinActiveOffset()) {
                 offset = scrollTransformMinActiveOffset();
             }
-            transform.translate.y -= offset;
+            if (element.scrollHorizontal) {
+                transform.translate.x -= offset;
+            } else {
+                transform.translate.y -= offset;
+            }
         }
     }
     if (!element.scrollThumbSourceId.empty()) {
         const auto state = scrollStates.find(element.scrollThumbSourceId);
         if (state != scrollStates.end() && state->second.maxOffset > 0.0f) {
             const float normalized = std::clamp(state->second.offset / state->second.maxOffset, 0.0f, 1.0f);
-            transform.translate.y += element.scrollThumbTravel * normalized;
+            if (element.scrollHorizontal) {
+                transform.translate.x += element.scrollThumbTravel * normalized;
+            } else {
+                transform.translate.y += element.scrollThumbTravel * normalized;
+            }
         }
     }
     return transform;

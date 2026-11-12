@@ -565,7 +565,8 @@ inline void Runtime::beginRuntimeScrollDrag(const Element& element) {
     state->second.dragStartOffset = state->second.offset;
 }
 
-inline void Runtime::updateRuntimeScrollDrag(const Element& element, double dragDeltaY, float dpiScale) {
+inline void Runtime::updateRuntimeScrollDrag(const Element& element, double dragDeltaX,
+                                             double dragDeltaY, float dpiScale) {
     if (element.scrollDragSourceId.empty() || element.scrollDragTravel <= 0.0f) {
         return;
     }
@@ -574,9 +575,11 @@ inline void Runtime::updateRuntimeScrollDrag(const Element& element, double drag
         return;
     }
     state->second.velocity = 0.0f;
-    const float logicalDeltaY = static_cast<float>(dragDeltaY) / std::max(0.001f, dpiScale);
+    // 横向轴元素（scrollHorizontal）拖拽映射 X 位移，纵向保持 Y（既有语义不变）
+    const float logicalDelta = static_cast<float>(element.scrollHorizontal ? dragDeltaX : dragDeltaY) /
+                               std::max(0.001f, dpiScale);
     const float next = state->second.dragStartOffset +
-                       logicalDeltaY * (state->second.maxOffset / element.scrollDragTravel);
+                       logicalDelta * (state->second.maxOffset / element.scrollDragTravel);
     setScrollOffset(element.scrollDragSourceId, next);
 }
 

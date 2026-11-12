@@ -521,7 +521,8 @@ inline void Runtime::updateInteraction(
 
     if (enabled && instance.state.pressed && !element.scrollDragSourceId.empty() &&
         (event.deltaX != 0.0 || event.deltaY != 0.0 || instance.state.drag)) {
-        updateRuntimeScrollDrag(element, instance.state.dragDeltaY, dpiScale);
+        updateRuntimeScrollDrag(element, instance.state.dragDeltaX, instance.state.dragDeltaY,
+                                dpiScale);
         return;
     }
 

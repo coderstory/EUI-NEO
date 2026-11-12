@@ -43,6 +43,17 @@ public:
     VirtualListBuilder& overscanViewports(float value) { overscanViewports_ = std::max(0.0f, value); return *this; }
     VirtualListBuilder& scrollbarWidth(float value) { scrollbarWidth_ = std::max(0.0f, value); return *this; }
     VirtualListBuilder& scrollbarGap(float value) { scrollbarGap_ = std::max(0.0f, value); return *this; }
+    // ---- 横向滚动（DevDesk git 管理器 F-07⑥ 真横滚，2026-11-13）----
+    // contentWidth：每行的虚拟内容宽。> 行区宽时列表底部出横向滚动条；
+    // 行闭包收到的 contentWidth 参数不变（行区宽），行内自行按消费方持有的
+    // 横向偏移（hOffset/onHChange）平移超宽内容——列表只负责裁剪（根 clip）
+    // 与滚动条状态管线。0（默认）=无横向滚动，行为与既有完全一致。
+    VirtualListBuilder& contentWidth(float value) { contentWidth_ = std::max(0.0f, value); return *this; }
+    VirtualListBuilder& hOffset(float value) { hOffset_ = std::max(0.0f, value); return *this; }
+    VirtualListBuilder& onHChange(std::function<void(float)> callback) {
+        onHChange_ = std::move(callback);
+        return *this;
+    }
     VirtualListBuilder& zIndex(int value) { zIndex_ = value; return *this; }
     VirtualListBuilder& style(const ScrollStyle& value) { scrollStyle_ = value; return *this; }
     VirtualListBuilder& theme(const theme::ThemeColorTokens& tokens) {
@@ -101,6 +112,11 @@ public:
                   itemCount_)
             : 0;
         const std::int64_t itemCount = itemCount_;
+        // 横向：行区宽 = 视口宽 -（纵向可滚时滚动条占位）；超宽内容出横向条
+        const float rowAreaWidth = contentWidth;
+        const float hMaxOffset = std::max(0.0f, contentWidth_ - rowAreaWidth);
+        const float hCurrent = std::clamp(hOffset_, 0.0f, hMaxOffset);
+        const std::function<void(float)> onHChange = onHChange_;
         const auto firstIndexForOffset = [rowHeight, overscanPixels, itemCount](float offset) {
             const double totalHeight = static_cast<double>(itemCount) * static_cast<double>(rowHeight);
             const double firstPixel = std::max(0.0, static_cast<double>(offset) - static_cast<double>(overscanPixels));
@@ -173,6 +189,31 @@ public:
                         .transition(transition_)
                         .build();
                 }
+
+                if (hMaxOffset > 0.0f) {
+                    // 横向滚动条：底部通栏（不含纵向滚动条列），覆盖式悬浮于内容上。
+                    // 根元素 id = stateId = <id>.h——Runtime::setScrollOffset 经
+                    // ui_.find(stateId) 找 owner 回调 onScrollOffsetChanged（与纵向
+                    // virtualList 根同构），id 与 stateId 必须一致。
+                    components::scroll(ui_, id_ + ".h")
+                        .theme(tokens_)
+                        .style(scrollStyle_)
+                        .horizontal()
+                        .position(0.0f, std::max(0.0f, viewportHeight - metrics_.control.scrollbar))
+                        .size(rowAreaWidth, metrics_.control.scrollbar)
+                        .viewport(rowAreaWidth)
+                        .content(contentWidth_)
+                        .offset(hCurrent)
+                        .step(scrollStep)
+                        .zIndex(zIndex_ + 2)
+                        .transition(transition_)
+                        .onChange([onHChange](float value) {
+                            if (onHChange) {
+                                onHChange(value);
+                            }
+                        })
+                        .build();
+                }
             })
             .build();
     }
@@ -185,6 +226,7 @@ private:
     theme::ThemeColorTokens tokens_ = theme::dark();
     core::Transition transition_ = core::Transition::make(0.12f, core::Ease::OutCubic);
     std::function<void(float)> onChange_;
+    std::function<void(float)> onHChange_;
     RowCompose row_;
     std::int64_t itemCount_ = 0;
     float width_ = 320.0f;
@@ -192,6 +234,8 @@ private:
     float rowHeight_ = 36.0f;
     float offset_ = 0.0f;
     float step_ = 0.0f;
+    float contentWidth_ = 0.0f;
+    float hOffset_ = 0.0f;
     float overscanViewports_ = 1.0f;
     float scrollbarWidth_ = -1.0f;
     float scrollbarGap_ = -1.0f;
