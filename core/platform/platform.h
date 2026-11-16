@@ -54,6 +54,31 @@ struct FileDialogResult {
     }
 };
 
+/**
+ * 保存文件对话框选项（need265）。比 FileDialogOptions 多 defaultName（预填文件名）与
+ * defaultExtension（不含点；用户没输入扩展名时补齐）。跨平台契约：
+ * - macOS 无扩展名过滤：AppleScript choose file name 不支持类型过滤，allowedExtensions
+ *   被忽略（defaultExtension 补齐仍生效）；过滤语义只在 Windows/Linux 兑现。
+ * - Cancelled ≠ Failed：Cancelled = 用户取消（error 为空），Failed = 对话框起不来或
+ *   工具缺失（error 带原因）；上层对前者静默、对后者应报错。
+ * - Windows 选已存在文件时由系统弹覆盖确认（OFN_OVERWRITEPROMPT），本层不二次询问；
+ *   保存侧不校验文件必须存在（新文件本来就不存在）。
+ */
+struct SaveFileDialogOptions {
+    std::string prompt;
+    std::string defaultName;
+    std::string defaultExtension;
+    /** macOS 忽略（无类型过滤），契约见结构体注释。 */
+    std::vector<std::string> allowedExtensions;
+    std::string initialDirectory;
+    std::string filterName;
+};
+
+/**
+ * 保存文件对话框；返回与 openFileDialog 同型，paths 至多 1 项。
+ */
+FileDialogResult saveFileDialog(const SaveFileDialogOptions& options = {});
+
 bool repairCurrentWorkingDirectory();
 std::string resolveResourcePath(const std::string& path);
 bool openUrl(const std::string& url);

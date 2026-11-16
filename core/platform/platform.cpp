@@ -1,5 +1,6 @@
 #include "core/platform/platform.h"
 
+#include "core/platform/file_dialog_logic.h"
 #include "core/platform/open_file_bridge.h"
 #include "core/platform/tray_bridge.h"
 #include "core/window/window_backend.h"
@@ -141,72 +142,6 @@ std::string joinExtensions(const std::vector<std::string>& extensions, const std
     }
     return result;
 }
-
-std::string trimWhitespace(std::string value) {
-    const auto first = std::find_if(value.begin(), value.end(), [](unsigned char ch) {
-        return ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r';
-    });
-    const auto last = std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) {
-        return ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r';
-    }).base();
-    if (first >= last) {
-        return {};
-    }
-    return {first, last};
-}
-
-std::string extensionName(std::string value) {
-    value = trimWhitespace(std::move(value));
-    if (value.rfind("*.", 0) == 0) {
-        value.erase(0, 2);
-    } else if (!value.empty() && value.front() == '.') {
-        value.erase(value.begin());
-    }
-    return value;
-}
-
-std::vector<std::string> extensionNames(const std::vector<std::string>& extensions) {
-    std::vector<std::string> result;
-    for (const std::string& extension : extensions) {
-        std::string name = extensionName(extension);
-        if (name.empty() || name == "*") {
-            continue;
-        }
-        result.push_back(std::move(name));
-    }
-    return result;
-}
-
-std::string extensionPattern(const std::string& extensionName) {
-    return "*." + extensionName;
-}
-
-std::vector<std::string> extensionPatterns(const std::vector<std::string>& names) {
-    std::vector<std::string> result;
-    result.reserve(names.size());
-    for (const std::string& name : names) {
-        result.push_back(extensionPattern(name));
-    }
-    return result;
-}
-
-std::string fileFilterName(const FileDialogOptions& options) {
-    return options.filterName.empty() ? "Allowed files" : options.filterName;
-}
-
-#if defined(__APPLE__)
-std::string appleScriptString(const std::string& value) {
-    std::string result;
-    result.reserve(value.size() + 8);
-    for (char ch : value) {
-        if (ch == '\\' || ch == '"') {
-            result.push_back('\\');
-        }
-        result.push_back(ch);
-    }
-    return result;
-}
-#endif
 
 std::vector<std::string> splitLines(const std::string& value) {
     std::vector<std::string> lines;
@@ -420,11 +355,11 @@ std::vector<std::string> parseWindowsSelection(const std::vector<wchar_t>& buffe
     return paths;
 }
 
-std::string windowsDialogError(DWORD errorCode) {
+std::string windowsDialogError(DWORD errorCode, const char* toolName) {
     if (errorCode == 0) {
         return {};
     }
-    return "GetOpenFileNameW failed with error code " + std::to_string(errorCode) + ".";
+    return std::string(toolName) + " failed with error code " + std::to_string(errorCode) + ".";
 }
 #else
 #if defined(__APPLE__)
@@ -516,14 +451,17 @@ std::string linuxFilterArgument(const FileDialogOptions& options, const std::vec
     return fileFilterName(options) + " | " + joinExtensions(patterns, " ");
 }
 
-FileDialogResult runZenityFileDialog(const FileDialogOptions& options, const std::vector<std::string>& extensionNames) {
-    const std::string prompt = options.prompt.empty() ? "Select file" : options.prompt;
+FileDialogResult runZenityFileDialog(const FileDialogOptions& options, const std::vector<std::string>& extensionNames, bool save = false) {
+    const std::string prompt = options.prompt.empty() ? (save ? "Save file" : "Select file") : options.prompt;
     std::string command = "if command -v zenity >/dev/null 2>&1; then zenity --file-selection";
+    if (save) {
+        command += " --save";
+    }
     command += " --title=" + shellQuote(prompt);
     if (!options.initialDirectory.empty()) {
         command += " --filename=" + shellQuote(options.initialDirectory);
     }
-    if (options.allowMultiple) {
+    if (!save && options.allowMultiple) {
         command += " --multiple --separator=" + shellQuote("\n");
     }
     const std::string filter = linuxFilterArgument(options, extensionNames);
@@ -558,6 +496,30 @@ FileDialogResult runKdialogFileDialog(const FileDialogOptions& options, const st
     }
     command += " --getopenfilename " + shellQuote(startDirectory);
     command += " " + shellQuote(kdialogFilterArgument(options, extensionNames));
+    command += "; else exit 127; fi";
+
+    const CommandResult result = runCommand(command);
+    if (result.exitCode == 127) {
+        return failedFileDialog("kdialog is not available.");
+    }
+    return resultFromCommand(result, "kdialog");
+}
+
+FileDialogResult runKdialogSaveFileDialog(const SaveFileDialogOptions& options, const std::vector<std::string>& extensionNames) {
+    const FileDialogOptions openOptions = asOpenOptions(options);
+    const std::string prompt = saveFileDialogTitle(options);
+    // kdialog 的 --getsavefilename 没有独立「默认文件名」参数：预填名拼进起始路径。
+    std::string start = options.initialDirectory;
+    if (!options.defaultName.empty()) {
+        start = start.empty() ? options.defaultName : start + "/" + options.defaultName;
+    }
+    if (start.empty()) {
+        start = ".";
+    }
+    std::string command = "if command -v kdialog >/dev/null 2>&1; then kdialog";
+    command += " --title " + shellQuote(prompt);
+    command += " --getsavefilename " + shellQuote(start);
+    command += " " + shellQuote(kdialogFilterArgument(openOptions, extensionNames));
     command += "; else exit 127; fi";
 
     const CommandResult result = runCommand(command);
@@ -729,7 +691,7 @@ FileDialogResult openFileDialog(const FileDialogOptions& options) {
         if (error == 0) {
             return cancelledFileDialog();
         }
-        return failedFileDialog(windowsDialogError(error));
+        return failedFileDialog(windowsDialogError(error, "GetOpenFileNameW"));
     }
     return selectedFiles(parseWindowsSelection(buffer));
 #elif defined(__APPLE__)
@@ -748,6 +710,75 @@ FileDialogResult openFileDialog(const FileDialogOptions& options) {
         return failedFileDialog("No supported file dialog tool found. Install zenity or kdialog.");
     }
     return !zenityResult.error.empty() ? zenityResult : kdialogResult;
+#endif
+}
+
+FileDialogResult saveFileDialog(const SaveFileDialogOptions& options) {
+    const FileDialogOptions openOptions = asOpenOptions(options);
+    const std::vector<std::string> names = extensionNames(openOptions.allowedExtensions);
+#if defined(_WIN32)
+    std::vector<wchar_t> buffer(65536, L'\0');
+    const std::wstring defaultName = utf8ToWide(options.defaultName);
+    if (!defaultName.empty() && defaultName.size() < buffer.size()) {
+        std::copy(defaultName.begin(), defaultName.end(), buffer.begin());
+    }
+    const std::wstring title = utf8ToWide(saveFileDialogTitle(options));
+    const std::wstring initialDirectory = utf8ToWide(options.initialDirectory);
+    const std::wstring filterStorage = windowsFilterStorage(openOptions, names);
+    const std::wstring defaultExtension = utf8ToWide(extensionName(options.defaultExtension));
+
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.lpstrFile = buffer.data();
+    dialog.nMaxFile = static_cast<DWORD>(buffer.size());
+    dialog.lpstrTitle = title.c_str();
+    dialog.lpstrFilter = filterStorage.c_str();
+    dialog.nFilterIndex = 1;
+    if (!initialDirectory.empty()) {
+        dialog.lpstrInitialDir = initialDirectory.c_str();
+    }
+    if (!defaultExtension.empty()) {
+        dialog.lpstrDefExt = defaultExtension.c_str();
+    }
+    // 保存侧不带 OFN_FILEMUSTEXIST（新文件本来就不存在）；重复文件确认交给 OFN_OVERWRITEPROMPT
+    dialog.Flags = OFN_EXPLORER | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    if (!GetSaveFileNameW(&dialog)) {
+        const DWORD error = CommDlgExtendedError();
+        if (error == 0) {
+            return cancelledFileDialog();
+        }
+        return failedFileDialog(windowsDialogError(error, "GetSaveFileNameW"));
+    }
+    FileDialogResult result = selectedFiles(parseWindowsSelection(buffer));
+    if (result.selected()) {
+        result.paths.front() = applyDefaultExtension(result.paths.front(), options.defaultExtension);
+    }
+    return result;
+#elif defined(__APPLE__)
+    FileDialogResult result =
+        resultFromCommand(runCommand(osascriptCommand(appleSaveFileDialogScript(options))), "osascript");
+    if (result.selected()) {
+        result.paths.front() = applyDefaultExtension(result.paths.front(), options.defaultExtension);
+    }
+    return result;
+#else
+    FileDialogResult zenityResult = runZenityFileDialog(openOptions, names, true);
+    if (zenityResult.status != FileDialogStatus::Failed) {
+        return zenityResult;
+    }
+
+    FileDialogResult kdialogResult = runKdialogSaveFileDialog(options, names);
+    if (kdialogResult.status != FileDialogStatus::Failed) {
+        return kdialogResult;
+    }
+    if (zenityResult.error == "zenity is not available." && kdialogResult.error == "kdialog is not available.") {
+        return failedFileDialog("No supported file dialog tool found. Install zenity or kdialog.");
+    }
+    FileDialogResult result = !zenityResult.error.empty() ? zenityResult : kdialogResult;
+    if (result.selected()) {
+        result.paths.front() = applyDefaultExtension(result.paths.front(), options.defaultExtension);
+    }
+    return result;
 #endif
 }
 
