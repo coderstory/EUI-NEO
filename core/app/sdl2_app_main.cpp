@@ -855,6 +855,10 @@ int eui_app_run() {
             hideToTray(window, state);
         }
         if (!state.running || state.hiddenToTray) {
+            // 托盘驻留期宿主帧泵（bug270，与 glfw_app_main 同源同由）：主窗
+            // 不 compose 时宿主 ticker 仍须推进——第二实例送达的 .md 打开请求
+            // 在 ticker 订阅里 drain，缺这一拍托盘态双击文件会「什么都不出」。
+            if (state.running) (void)app::dslAppConfig();
             continue;
         }
 

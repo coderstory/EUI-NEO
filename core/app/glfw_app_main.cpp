@@ -888,6 +888,12 @@ int eui_app_run() {
         }
         if (windowState.hiddenToTray) {
             glfwWaitEventsTimeout(0.10);
+            // 托盘驻留期宿主帧泵（bug270）：主窗不 compose，正常渲染路径上的
+            // 「进入应用帧读取 dslAppConfig」不会发生，宿主 ticker（core::ticker::pump
+            // 挂在该配置求值里）随之停摆——第二实例送达的 .md 打开请求正是在
+            // ticker 订阅里 drain 的，缺这一拍托盘态双击文件会「什么都不出」。
+            // 与正常路径同源（同一配置求值），不另造平行钩子。
+            (void)app::dslAppConfig();
             // 托盘驻留期间子窗口（桌宠）照常运行（R5：宠物独立于主窗存活）：
             // 动画推进 / 输入派发 / 开窗关窗 / 异步完成回调不断流。帧节奏由
             // 0.10s 等待上限兜底（桌宠帧率 4-12fps 量级足够）
