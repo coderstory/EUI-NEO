@@ -835,6 +835,7 @@ bool beginWindowResize(Handle window, WindowResizeEdge edge) {
 // 不自动带入 windowsx.h，负坐标多显示器场景手拆 LOWORD 会丢符号位）
 #include <windowsx.h>
 #include <dwmapi.h>
+#include "core/platform/window_effect.h" // debt268 P2-2：销毁路径清 per-hwnd 材质态
 #elif defined(__APPLE__)
 // macOS 路径（M0：macos-three-features 设计 §3）：glfwGetCocoaWindow
 // （NSWindow*）填 NativeWindowInfo.platformWindow，M3 桌宠三项消费
@@ -1406,6 +1407,9 @@ void destroyWindow(Handle window) {
         if (HWND hwnd = glfwGetWin32Window(static_cast<GLFWwindow*>(window));
             hwnd != nullptr) {
             uninstallChromeHitTest(hwnd);
+            // debt268 P2-2：材质态表同缝清理——残留「已挂材质」标记会让复用窗
+            // 误写 SYSTEMBACKDROP（半透档偶发变实色的根因之一）
+            core::platform::clearWindowMaterialState(hwnd);
         }
 #endif
         glfwDestroyWindow(static_cast<GLFWwindow*>(window));

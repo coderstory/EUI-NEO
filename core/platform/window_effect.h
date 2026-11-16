@@ -135,6 +135,39 @@ inline WindowEffect degradedWindowEffect(WindowEffect /*desired*/, bool transpar
     return transparentFramebufferActive ? WindowEffect::Transparent : WindowEffect::None;
 }
 
+// applyWindowEffect 的判定纯函数（debt268 P2-4 抽取，单测/实现共用）：
+// 「材质挂过」（per-hwnd materialAppliedMap，见 window_effect_win.cpp）× 目标
+// SYSTEMBACKDROP 值 → 行为枚举。键语义：写过含 NONE 在内的任何 SYSTEMBACKDROP
+// 都会让 DWM 接管合成、拒收后续 blur-behind（Win11 24H2 实测），故「从未写过」
+// 的窗口在关材质档必须完全不动该属性。
+enum class BackdropTransition {
+    KeepUntouched,   // 从未挂材质 + 关材质档：完全不动 SYSTEMBACKDROP（保 GLFW 创建期逐像素 alpha）
+    ApplyMaterial,   // 从未挂材质 + 材质档：写档位并置「已挂」
+    SwitchMaterial,  // 已挂材质 + 材质档：换档位，「已挂」保持
+    ReleaseMaterial, // 已挂材质 + 关材质档：写 NONE 关材质 + AUTO(0) 复位 + blur-behind 恢复
+};
+inline BackdropTransition backdropTransitionFor(bool materialApplied,
+                                                int backdropValue) {
+    const bool none = backdropValue == systemBackdropValue(WindowEffect::None);
+    if (materialApplied) {
+        return none ? BackdropTransition::ReleaseMaterial
+                    : BackdropTransition::SwitchMaterial;
+    }
+    return none ? BackdropTransition::KeepUntouched
+                : BackdropTransition::ApplyMaterial;
+}
+// 过渡后的「材质挂过」标记（KeepUntouched 不写表，调用方原值恒 false）。
+inline bool materialAppliedAfter(BackdropTransition transition) {
+    return transition == BackdropTransition::ApplyMaterial ||
+           transition == BackdropTransition::SwitchMaterial;
+}
+
+// 窗口销毁清 per-hwnd 材质态（debt268 P2-2）：HWND 数值销毁后可能被系统复用成
+// 新窗，materialAppliedMap 残留会让复用窗误走「已挂材质」路径（半透偶发变实色
+// 的根因之一）。GLFW 销毁路径（window_backend.cpp destroyWindow）在 HWND 失效
+// 前调用；与 uninstallChromeHitTest 同缝同语义。仅 Windows 实装。
+void clearWindowMaterialState(void* nativeWindowHandle);
+
 // macOS 侧补充说明（2026-09-29 真机取证定案）：
 // 1. `applyTitleBarAppearance` 在 macOS 有实现（不再是恒 false）：appearance.dark →
 //    `[NSWindow setAppearance: Aqua/DarkAqua]`，与 Windows 侧 `DWMWA_USE_IMMERSIVE_

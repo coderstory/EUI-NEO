@@ -7,6 +7,8 @@
 #include "core/platform/window_effect.h"
 
 #include <atomic>
+#include <cstdio> // P3-6 失败路径日志（stderr）
+#include <cstdlib> // std::getenv
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -63,6 +65,27 @@ void setMaterialApplied(HWND hwnd, bool applied) {
     materialAppliedMap()[static_cast<void*>(hwnd)] = applied;
 }
 
+// debt268 P2-3 衍生（P3-6）：AUTO 复位/blur-behind 恢复失败路径的排障日志。
+// env 门控与 glfw_app_main 的 EUI_FX_DIAG 同名同变量（EUI_FX_DEBUG），本文件
+// Windows 侧真打 stderr（那边 Apple-only，Windows 预处理为空语句）。
+namespace window_effect_win_diag {
+inline bool fxDebugEnabled() {
+    static const bool enabled = [] {
+        const char* v = std::getenv("EUI_FX_DEBUG");
+        return v != nullptr && *v != '\0';
+    }();
+    return enabled;
+}
+} // namespace window_effect_win_diag
+#define EUI_FX_DIAG_WIN(...)                      \
+    do {                                          \
+        if (window_effect_win_diag::fxDebugEnabled()) { \
+            std::fprintf(stderr, __VA_ARGS__);    \
+            std::fflush(stderr);                  \
+        }                                         \
+    } while (0)
+
+
 BOOL restorePerPixelAlpha(HWND hwnd) {
     BOOL composition = FALSE;
     if (FAILED(DwmIsCompositionEnabled(&composition)) || !composition) {
@@ -82,6 +105,19 @@ BOOL restorePerPixelAlpha(HWND hwnd) {
 }
 
 namespace core::platform {
+
+// debt268 P2-2：窗口销毁路径清 per-hwnd 材质态（window_backend.cpp destroyWindow
+// 在 glfwDestroyWindow 前调用，与 uninstallChromeHitTest 同缝）。HWND 数值销毁后
+// 会被系统复用，残留标记让复用窗误判「已挂材质」→ 半透档被误写 SYSTEMBACKDROP
+// 变实色。表里留 false 值项也无意义，一并 erase。
+void clearWindowMaterialState(void* nativeWindowHandle) {
+    if (nativeWindowHandle == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(backdropStateMutex());
+    materialAppliedMap().erase(nativeWindowHandle);
+}
+
 namespace {
 
 // 能力缓存（设计 §3.1.3 / §4-R5）：SYSTEMBACKDROP 属性首次失败（< Win11 22621
@@ -127,34 +163,55 @@ bool applyWindowEffect(void* nativeWindowHandle, WindowEffect effect) {
     // 显式档位（spike 结论：DWMSBT_AUTO 无效，必须显式 NONE/材质之一）；
     // int = DWM_SYSTEMBACKDROP_TYPE 的底层类型
     const int backdrop = systemBackdropValue(effect);
-    if (backdrop != DWMSBT_NONE || materialApplied(hwnd)) {
+    // debt268 P2-4：判定抽纯函数（backdropTransitionFor，4 分支单测锚
+    // tests/unit/window_effect_backdrop_state.cpp），本处只承载行为。
+    const BackdropTransition transition =
+        backdropTransitionFor(materialApplied(hwnd), backdrop);
+    switch (transition) {
+    case BackdropTransition::ApplyMaterial:
+    case BackdropTransition::SwitchMaterial: {
         const HRESULT result = DwmSetWindowAttribute(
             hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
         if (FAILED(result)) {
             backdropAttributeSupport().store(-1, std::memory_order_relaxed);
             return false;
         }
-        setMaterialApplied(hwnd, backdrop != DWMSBT_NONE);
+        setMaterialApplied(hwnd, materialAppliedAfter(transition));
+        break;
+    }
+    case BackdropTransition::ReleaseMaterial: {
         // bug266：材质→None 切换关材质。优先 DWMSBT_AUTO(0) 复位（把 SYSTEMBACKDROP
         // 拉回系统默认态，可能整体解除 DWM 对合成的接管），恢复失败再落 DWMSBT_NONE
         //（显式关材质；此路径 DWM 拒收后续 blur-behind，实测 rc=0）。
-        if (backdrop == DWMSBT_NONE) {
-            const int autoReset = 0; // DWMSBT_AUTO（老 SDK 无此枚举，写底层值）
+        const int autoReset = 0; // DWMSBT_AUTO（老 SDK 无此枚举，写底层值）
+        DwmSetWindowAttribute(
+            hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &autoReset, sizeof(autoReset));
+        const BOOL rcAuto = restorePerPixelAlpha(hwnd);
+        if (rcAuto == 0) {
+            // debt268 P3-6：失败路径留排障日志（此前静默，盲区）
+            EUI_FX_DIAG_WIN(
+                "[fxdiag] backdrop release: AUTO reset + blur-behind rejected "
+                "hwnd=%p, falling back to DWMSBT_NONE\n",
+                static_cast<void*>(hwnd));
+            // AUTO 复位后仍拒收 → 落 NONE 显式关材质再试一次
             DwmSetWindowAttribute(
-                hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &autoReset, sizeof(autoReset));
-            const BOOL rcAuto = restorePerPixelAlpha(hwnd);
-            if (rcAuto == 0) {
-                // AUTO 复位后仍拒收 → 落 NONE 显式关材质再试一次
-                DwmSetWindowAttribute(
-                    hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
-                restorePerPixelAlpha(hwnd);
+                hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+            if (restorePerPixelAlpha(hwnd) == 0) {
+                EUI_FX_DIAG_WIN(
+                    "[fxdiag] backdrop release: NONE fallback blur-behind "
+                    "still rejected hwnd=%p (24H2 known limitation)\n",
+                    static_cast<void*>(hwnd));
             }
         }
-    } else {
+        setMaterialApplied(hwnd, materialAppliedAfter(transition));
+        break;
+    }
+    case BackdropTransition::KeepUntouched:
         // bug266：从未写过 SYSTEMBACKDROP 的窗口（冷启动即半透/off）**完全不动该
         // 属性**——GLFW 创建期打下的逐像素 alpha 原样有效，不写即保持半透能力
         //（实测：任何 SYSTEMBACKDROP 写入后 blur-behind 重打被 DWM 拒收 rc=0，
         // 见 win11 24H2 备注）。pre-24H2 机型此分支保持 GLFW 原生透明路径。
+        break;
     }
     backdropAttributeSupport().store(1, std::memory_order_relaxed);
     return true;
