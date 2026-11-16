@@ -811,5 +811,8 @@ std::string TextPrimitive::resolveFontPath(const std::string& fontFamily, int fo
 std::string TextPrimitive::resolveSystemUiFontPathForWeight(int fontWeight) {
     return text_detail::resolveSystemUiFontPathForWeightImpl(fontWeight);
 }
+std::vector<std::string> TextPrimitive::systemFontFamilies() {
+    return text_detail::systemFontFamilies();
+}
 
 } // namespace core

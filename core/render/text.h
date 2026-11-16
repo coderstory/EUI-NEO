@@ -119,6 +119,10 @@ public:
     // font when no weight-specific variant exists. Returns empty string when
     // no UI font is found at all.
     static std::string resolveSystemUiFontPathForWeight(int fontWeight = 400);
+    // need:266：系统已装字体族名枚举（去重、稳定排序），供字体下拉等消费方填充；
+    // 返回的名字可安全传回 resolveFontPath（按族名解析到真实字体文件）。
+    // 无枚举能力的平台返回空 vector。
+    static std::vector<std::string> systemFontFamilies();
 
     void prepare();
     void render(int windowWidth, int windowHeight);

@@ -457,6 +457,8 @@ target_link_libraries(eui_neo PUBLIC Freetype::Freetype)
 if(WIN32)
     target_compile_definitions(eui_neo PUBLIC EUI_TRAY_WINAPI=1 NOMINMAX)
     target_link_libraries(eui_neo PUBLIC winmm urlmon shell32 user32 imm32 pdh dwmapi)
+    # need:266：字体族按名解析查 HKLM Fonts 注册表（RegOpenKeyExW/RegEnumValueW）。
+    target_link_libraries(eui_neo PUBLIC advapi32)
 elseif(APPLE)
     target_compile_definitions(eui_neo PUBLIC EUI_TRAY_APPKIT=1)
     target_link_libraries(eui_neo PUBLIC "-framework Cocoa" objc)
@@ -758,6 +760,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/input_scrollbar_viewer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layout_regression_viewer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/loader_lifecycle_viewer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/save_file_dialog_manual.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/markdown_viewer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/shadow_button_gpu_viewer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/text_alignment_viewer.cpp"
@@ -867,6 +870,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/dirty_rects.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/dsl_app_config.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/exit_request.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/file_dialog_save_logic.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/font_em_size.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/font_weight_resolution.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/gpu_image.cpp"
@@ -902,6 +906,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/switch_builder_position.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/switch_button_hover.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/switch_label_centering.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/system_font_families.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/text_ellipsis.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/title_bar_appearance.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/toast_action.cpp"
