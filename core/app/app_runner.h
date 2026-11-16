@@ -91,6 +91,12 @@ struct AppRunner {
             trayMenuItems(),
             trayKeepDefaultMenuItems()
         });
+        // 托盘架不起来 = 主窗关闭只能真退出（close callback 的取消分支以
+        // trayAvailable 为条件）。失败此前完全静默，排障时只能靠猜，这里留一行。
+        if (!trayAvailable) {
+            std::fprintf(stderr, "[tray] initializeTray FAILED（关窗将直接退出）icon=%s\n",
+                         trayIconPath() != nullptr ? trayIconPath() : "(null)");
+        }
         // 菜单接管回调（styled 菜单等）：注册失败/未注册（空 handler）时
         // 原生托盘菜单行为不变；handler 在主线程托盘消息泵里触发
         core::platform::setTrayMenuRequestedHandler(trayMenuRequestedHandler());

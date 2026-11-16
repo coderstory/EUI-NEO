@@ -1,5 +1,6 @@
 #include "core/platform/tray_bridge.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /* ---------------------------------------------------------------------------
@@ -277,6 +278,17 @@ static NSMenu* g_menu = nil;
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
     (void)sender;
+    // quit 可能来自外部（AppleEvent，如第三方「闲置 app 自动退出」工具）而非
+    // 用户点托盘 Exit——两者此前都静默，真机上报「关窗就退出」无从归因。
+    // 这里只记发送方 pid，便于一眼分辨「本进程发起」与「外部 app 杀我」。
+    {
+        NSAppleEventDescriptor* ev =
+            [[NSAppleEventManager sharedAppleEventManager] currentAppleEvent];
+        NSAppleEventDescriptor* pidDesc =
+            [ev attributeDescriptorForKeyword:keySenderPIDAttr];
+        NSLog(@"[tray] applicationShouldTerminate (senderPid=%d)",
+              pidDesc != nil ? [pidDesc int32Value] : -1);
+    }
     g_exit_requested = 1;
     return NSTerminateCancel;
 }

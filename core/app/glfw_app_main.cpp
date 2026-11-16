@@ -829,6 +829,13 @@ int eui_app_run() {
         if (state && state->trayAvailable && !state->forceClose) {
             state->hideToTrayRequested = true;
             glfwSetWindowShouldClose(currentWindow, GLFW_FALSE);
+        } else {
+            // 托盘架不起来 / 已在退出途中：本回调不放行隐藏，主循环随后真退出。
+            // 这条路此前完全静默，真机上报「关窗就退出」时无法区分「宿主没藏」
+            // 与「托盘根本不可用」，故留一行。
+            std::fprintf(stderr, "[eui] window close: trayAvailable=%d forceClose=%d -> exit\n",
+                         state && state->trayAvailable ? 1 : 0,
+                         state && state->forceClose ? 1 : 0);
         }
     });
     glfwSetWindowIconifyCallback(window, [](GLFWwindow* currentWindow, int iconified) {
@@ -1091,6 +1098,11 @@ int eui_app_run() {
     }
 
     childWindows.destroyAll(destroyManagedWindow);
+    // 退出点留痕：托盘态下「关窗后又自己退出」的排障只需一个判据——退出是
+    // 托盘 Exit / app::requestExit 主动发起（forceClose），还是外部 quit。
+    std::fprintf(stderr, "[eui] main loop exit hiddenToTray=%d forceClose=%d\n",
+                 windowState.hiddenToTray ? 1 : 0,
+                 windowState.forceClose ? 1 : 0);
     // 电源 hook 先于输入回调拆除（IME 桥的卸载是盲恢复自己的前级，会连带
     // 摘掉压在其上的本 hook——顺序反过来时依赖 uninstall 内的链顶比对守卫）
     core::platform::uninstallSystemPowerNotifications();
