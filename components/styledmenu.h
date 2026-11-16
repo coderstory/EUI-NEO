@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <set>
@@ -410,11 +411,17 @@ inline std::shared_ptr<StyledMenuRuntime>& activeRuntime() {
 // runtime->handle 解引用空指针崩（DevDesk pet_probes 实测 SIGSEGV；
 // 真实场景「菜单开着再开第二个」同样触发）。按值拷贝后 reset 只清静态，
 // 本函数持有的副本仍有效。
-inline void requestDismiss(std::shared_ptr<StyledMenuRuntime> runtime) {
+inline void requestDismiss(std::shared_ptr<StyledMenuRuntime> runtime,
+                           const char* reason = "") {
     if (!runtime || runtime->dismissed) {
         return;
     }
     runtime->dismissed = true;
+    // 关闭原因留痕：失焦自关此前在 macOS 上整条链路失效且无任何征兆（bug271），
+    // 真机排查时无从判断是「没收到失焦」还是「收到了没关」。一行成本极低。
+    if (reason != nullptr && reason[0] != '\0') {
+        std::fprintf(stderr, "[styledmenu] dismiss: %s\n", reason);
+    }
     core::window::Handle handle = runtime->handle;
     if (activeRuntime() == runtime) {
         activeRuntime().reset();
@@ -575,22 +582,24 @@ inline bool showStyledMenu(const std::string& id,
                         })
                         .onKeyEvent([runtime](const eui::KeyEvent& key) {
                             if (key.isDown() && key.key == eui::InputKey::Escape) {
-                                requestDismiss(runtime);
+                                requestDismiss(runtime, "escape");
                             }
                         })
-#if defined(_WIN32)
-                        // 失焦直连关闭（真机缺陷：托盘驻留/后台进程下菜单窗
-                        // 可能拿不到前台、compose 轮询被饿死，失焦后像独立
-                        // 悬浮窗赖着不走）：WM_KILLFOCUS / WM_ACTIVATE(
-                        // deactivate) 当拍同步 requestDismiss，走与选中/Esc
-                        // 同一条关闭路径。其他平台不布线（windowIsFocused 恒
-                        // 真的 compose 降级语义保持不变，macOS 行为零变化）。
+                        // 失焦直连关闭（全平台）：点菜单外的任何地方 → 关菜单，
+                        // 对齐原生直觉。背景：托盘驻留/后台进程下菜单窗可能拿不到
+                        // 前台、compose 轮询被饿死，菜单会像独立悬浮窗赖着不走。
+                        //
+                        // 早期这里只有 Windows（当时只为修 Windows 真机缺陷，注释
+                        // 写「macOS 行为零变化」）——但 macOS 侧另外两道兜底其实都
+                        // 不成立：windowIsFocused 在非 Windows 恒返回 true（compose
+                        // 轮询判不出失焦），整窗 .dismiss 层只覆盖菜单窗内的点击。
+                        // 于是 macOS 上三道全失效，右键菜单点别处永不消失（bug271）。
+                        // glfwSetWindowFocusCallback 本身跨平台（子窗已装），补上即可。
                         .onWindowFocusChanged([runtime](core::window::Handle, bool focused) {
                             if (!focused) {
-                                requestDismiss(runtime);
+                                requestDismiss(runtime, "focus lost (direct)");
                             }
                         })
-#endif
                         ,  // DslWindowConfig 建造链结束，下一实参 = compose 闭包
                     [runtime, prefix](eui::Ui& ui, const eui::Screen& screen) {
                         if (runtime->dismissed || runtime->rows.empty()) {
@@ -602,7 +611,7 @@ inline bool showStyledMenu(const std::string& id,
                             --runtime->focusGraceFrames;
                         } else if (runtime->handle != nullptr &&
                                    !core::window::windowIsFocused(runtime->handle)) {
-                            requestDismiss(runtime);
+                            requestDismiss(runtime, "focus lost (poll)");
                             return;
                         }
 
@@ -635,7 +644,7 @@ inline bool showStyledMenu(const std::string& id,
                                     .states(theme::color(0.0f, 0.0f, 0.0f, 0.0f),
                                             theme::color(0.0f, 0.0f, 0.0f, 0.0f),
                                             theme::color(0.0f, 0.0f, 0.0f, 0.0f))
-                                    .onClick([runtime] { requestDismiss(runtime); })
+                                    .onClick([runtime] { requestDismiss(runtime, "click away"); })
                                     .build();
 
                                 // 圆角面板 + 边框 + 阴影
@@ -685,7 +694,7 @@ inline bool showStyledMenu(const std::string& id,
                                             .onClick([runtime, path = row.path] {
                                                 const std::function<void(const std::vector<int>&)> onSelect =
                                                     runtime->onSelect;
-                                                requestDismiss(runtime);
+                                                requestDismiss(runtime, "item selected");
                                                 if (onSelect) {
                                                     onSelect(path);
                                                 }
