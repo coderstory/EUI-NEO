@@ -598,7 +598,7 @@ std::string asciiToLower(const std::string& text) {
 
 BOOL CALLBACK enumFontFamilyExCallback(const LOGFONTW* logFont, const TEXTMETRICW* /*textMetrics*/,
                                        DWORD /*fontType*/, LPARAM lParam) {
-    auto* families = reinterpret_cast<std::vector<std::string>*>(static_cast<void*>(lParam));
+    auto* families = reinterpret_cast<std::vector<std::string>*>(reinterpret_cast<void*>(lParam));
     if (logFont != nullptr) {
         families->push_back(wideToUtf8(logFont->lfFaceName));
     }
