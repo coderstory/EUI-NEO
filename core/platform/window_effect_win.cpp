@@ -104,92 +104,6 @@ BOOL restorePerPixelAlpha(HWND hwnd) {
     return rc;
 }
 
-// ── 24H2 accent 路线（bug266）────────────────────────────────────────────
-// Win11 24H2（build ≥26100）DWM 全面拒收 DwmEnableBlurBehindWindow（实测
-// rc=S_OK 视觉无效，两态取证见线索 161），GLFW 逐像素透明 enable 路径失效；
-// SYSTEMBACKDROP 材质又被 DWM 接管背景使 GL 帧缓冲 alpha 失效 → 实色。两条
-// 旧路全断 → 改走未文档化 SetWindowCompositionAttribute(ACCENT_POLICY)，
-// TranslucentTB 等生产级工具在 24H2 仍依赖的同一路线（2026-11-16 联网检索
-// 锚点）。blur/tint 由 DWM 画在窗口内容后面，内容侧照旧用 clearColor alpha
-// 出透见。pre-24H2 不走本路线（GLFW 原生路径照旧，零回归面）。
-namespace {
-
-// 未文档化结构/API 自声明（无 SDK 头；字段布局按社区逆向与生产级用法共识）。
-struct AccentPolicy {
-    unsigned long accentState;
-    unsigned long accentFlags;
-    unsigned long gradientColor; // AABBGGRR（alpha 在最高字节）
-    unsigned long animationId;
-};
-struct WindowCompositionAttributeData {
-    int attribute;               // WCA_ACCENT_POLICY = 19
-    void* data;
-    unsigned long long dataSize; // SIZE_T
-};
-
-// 24H2 判定（进程级缓存）。RtlGetVersion 不受应用 manifest 兼容垫片影响
-//（VerifyVersionInfo 会把高版本谎报成 6.2）。
-bool accentRouteRequired() {
-    static const bool required = [] {
-        struct OsVersionInfoW {
-            unsigned long size;
-            unsigned long major;
-            unsigned long minor;
-            unsigned long build;
-            unsigned long platformId;
-            wchar_t csdVersion[128];
-        };
-        using RtlGetVersionFn = long(__stdcall*)(OsVersionInfoW*);
-        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        if (ntdll == nullptr) {
-            return false;
-        }
-        const auto rtlGetVersion = reinterpret_cast<RtlGetVersionFn>(
-            reinterpret_cast<void*>(GetProcAddress(ntdll, "RtlGetVersion")));
-        if (rtlGetVersion == nullptr) {
-            return false;
-        }
-        OsVersionInfoW info{};
-        info.size = sizeof(info);
-        if (rtlGetVersion(&info) != 0) {
-            return false;
-        }
-        return info.build >= 26100; // Win11 24H2：blur-behind 全态失效起点
-    }();
-    return required;
-}
-
-// 应用 accent policy（幂等）。返回 FALSE = API 拒收，调用方走既有降级链。
-BOOL applyAccentPolicy(HWND hwnd, const AccentPolicy& policy) {
-    using SetWcaFn = BOOL(WINAPI*)(HWND, const WindowCompositionAttributeData*);
-    static const SetWcaFn setWca = []() -> SetWcaFn {
-        const HMODULE user32 = GetModuleHandleW(L"user32.dll");
-        if (user32 == nullptr) {
-            return nullptr;
-        }
-        return reinterpret_cast<SetWcaFn>(reinterpret_cast<void*>(
-            GetProcAddress(user32, "SetWindowCompositionAttribute")));
-    }();
-    if (setWca == nullptr) {
-        return FALSE;
-    }
-    WindowCompositionAttributeData data;
-    data.attribute = 19; // WCA_ACCENT_POLICY
-    data.data = const_cast<AccentPolicy*>(&policy);
-    data.dataSize = sizeof(policy);
-    const BOOL rc = setWca(hwnd, &data);
-    const DWORD gle = GetLastError();
-    EUI_FX_DIAG_WIN("[fxdiag] accent apply hwnd=%p state=%lu flags=%lu "
-                    "color=%08lx rc=%ld gle=%lu\n",
-                    static_cast<void*>(hwnd), policy.accentState,
-                    policy.accentFlags, policy.gradientColor,
-                    static_cast<long>(rc),
-                    static_cast<unsigned long>(gle));
-    return rc;
-}
-
-} // namespace
-
 namespace core::platform {
 
 // debt268 P2-2：窗口销毁路径清 per-hwnd 材质态（window_backend.cpp destroyWindow
@@ -246,23 +160,6 @@ bool applyWindowEffect(void* nativeWindowHandle, WindowEffect effect) {
     }
 
     HWND hwnd = static_cast<HWND>(nativeWindowHandle);
-    // bug266（24H2）：blur-behind 与 SYSTEMBACKDROP 两条旧路都被 DWM 断死
-    //（材质档=接管背景后 GL alpha 失效=实色），改走 accent 路线。SYSTEMBACKDROP
-    // 不再写（两机制并用互踩）；标记照清（24H2 上正常从未写过，纯防御）。
-    if (accentRouteRequired()) {
-        if (materialApplied(hwnd)) {
-            const int none = systemBackdropValue(WindowEffect::None);
-            DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &none,
-                                  sizeof(none));
-            setMaterialApplied(hwnd, false);
-        }
-        AccentPolicy policy{};
-        policy.accentState =
-            static_cast<unsigned long>(accentStateFor(effect));
-        policy.accentFlags = accentFlagsFor(effect);
-        policy.gradientColor = accentGradientColorFor(effect);
-        return applyAccentPolicy(hwnd, policy) != 0;
-    }
     // 显式档位（spike 结论：DWMSBT_AUTO 无效，必须显式 NONE/材质之一）；
     // int = DWM_SYSTEMBACKDROP_TYPE 的底层类型
     const int backdrop = systemBackdropValue(effect);

@@ -162,42 +162,6 @@ inline bool materialAppliedAfter(BackdropTransition transition) {
            transition == BackdropTransition::SwitchMaterial;
 }
 
-// ── 24H2 accent 路线（bug266）────────────────────────────────────────────
-// Win11 24H2（build ≥26100）上 DWM 拒收 DwmEnableBlurBehindWindow（GLFW 逐像素
-// 透明 enable 路径失效，rc=S_OK 但视觉无效，两态取证见线索 161），且 SYSTEMBACKDROP
-// 材质被 DWM 接管背景后 GL 帧缓冲 alpha 失效（磨砂档实色的直接根因）→ 材质/半透
-// 改走 SetWindowCompositionAttribute 的 ACCENT_POLICY（TranslucentTB 等生产级工具
-// 24H2 仍在依赖的未文档化路线）。档位→accent 参数映射抽纯函数（单测锚
-// tests/unit/window_effect_backdrop_state.cpp）。档位设计参数（clearColor alpha
-// 0.85/0.15 等）不变；tint 是机制侧新参数。
-inline int accentStateFor(WindowEffect effect) {
-    switch (effect) {
-    case WindowEffect::Acrylic:
-    case WindowEffect::Mica:
-    case WindowEffect::MicaAlt:
-        return 4; // ACCENT_ENABLE_ACRYLICBLURBEHIND：磨砂=亚克力（透见+模糊）
-    case WindowEffect::Transparent:
-        return 2; // ACCENT_ENABLE_TRANSPARENTGRADIENT：半透（透见无模糊）
-    default:
-        return 0; // ACCENT_DISABLED：实色（off）
-    }
-}
-
-// accent 底 tint（AABBGGRR）。磨砂给极低中性暗 tint：亚克力纹理亮度随窗后内容
-// 自适应（近似 Mica 的观感方向），tint 只为规避 GradientColor alpha=0 的已知
-// 黑底问题（24H2 社区报告），透明度主导权留给 GL clearColor（磨砂档 α=0.15）。
-inline unsigned accentGradientColorFor(WindowEffect effect) {
-    if (effect == WindowEffect::Transparent) {
-        return 0x01000000u; // 半透：tint 近零（GL clearColor α=0.85 主导）
-    }
-    return 0x14000000u; // 磨砂族：α=0x14 黑中性
-}
-
-// AccentFlags：亚克力按生产级惯用值 2（TranslucentTB/社区样例锚），其余 0。
-inline unsigned accentFlagsFor(WindowEffect effect) {
-    return accentStateFor(effect) == 4 ? 2u : 0u;
-}
-
 // 窗口销毁清 per-hwnd 材质态（debt268 P2-2）：HWND 数值销毁后可能被系统复用成
 // 新窗，materialAppliedMap 残留会让复用窗误走「已挂材质」路径（半透偶发变实色
 // 的根因之一）。GLFW 销毁路径（window_backend.cpp destroyWindow）在 HWND 失效

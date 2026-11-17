@@ -816,12 +816,12 @@ bool applyWindowEffect(void* nativeHandle, WindowEffect effect) {
         @try {
             switch (effect) {
             case WindowEffect::None:
-            case WindowEffect::Transparent:
-                // 实色/半透档共用 None 路径（backdrop 关掉，透明/实色由 clearColor
-                // alpha 定）。bug266：DevDesk 半透档改发 Transparent（Windows 24H2
-                // accent 路线需要档位区分半透/off）——macOS 半透本就由 clearColor
-                // alpha 决定，与本档 None 同观感，视觉不变。
+                // 实色/半透档共用 None（backdrop 关掉，透明/实色由 clearColor alpha 定）
                 return attachMaterialView(nsWindow, false, kMaterialAlpha);
+            case WindowEffect::Transparent:
+                // 半透档材质视图整体半透明（kTranslucentMaterialAlpha；DevDesk 当前
+                // 不请求本档，见文件头 alpha 注释）
+                return attachMaterialView(nsWindow, true, kTranslucentMaterialAlpha);
             case WindowEffect::Acrylic:
             case WindowEffect::Mica:
             case WindowEffect::MicaAlt:
