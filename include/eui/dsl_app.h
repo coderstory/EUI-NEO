@@ -246,6 +246,14 @@ struct DslWindowConfig {
     eui::Color clearColorValue = {0.16f, 0.18f, 0.20f, 1.0f};
     int windowWidthValue = 640;
     int windowHeightValue = 420;
+    // 最小/最大尺寸约束（0 = 不约束，与 WindowCreateRequest 同语义）。
+    // 只做透传：底层 window_backend.cpp 早已调 glfwSetWindowSizeLimits，
+    // 缺的是 DSL 这一层通道（记事本模块 need263 需要 720×480 下限，
+    // 否则可拖到任意小、断点布局失效）。
+    int minWidthValue = 0;
+    int minHeightValue = 0;
+    int maxWidthValue = 0;
+    int maxHeightValue = 0;
     bool modalValue = false;
     // ---- 子窗口配置（桌宠设计 §2.6 G1/G2/G4/G5）----
     int windowXValue = 0;
@@ -280,6 +288,21 @@ struct DslWindowConfig {
     }
     DslWindowConfig& windowWidth(int value) { windowWidthValue = value; return *this; }
     DslWindowConfig& windowHeight(int value) { windowHeightValue = value; return *this; }
+    /**
+     * @brief 窗口最小尺寸（拖拽/程序化缩放的硬下限；0 = 不约束）。
+     * 透传到 WindowCreateRequest.minWidth/minHeight → 后端 glfwSetWindowSizeLimits。
+     */
+    DslWindowConfig& minSize(int width, int height) {
+        minWidthValue = width;
+        minHeightValue = height;
+        return *this;
+    }
+    /** @brief 窗口最大尺寸（0 = 不约束）。 */
+    DslWindowConfig& maxSize(int width, int height) {
+        maxWidthValue = width;
+        maxHeightValue = height;
+        return *this;
+    }
     DslWindowConfig& windowPosition(int x, int y) {
         windowXValue = x;
         windowYValue = y;

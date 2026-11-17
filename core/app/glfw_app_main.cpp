@@ -433,6 +433,12 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     windowRequest.visible = false;
     windowRequest.width = request.width;
     windowRequest.height = request.height;
+    // 尺寸约束透传（need269）：DslWindowConfig.minSize/maxSize → 后端
+    // glfwSetWindowSizeLimits。0 = 不约束（后端按 GLFW_DONT_CARE 处理）。
+    windowRequest.minWidth = request.minWidth;
+    windowRequest.minHeight = request.minHeight;
+    windowRequest.maxWidth = request.maxWidth;
+    windowRequest.maxHeight = request.maxHeight;
     windowRequest.title = request.title.c_str();
     windowRequest.parent = parentWindow;
     windowRequest.renderApi = core::render::windowRenderApi();
