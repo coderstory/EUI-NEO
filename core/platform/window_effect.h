@@ -175,27 +175,31 @@ inline int accentStateFor(WindowEffect effect) {
     case WindowEffect::Acrylic:
     case WindowEffect::Mica:
     case WindowEffect::MicaAlt:
-        return 4; // ACCENT_ENABLE_ACRYLICBLURBEHIND：磨砂=亚克力（透见+模糊）
     case WindowEffect::Transparent:
-        return 2; // ACCENT_ENABLE_TRANSPARENTGRADIENT：半透（透见无模糊）
+        // bug288（2026-11-17 老板令）：磨砂档撤回 ACRYLICBLURBEHIND 路线（装机
+        // 观感打回），「磨砂的效果，直接叠加半透的效果」——磨砂族与半透在 accent
+        // 路线同走 TRANSPARENTGRADIENT(2)（透见无模糊），磨砂质感由 GL 内容层
+        // （磨砂档 clearColor α=0.15 的纱）叠加承载。
+        return 2; // ACCENT_ENABLE_TRANSPARENTGRADIENT：透见（无 DWM 模糊）
     default:
         return 0; // ACCENT_DISABLED：实色（off）
     }
 }
 
-// accent 底 tint（AABBGGRR）。磨砂给极低中性暗 tint：亚克力纹理亮度随窗后内容
-// 自适应（近似 Mica 的观感方向），tint 只为规避 GradientColor alpha=0 的已知
-// 黑底问题（24H2 社区报告），透明度主导权留给 GL clearColor（磨砂档 α=0.15）。
+// accent 底 tint（AABBGGRR）。bug288：磨砂撤回后两档统一近零 tint（0x01）——
+// 唯一作用是规避 GradientColor alpha=0 的已知黑底问题（24H2 社区报告），
+// 透明度主导权归 GL clearColor 的档位设计值。
 inline unsigned accentGradientColorFor(WindowEffect effect) {
-    if (effect == WindowEffect::Transparent) {
-        return 0x01000000u; // 半透：tint 近零（GL clearColor α=0.85 主导）
+    if (effect == WindowEffect::None) {
+        return 0u;
     }
-    return 0x14000000u; // 磨砂族：α=0x14 黑中性
+    return 0x01000000u;
 }
 
-// AccentFlags：亚克力按生产级惯用值 2（TranslucentTB/社区样例锚），其余 0。
+// AccentFlags：亚克力路线撤回后恒 0（无 border/特效位）。
 inline unsigned accentFlagsFor(WindowEffect effect) {
-    return accentStateFor(effect) == 4 ? 2u : 0u;
+    (void)effect;
+    return 0u;
 }
 
 // 窗口销毁清 per-hwnd 材质态（debt268 P2-2）：HWND 数值销毁后可能被系统复用成

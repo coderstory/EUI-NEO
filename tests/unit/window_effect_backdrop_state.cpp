@@ -55,22 +55,17 @@ int main() {
     }
 
     // ---- bug266：24H2 accent 路线的档位→ACCENT 参数映射 ----
-    // 磨砂族（Acrylic/Mica/MicaAlt）→ ACCENT_ENABLE_ACRYLICBLURBEHIND(4)+
-    // 惯用 flags=2；Transparent → TRANSPARENTGRADIENT(2)；None → DISABLED(0)。
-    for (const VE effect : {VE::Acrylic, VE::Mica, VE::MicaAlt}) {
-        assert(core::platform::accentStateFor(effect) == 4);
-        assert(core::platform::accentFlagsFor(effect) == 2);
+    // bug288（2026-11-17 老板令）：磨砂撤回 ACRYLICBLURBEHIND，「磨砂直接叠加
+    // 半透」——磨砂族与 Transparent 同走 TRANSPARENTGRADIENT(2)、tint/flags 全同。
+    for (const VE effect : {VE::Acrylic, VE::Mica, VE::MicaAlt, VE::Transparent}) {
+        assert(core::platform::accentStateFor(effect) == 2);
+        assert(core::platform::accentFlagsFor(effect) == 0);
+        assert(core::platform::accentGradientColorFor(effect) == 0x01000000u);
     }
-    assert(core::platform::accentStateFor(VE::Transparent) == 2);
     assert(core::platform::accentStateFor(VE::None) == 0);
-    assert(core::platform::accentFlagsFor(VE::Transparent) == 0);
     assert(core::platform::accentFlagsFor(VE::None) == 0);
     // tint alpha 字节必须 ≥1（GradientColor alpha=0 在 24H2 有黑底已知问题）
     assert((core::platform::accentGradientColorFor(VE::Mica) >> 24) >= 1);
-    assert((core::platform::accentGradientColorFor(VE::Transparent) >> 24) >= 1);
-    // 半透 tint 严格低于磨砂（透明度主导权在 GL clearColor 的档位语义不变）
-    assert((core::platform::accentGradientColorFor(VE::Transparent) >> 24) <
-           (core::platform::accentGradientColorFor(VE::Mica) >> 24));
 
     std::printf("window_effect_backdrop_state: all checks passed\n");
     return 0;
