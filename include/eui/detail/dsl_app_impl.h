@@ -179,6 +179,12 @@ void openWindow(const DslWindowConfig& config, DslWindowCompose composeFn) {
     // 最小尺寸只防 0/负数（G2：桌宠 128×128 等小窗曾被 160×120 下限强行放大）
     request.width = std::max(1, config.windowWidthValue);
     request.height = std::max(1, config.windowHeightValue);
+    // 尺寸约束透传：负值归 0（= 不约束），与后端「>0 才生效」判据对齐。
+    // min>max 的纠正不在此做——后端已用 max(max, min) 兜底，两处都纠反而失真。
+    request.minWidth = std::max(0, config.minWidthValue);
+    request.minHeight = std::max(0, config.minHeightValue);
+    request.maxWidth = std::max(0, config.maxWidthValue);
+    request.maxHeight = std::max(0, config.maxHeightValue);
     request.modal = config.modalValue;
     request.x = config.windowXValue;
     request.y = config.windowYValue;

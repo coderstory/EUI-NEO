@@ -99,6 +99,30 @@ int main() {
     assert(!core::platform::applyWindowStyleFlags(
         nullptr, core::platform::WindowStyleFlags{true, false}));
 
+    // ---- 尺寸约束透传（need269）：minSize/maxSize → DslWindowRequest ----
+    // 记事本窗需要 720×480 硬下限（否则可拖到任意小、断点布局失效）。
+    // 默认不约束 = 0，既有调用零改动（基线由上方 plain 用例覆盖）。
+    openWindow(DslWindowConfig{}.windowSize(900, 640).minSize(720, 480),
+               [](eui::Ui&, const eui::Screen&) {});
+    std::vector<DslWindowRequest> minSized = consumeWindowRequests();
+    assert(minSized.size() == 1);
+    assert(minSized[0].width == 900 && minSized[0].height == 640);
+    assert(minSized[0].minWidth == 720 && minSized[0].minHeight == 480);
+    assert(minSized[0].maxWidth == 0 && minSized[0].maxHeight == 0);  // 未设 = 不约束
+
+    openWindow(DslWindowConfig{}.minSize(720, 480).maxSize(1920, 1080),
+               [](eui::Ui&, const eui::Screen&) {});
+    std::vector<DslWindowRequest> bounded = consumeWindowRequests();
+    assert(bounded.size() == 1);
+    assert(bounded[0].minWidth == 720 && bounded[0].minHeight == 480);
+    assert(bounded[0].maxWidth == 1920 && bounded[0].maxHeight == 1080);
+
+    // 负值归 0（与后端「>0 才生效」判据对齐，不把负数当约束传下去）
+    openWindow(DslWindowConfig{}.minSize(-5, -1), [](eui::Ui&, const eui::Screen&) {});
+    std::vector<DslWindowRequest> negative = consumeWindowRequests();
+    assert(negative.size() == 1);
+    assert(negative[0].minWidth == 0 && negative[0].minHeight == 0);
+
     // ---- 请求队列卫生：consume 后再 consume 为空 ----
     assert(consumeWindowRequests().empty());
 

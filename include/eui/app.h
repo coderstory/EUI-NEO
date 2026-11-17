@@ -21,6 +21,13 @@ struct DslWindowRequest {
     eui::Color clearColor = {0.16f, 0.18f, 0.20f, 1.0f};
     int width = 640;
     int height = 420;
+    // 尺寸约束（0 = 不约束）：透传到 WindowCreateRequest.minWidth/minHeight/
+    // maxWidth/maxHeight → 后端 glfwSetWindowSizeLimits。记事本窗 need263
+    // 需要 720×480 下限，否则用户可拖到任意小、断点布局失效。
+    int minWidth = 0;
+    int minHeight = 0;
+    int maxWidth = 0;
+    int maxHeight = 0;
     bool modal = false;
     // ---- 子窗口配置透传（桌宠设计 §2.6 G1/G2）----
     // 全部落到 WindowCreateRequest（后端已支持；此前子窗口必然带标题栏/
