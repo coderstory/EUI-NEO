@@ -69,6 +69,10 @@ struct InputModel {
         float cachedFontSize = 0.0f;
         float cachedViewportWidth = -1.0f;
         bool cachedMultiline = false;
+        // 多行软换行开关（need263 F-19）：false 时超宽逻辑行不切软段，
+        // 整行成单显示段并横向滚动跟随光标。由 InputBuilder 每帧同步。
+        bool softWrap = true;
+        bool cachedSoftWrap = true;
         std::string cachedLayoutText;
         core::TextPrimitive::TextMetrics cachedMetrics;
         std::vector<TextLine> cachedLines;
@@ -119,6 +123,7 @@ struct InputModel {
         int selectionEnd = 0;
         int cursorLine = 0;
         bool multiline = false;
+        bool softWrap = true;
         float clippedSelectionX = 0.0f;
         float clippedSelectionWidth = 0.0f;
 
@@ -140,6 +145,7 @@ struct InputModel {
             layout.textTop = textTop;
             layout.lineHeight = lineHeight;
             layout.multiline = multiline;
+            layout.softWrap = state.softWrap;
             ensureLayoutCache(state, fontFamily, fontSize, viewportWidth, multiline);
             layout.lines = &state.cachedLines;
 
@@ -147,12 +153,22 @@ struct InputModel {
                 layout.cursorLine = layout.lineIndexFor(state.cursor);
                 const Line& cursorLine = layout.lineList()[static_cast<size_t>(layout.cursorLine)];
                 layout.metrics = cursorLine.metrics;
-                state.horizontalScroll = 0.0f;
-                layout.scroll = 0.0f;
                 layout.textWidth = state.cachedTextWidth;
                 layout.contentHeight = static_cast<float>(layout.lineList().size()) * lineHeight;
                 layout.cursorPixel = caretX(cursorLine.metrics, state.cursor - cursorLine.start);
-                layout.cursorX = inset + layout.cursorPixel;
+                if (state.softWrap) {
+                    state.horizontalScroll = 0.0f;
+                    layout.scroll = 0.0f;
+                    layout.cursorX = inset + layout.cursorPixel;
+                    layout.visibleTextWidth = viewportWidth;
+                } else {
+                    // softWrap=false：超宽逻辑行不切软段，横向滚动跟随光标
+                    // （文档级平移，所有显示行同步偏移）。
+                    syncMultilineHorizontalScroll(state, viewportWidth, fontFamily, fontSize);
+                    layout.scroll = state.horizontalScroll;
+                    layout.cursorX = inset + layout.cursorPixel - layout.scroll;
+                    layout.visibleTextWidth = std::max(viewportWidth, state.cachedTextWidth + 24.0f);
+                }
                 layout.maxVerticalScroll = std::max(0.0f, layout.contentHeight - viewportHeight);
                 state.verticalScroll = std::clamp(state.verticalScroll, 0.0f, layout.maxVerticalScroll);
                 if (state.followCaret) {
@@ -161,7 +177,6 @@ struct InputModel {
                 state.verticalScroll = std::clamp(state.verticalScroll, 0.0f, layout.maxVerticalScroll);
                 layout.currentVerticalScroll = state.verticalScroll;
                 layout.cursorY = textTop + static_cast<float>(layout.cursorLine) * lineHeight - state.verticalScroll;
-                layout.visibleTextWidth = viewportWidth;
             } else {
                 layout.metrics = state.cachedMetrics;
                 syncScroll(state, viewportWidth, layout.metrics, fontSize);
@@ -295,8 +310,10 @@ struct InputModel {
 
                 const bool coversWholeLine = startIndex <= line.start && endIndex >= selectableEnd;
                 const float startX = coversWholeLine ? 0.0f : caretX(line.metrics, lineStart - line.start);
+                // softWrap=false 时整行高亮要铺到逻辑行实际宽度（可能超出视口）。
+                const float wholeLineWidth = softWrap ? viewportWidth : std::max(line.metrics.width, startX + 1.0f);
                 const float endX = selectionContinuesPastLine
-                    ? (line.hardBreakAfter || coversWholeLine ? viewportWidth : std::max(line.metrics.width, startX + 1.0f))
+                    ? (line.hardBreakAfter || coversWholeLine ? wholeLineWidth : std::max(line.metrics.width, startX + 1.0f))
                     : caretX(line.metrics, lineEnd - line.start);
                 const float rawX = inset + startX - scroll;
                 const float rawRight = inset + endX - scroll;
@@ -571,7 +588,8 @@ struct InputModel {
                state.cachedFontFamily == fontFamily &&
                std::fabs(state.cachedFontSize - fontSize) < 0.001f &&
                std::fabs(state.cachedViewportWidth - viewportWidth) < 0.001f &&
-               state.cachedMultiline == multiline;
+               state.cachedMultiline == multiline &&
+               state.cachedSoftWrap == state.softWrap;
     }
 
     static void ensureLayoutCache(InputState& state,
@@ -585,12 +603,17 @@ struct InputModel {
 
         const bool reuseParagraphs = multiline && state.layoutCacheValid && state.cachedMultiline &&
             state.cachedFontFamily == fontFamily && std::fabs(state.cachedFontSize - fontSize) < 0.001f &&
-            std::fabs(state.cachedViewportWidth - viewportWidth) < 0.001f;
+            std::fabs(state.cachedViewportWidth - viewportWidth) < 0.001f &&
+            state.cachedSoftWrap == state.softWrap;
+        if (state.cachedSoftWrap != state.softWrap) {
+            // 换行开关翻转改变行切分：行号/行起点语义变化，行级 runs 缓存整体作废。
+            state.cachedLineRuns.clear();
+        }
         if (multiline) {
             if (reuseParagraphs) {
                 updateChangedParagraphs(state, fontFamily, fontSize, viewportWidth);
             } else {
-                state.cachedLines = measureLines(state.text, fontFamily, fontSize, viewportWidth);
+                state.cachedLines = measureLines(state.text, fontFamily, fontSize, viewportWidth, state.softWrap);
             }
             // 多行的光标与选择使用行级 metrics，不再重复 shaping 整篇文档。
             state.cachedMetrics = {};
@@ -610,6 +633,7 @@ struct InputModel {
         state.cachedFontSize = fontSize;
         state.cachedViewportWidth = viewportWidth;
         state.cachedMultiline = multiline;
+        state.cachedSoftWrap = state.softWrap;
         state.layoutCacheValid = true;
     }
 
@@ -636,7 +660,7 @@ struct InputModel {
         const size_t oldEnd = nextBreak == std::string::npos ? oldText.size() : nextBreak + 1;
         const size_t newEnd = newText.size() - (oldText.size() - oldEnd);
         const bool hasSuffix = oldEnd < oldText.size();
-        auto replacement = measureLines(newText.substr(begin, newEnd - begin), fontFamily, fontSize, viewportWidth);
+        auto replacement = measureLines(newText.substr(begin, newEnd - begin), fontFamily, fontSize, viewportWidth, state.softWrap);
         if (hasSuffix) replacement.pop_back(); // 后缀已有该段开头，不保留截断串产生的虚拟空行。
         for (auto& line : replacement) {
             line.start += static_cast<int>(begin);
@@ -672,6 +696,8 @@ struct InputModel {
         target.cachedFontSize = source.cachedFontSize;
         target.cachedViewportWidth = source.cachedViewportWidth;
         target.cachedMultiline = source.cachedMultiline;
+        target.softWrap = source.softWrap;
+        target.cachedSoftWrap = source.cachedSoftWrap;
         target.cachedTextWidth = source.cachedTextWidth;
         target.layoutCacheValid = source.layoutCacheValid;
         target.cachedTextRevision = target.textRevision - 1;
@@ -728,7 +754,8 @@ struct InputModel {
     static std::vector<InputLayout::Line> measureLines(const std::string& value,
                                                        const std::string& fontFamily,
                                                        float fontSize,
-                                                       float viewportWidth) {
+                                                       float viewportWidth,
+                                                       bool softWrap = true) {
         std::vector<InputLayout::Line> lines;
         int start = 0;
         while (start <= static_cast<int>(value.size())) {
@@ -738,7 +765,8 @@ struct InputModel {
                 : static_cast<int>(newline);
             const std::string lineText = value.substr(static_cast<size_t>(start), static_cast<size_t>(end - start));
             const core::TextPrimitive::TextMetrics metrics = measureMetrics(lineText, fontFamily, fontSize);
-            if (viewportWidth <= 1.0f || metrics.byteIndices.size() <= 2 || metrics.width <= viewportWidth) {
+            // softWrap=false（need263 F-19 换行关断）：每个逻辑行整行单段，不按视口切软段。
+            if (!softWrap || viewportWidth <= 1.0f || metrics.byteIndices.size() <= 2 || metrics.width <= viewportWidth) {
                 lines.push_back({start, end, newline != std::string::npos, metrics});
             } else {
                 int segmentStart = 0;
@@ -911,6 +939,37 @@ struct InputModel {
 
     static void syncScroll(InputState& state, float viewportWidth, const std::string& fontFamily, float fontSize) {
         syncScroll(state, viewportWidth, cachedMetrics(state, fontFamily, fontSize, viewportWidth), fontSize);
+    }
+
+    /// softWrap=false 的多行模式：横向滚动跟随光标（need263 F-19 换行关断）。
+    /// 文档级平移：所有显示行同步偏移，clamp 上界取全文最宽行（cachedTextWidth）。
+    /// softWrap=true 恒回 0，保持既有软换行语义。
+    static void syncMultilineHorizontalScroll(InputState& state, float viewportWidth,
+                                              const std::string& fontFamily, float fontSize) {
+        if (state.softWrap) {
+            state.horizontalScroll = 0.0f;
+            return;
+        }
+        if (state.cachedTextWidth <= viewportWidth) {
+            state.horizontalScroll = 0.0f;
+            return;
+        }
+        const std::vector<InputLayout::Line>& lines = cachedLines(state, fontFamily, fontSize, viewportWidth, true);
+        const int lineIndex = lineIndexFor(lines, state.cursor);
+        float cursorPixel = 0.0f;
+        if (lineIndex >= 0 && lineIndex < static_cast<int>(lines.size())) {
+            const InputLayout::Line& line = lines[static_cast<size_t>(lineIndex)];
+            cursorPixel = caretX(line.metrics, state.cursor - line.start);
+        }
+        const float trailingPadding = std::max(6.0f, fontSize * 0.35f);
+        const float rightSafe = std::max(1.0f, viewportWidth - trailingPadding);
+        if (cursorPixel - state.horizontalScroll < 0.0f) {
+            state.horizontalScroll = cursorPixel;
+        } else if (cursorPixel - state.horizontalScroll > rightSafe) {
+            state.horizontalScroll = cursorPixel - rightSafe;
+        }
+        state.horizontalScroll = std::clamp(state.horizontalScroll, 0.0f,
+                                            std::max(0.0f, state.cachedTextWidth - viewportWidth + trailingPadding));
     }
 
     static void syncScroll(InputState& state,

@@ -59,6 +59,9 @@ public:
     InputBuilder& multiline(bool value = true) { multiline_ = value; return *this; }
     /** @brief 多行输入溢出时显示垂直滚动条，默认关闭；不影响滚轮和光标跟随。 */
     InputBuilder& scrollbar(bool value = true) { scrollbar_ = value; return *this; }
+    /** @brief 多行软换行开关，默认开（need263 F-19 换行旋钮）：关闭后超宽逻辑行
+     *  不再按视口切软段，整行成单显示段并横向滚动跟随光标；单行模式不受影响。 */
+    InputBuilder& softWrap(bool value = true) { softWrap_ = value; return *this; }
     InputBuilder& fontSize(float value) { fontSize_ = std::max(1.0f, value); return *this; }
     InputBuilder& fontFamily(std::string value) { fontFamily_ = std::move(value); return *this; }
     InputBuilder& inset(float value) { inset_ = std::max(0.0f, value); return *this; }
@@ -142,6 +145,7 @@ public:
         const float controlWidth = width_;
         const std::string fontFamily = fontFamily_;
         InputState& state = ui_.state<InputState>(id_);
+        state.softWrap = softWrap_;
         if (state.text != text_) {
             const bool wasFocused = focused;
             state.text = text_;
@@ -265,7 +269,7 @@ public:
                             }
                             changed = undo ? InputModel::undoEdit(state) : InputModel::redoEdit(state);
                             if (allowMultiline) {
-                                state.horizontalScroll = 0.0f;
+                                InputModel::syncMultilineHorizontalScroll(state, std::max(0.0f, width - inset * 2.0f), fontFamily, fontSize);
                                 const InputLayout nextLayout = InputLayout::build(
                                     state,
                                     std::max(0.0f, width - inset * 2.0f),
@@ -368,7 +372,7 @@ public:
                             handled = false;
                         }
                         if (allowMultiline) {
-                            state.horizontalScroll = 0.0f;
+                            InputModel::syncMultilineHorizontalScroll(state, std::max(0.0f, width - inset * 2.0f), fontFamily, fontSize);
                         } else {
                             InputModel::syncScroll(state, std::max(0.0f, width - inset * 2.0f), fontFamily, fontSize);
                         }
@@ -404,7 +408,7 @@ public:
                         insertText(event.pasteText);
 
                         if (allowMultiline) {
-                            state.horizontalScroll = 0.0f;
+                            InputModel::syncMultilineHorizontalScroll(state, std::max(0.0f, width - inset * 2.0f), fontFamily, fontSize);
                         } else {
                             InputModel::syncScroll(state, std::max(0.0f, width - inset * 2.0f), fontFamily, fontSize);
                         }
@@ -464,7 +468,7 @@ public:
                                     lineKey += "|r" + std::to_string(InputModel::runsFingerprint(localRuns));
                                 }
                                 auto lineTextElement = ui_.text(id_ + ".text." + std::to_string(index))
-                                    .position(0.0f, y)
+                                    .position(-layout.scroll, y)
                                     .size(layout.visibleTextWidth, textLineHeight)
                                     .dirtyKey(lineKey)
                                     .text(lineText)
@@ -574,6 +578,7 @@ private:
     std::string placeholder_ = "Hello EUI-NEO 😉";
     bool multiline_ = false;
     bool scrollbar_ = false;
+    bool softWrap_ = true;
     float width_ = 260.0f;
     float height_ = 44.0f;
     float x_ = 0.0f;

@@ -887,6 +887,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/input_model.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/input_on_cancel.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/input_scrollbar.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/input_soft_wrap.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/json.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/keyboard_module.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/layout_numeric.cpp"
