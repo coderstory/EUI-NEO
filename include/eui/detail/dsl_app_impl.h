@@ -194,6 +194,7 @@ void openWindow(const DslWindowConfig& config, DslWindowCompose composeFn) {
     request.windowEffectOverride = config.windowEffectOverrideValue;
     request.onWindowCreated = config.windowCreatedHandler;
     request.onWindowDestroyed = config.windowDestroyedHandler;
+    request.closeRequestedHandler = config.closeRequestedHandler;
     request.onWindowFocusChanged = config.windowFocusChangedHandler;
     request.onKeyEvent = config.keyEventHandler;
     request.compose = std::move(composeFn);
@@ -357,6 +358,28 @@ void requestExit() {
 namespace detail {
 bool consumeExitRequest() {
     return exitRequestedFlag().exchange(false, std::memory_order_relaxed);
+}
+}
+
+// 退出裁决 guard（need272，语义见 app.h setQuitGuard 注释）：托盘 Exit /
+// requestExit 在主循环消费点先问它，false = 阻止本次退出（主循环继续、
+// 子窗不 destroyAll）。每次退出请求问一次——请求标志被 exchange 取走即清，
+// 再次请求会再次进 guard，无缓存。
+inline std::function<bool()>& quitGuardSlot() {
+    static std::function<bool()> guard;
+    return guard;
+}
+
+void setQuitGuard(std::function<bool()> guard) {
+    quitGuardSlot() = std::move(guard);
+}
+
+namespace detail {
+// 主循环消费退出请求时的裁决：未设 guard = 放行；guard 返回 true = 放行，
+// false = 阻止。独立函数便于无头单测（不依赖主循环）。
+bool shouldProceedExit() {
+    const std::function<bool()>& guard = quitGuardSlot();
+    return !guard || guard();
 }
 }
 

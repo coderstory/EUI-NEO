@@ -263,6 +263,10 @@ struct DslWindowConfig {
     std::optional<core::platform::WindowEffect> windowEffectOverrideValue;
     std::function<void(core::window::Handle)> windowCreatedHandler;
     std::function<void(core::window::Handle)> windowDestroyedHandler;
+    // 子窗口关闭裁决回调（need272）：关闭请求（点 X / Alt+F4 /
+    // requestWindowClose）到达时先问它——返回 true = 允许关闭，false =
+    // 拦截本次关闭（窗口保留，可弹「未保存」确认）。仅子窗路径生效。
+    std::function<bool(core::window::Handle)> closeRequestedHandler;
     std::function<void(core::window::Handle, bool focused)> windowFocusChangedHandler;
 
     DslWindowConfig& title(std::string value) { titleValue = std::move(value); return *this; }
@@ -346,6 +350,17 @@ struct DslWindowConfig {
      */
     DslWindowConfig& onWindowDestroyed(std::function<void(core::window::Handle)> handler) {
         windowDestroyedHandler = std::move(handler);
+        return *this;
+    }
+    /**
+     * @brief 子窗口关闭裁决回调（need272）：关闭请求（点 X / Alt+F4 /
+     * requestWindowClose）到达时先问它——返回 true = 允许关闭（继续原
+     * prune/destroy 逻辑），false = 拦截本次关闭（窗口保留，可弹「未保存」
+     * 确认，用户确认后再调 core::window::requestWindowClose）。仅子窗路径
+     * 生效；主窗托盘语义不经过此回调。主线程触发，不得在回调内等待。
+     */
+    DslWindowConfig& onCloseRequested(std::function<bool(core::window::Handle)> handler) {
+        closeRequestedHandler = std::move(handler);
         return *this;
     }
     /**

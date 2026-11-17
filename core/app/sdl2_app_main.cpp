@@ -771,11 +771,17 @@ int eui_app_run() {
         // 这里在帧开始前派发。
         core::platform::pollOpenFiles();
         if (state.consumeTrayExitRequested()) {
-            break;
+            // 退出裁决 guard（need272）：false = 阻止本次退出，主循环继续；
+            // 请求标志已被取走，用户再次请求会重新进 guard
+            if (app::detail::shouldProceedExit()) {
+                break;
+            }
         }
         // app::requestExit（子窗口「退出」菜单等场景）：与托盘 Exit 同一退出路径
         if (app::detail::consumeExitRequest()) {
-            break;
+            if (app::detail::shouldProceedExit()) {
+                break;
+            }
         }
         // 托盘 Show 与 macOS Dock reopen（applicationShouldHandleReopen →
         // consumeTrayShowRequested）同一恢复路径：旧实现只调

@@ -44,6 +44,15 @@ void setWindowSize(Handle window, int width, int height);
 // 请求关闭窗口（子窗口：主循环下一帧走正常 prune/destroy 路径；
 // 主窗口：等同用户点关闭按钮——托盘模式下走隐藏到托盘语义）
 void requestWindowClose(Handle window);
+// 请求把已有窗口带到前台并聚焦（need272 记事本子窗唤起）：最小化态先解除
+// 最小化（macOS deminiaturize / Windows SW_RESTORE）再抢前台。返回 false =
+// 未能抢到前台（Windows 前台锁在别的进程，已尽力——此时已闪任务栏提示用户）。
+bool requestWindowFocus(Handle window);
+// 运行时改窗口标题（need272 记事本「文件名 — 记事本」联动）：GLFW/SDL2
+// 原生 API 直透，跨平台一致；无边框窗同样生效（标题进 Mission Control 等
+// 窗口列表）。主窗口的调试 FPS 标题（showDebugStatsInTitle）会周期覆盖之，
+// 宿主需运行时改标题的主窗应关闭该开关。
+void setWindowTitle(Handle window, const char* title);
 /**
  * @brief 窗口当前是否持有系统输入焦点（styledMenu 等弹出窗失焦自关需要）。
  *

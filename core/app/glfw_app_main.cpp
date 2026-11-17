@@ -293,6 +293,18 @@ void installWindowCallbacks(GLFWwindow* window, WindowState& windowState) {
             state->paintRequested = true;
         }
     });
+    // 子窗口关闭裁决（need272 onCloseRequested）：点 X / Alt+F4 /
+    // requestWindowClose（非 Windows 手工调回调路径）都汇到 per-window close
+    // callback。handler 返回 false = 拦截本次关闭（窗口保留）。主窗口随后在
+    // eui_app_run 里覆盖安装自己的托盘裁决回调（此处安装会被替换，零行为
+    // 变化）；主窗的 WindowState 不装配 closeRequestedHandler，双保险。
+    glfwSetWindowCloseCallback(window, [](GLFWwindow* currentWindow) {
+        WindowState* state = static_cast<WindowState*>(glfwGetWindowUserPointer(currentWindow));
+        if (state && state->closeRequestedHandler &&
+            !state->closeRequestedHandler(currentWindow)) {
+            glfwSetWindowShouldClose(currentWindow, GLFW_FALSE);
+        }
+    });
 }
 
 // ============ 标题栏外观联动（磨砂设计文档 Phase A）============
@@ -462,6 +474,8 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
     managed->state.nextFrameTime = managed->state.lastTitleUpdate;
     // 逐窗焦点回调（onWindowFocusChanged）先装配再装回调（focus 回调读它）
     managed->state.windowFocusChangedHandler = request.onWindowFocusChanged;
+    // 逐窗关闭裁决（need272 onCloseRequested）先装配再装回调（close 回调读它）
+    managed->state.closeRequestedHandler = request.closeRequestedHandler;
     installWindowCallbacks(childWindow, managed->state);
 
     if (!managed->content.initialize(childWindow, request)) {
@@ -861,15 +875,22 @@ int eui_app_run() {
         // 这里在帧开始前派发，回调方可以安全地切换页面 / 加载数据。
         core::platform::pollOpenFiles();
         if (windowState.consumeTrayExitRequested()) {
-            windowState.forceClose = true;
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
-            break;
+            // 退出裁决 guard（need272）：false = 阻止本次退出——不 forceClose、
+            // 不 destroyAll 子窗，主循环继续。请求标志已被取走，用户再次点
+            // Exit 会重新进 guard（每次退出请求问一次）。
+            if (app::detail::shouldProceedExit()) {
+                windowState.forceClose = true;
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+                break;
+            }
         }
         // app::requestExit（子窗口「退出」菜单等场景）：与托盘 Exit 同一退出路径
         if (app::detail::consumeExitRequest()) {
-            windowState.forceClose = true;
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
-            break;
+            if (app::detail::shouldProceedExit()) {
+                windowState.forceClose = true;
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+                break;
+            }
         }
         // 托盘 Show 与 macOS Dock reopen（applicationShouldHandleReopen →
         // consumeTrayShowRequested）同一恢复路径：旧实现只调

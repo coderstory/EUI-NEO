@@ -703,6 +703,25 @@ void requestWindowClose(Handle window) {
     }
 }
 
+bool requestWindowFocus(Handle window) {
+    SDL_Window* sdlWindow = static_cast<SDL_Window*>(window);
+    if (sdlWindow == nullptr) {
+        return false;
+    }
+    if (SDL_GetWindowFlags(sdlWindow) & SDL_WINDOW_MINIMIZED) {
+        SDL_RestoreWindow(sdlWindow);
+    }
+    SDL_RaiseWindow(sdlWindow);
+    return true;
+}
+
+void setWindowTitle(Handle window, const char* title) {
+    if (window != nullptr) {
+        SDL_SetWindowTitle(static_cast<SDL_Window*>(window),
+                           title != nullptr ? title : "");
+    }
+}
+
 bool windowIsFocused(Handle window) {
 #if defined(_WIN32)
     if (window == nullptr) {
@@ -851,6 +870,7 @@ bool beginWindowResize(Handle window, WindowResizeEdge edge) {
 #endif
 
 #include "core/platform/ime_bridge.h"
+#include "core/platform/platform.h" // activateApp（requestWindowFocus macOS 前台激活）
 
 namespace core::window {
 
@@ -1573,6 +1593,52 @@ bool windowIsFocused(Handle window) {
     (void)window;
     return true;
 #endif
+}
+
+bool requestWindowFocus(Handle window) {
+    if (window == nullptr) {
+        return false;
+    }
+    GLFWwindow* glfwWin = static_cast<GLFWwindow*>(window);
+#if defined(_WIN32)
+    if (HWND hwnd = glfwGetWin32Window(glfwWin); hwnd != nullptr) {
+        // 最小化态先还原（SW_RESTORE 同时解除最小化；仅 iconic 态调用——对
+        // 最大化窗无条件 SW_RESTORE 会把它拉回普通态）
+        if (IsIconic(hwnd)) {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        if (SetForegroundWindow(hwnd) != FALSE) {
+            return true;
+        }
+        // 前台锁在别的进程（Windows 后台进程限制）抢不到：闪任务栏引导用户
+        // 点回来，返回 false 让宿主可 toast 提示
+        FLASHWINFO flash{};
+        flash.cbSize = sizeof(flash);
+        flash.hwnd = hwnd;
+        flash.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
+        FlashWindowEx(&flash);
+        return false;
+    }
+#endif
+    // 非 Windows：最小化态先 deminiaturize（glfwRestoreWindow 对 iconified
+    // 窗即 deminiaturize；仅 iconic 态调用，避免把最大化窗拉回普通态）。
+    // macOS 托盘常驻 accessory 态下 AppKit 不激活本 app、glfwFocusWindow
+    // 拿不到焦点——先激活 app（Linux GLFW 后端无实效、空操作）。
+    if (glfwGetWindowAttrib(glfwWin, GLFW_ICONIFIED) == GLFW_TRUE) {
+        glfwRestoreWindow(glfwWin);
+    }
+#if defined(__APPLE__)
+    core::platform::activateApp();
+#endif
+    glfwFocusWindow(glfwWin);
+    return true;
+}
+
+void setWindowTitle(Handle window, const char* title) {
+    if (window != nullptr) {
+        glfwSetWindowTitle(static_cast<GLFWwindow*>(window),
+                           title != nullptr ? title : "");
+    }
 }
 
 void getPrimaryMonitorWorkArea(int& x, int& y, int& width, int& height) {

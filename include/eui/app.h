@@ -63,6 +63,11 @@ struct DslWindowRequest {
     // 有效（可比较/读取，但宿主不得在回调返回后继续持有）。典型用途：
     // 宿主清空缓存的窗口句柄，避免销毁后悬垂引用（DevDesk 桌宠 UAF 修复）
     std::function<void(core::window::Handle)> onWindowDestroyed;
+    // 子窗口关闭裁决回调（DslWindowConfig::onCloseRequested 透传）：关闭请求
+    //（点 X / Alt+F4 / requestWindowClose）到达时先问它——返回 true = 允许
+    // 关闭（继续原 prune/destroy 逻辑），false = 拦截本次关闭（窗口保留）。
+    // 仅子窗路径生效；主窗的托盘隐藏语义不经过此回调。
+    std::function<bool(core::window::Handle)> closeRequestedHandler;
     std::function<void(const eui::KeyEvent&)> onKeyEvent;
     DslWindowCompose compose;
 };
@@ -119,6 +124,15 @@ void requestUpdate();
  * 「退出」菜单等没有主窗口句柄的场景。
  */
 void requestExit();
+/**
+ * @brief 注册退出裁决 guard（need272）：托盘 Exit / requestExit 在主循环消费
+ * 点先问它——返回 true（或未设 guard）= 正常退出；false = 阻止本次退出
+ * （如存在未保存文档），主循环继续跑、子窗口不销毁。
+ *
+ * 每次退出请求都问一次（请求标志被取走即清，再次请求会再次进 guard，无
+ * 缓存）。传空函数 = 清除 guard。可在任意回调里调用（主线程）。
+ */
+void setQuitGuard(std::function<bool()> guard);
 /**
  * @brief 请求显示/还原主窗口：处理隐藏到托盘态（托盘 Show 同款恢复路径）
  * 与最小化态（还原 + 聚焦），下一帧主循环生效。

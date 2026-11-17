@@ -22,6 +22,10 @@ struct AppRunner {
     // WM_KILLFOCUS / WM_ACTIVATE(deactivate) 当拍同步调用它，focused=false
     // 早于任何 compose 轮询——styledMenu 等弹出窗的「点击别处即收」直连链。
     std::function<void(eui::window::Handle, bool focused)> windowFocusChangedHandler;
+    // 逐窗关闭裁决回调（DslWindowConfig::onCloseRequested 注册，仅子窗由
+    // createManagedWindow 从 request 装配；主窗恒空）：close 事件当拍同步
+    // 调用，返回 false = 拦截本次关闭（need272）
+    std::function<bool(eui::window::Handle)> closeRequestedHandler;
     int renderedFrames = 0;
     double lastTitleUpdate = 0.0;
     double nextFrameTime = 0.0;
