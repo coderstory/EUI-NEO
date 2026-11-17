@@ -1120,7 +1120,15 @@ int eui_app_run() {
             // 限时等待兜底；泵不岗时走下方无限挂起，零泵零成本语义不变。
             glfwWaitEventsTimeout(0.025);
         } else {
+#if defined(__APPLE__)
+            // bug281 残余（2026-11-17 温开实证）：odoc 经 delegate 在本 wait 内部
+            // 派发入队后不产生 NSEvent，无界挂起等不到下一拍 pollOpenFiles（温开
+            // 零响应）。macOS 空闲等待一律 0.25s 限时兜底；Windows 保持无界
+            //（零泵零成本语义不变，其文件关联链路有自己的唤醒源）。
+            glfwWaitEventsTimeout(0.25);
+#else
             glfwWaitEvents();
+#endif
         }
     }
 

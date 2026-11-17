@@ -320,6 +320,13 @@ static NSMenu* g_menu = nil;
     if (filename.length > 0) {
         eui_open_file_push_pending(filename.UTF8String);
     }
+    // 主循环可能在 glfwWaitEvents 无界挂起里（帧泵不岗，bug281 残余）——odoc
+    // 派发发生在 wait 内部且不产生 NSEvent，等下一拍 pollOpenFiles 会永远等
+    // 不到。宿主回调已注册时同步派发（AppKit 在主线程调 delegate，与 ticker
+    // 驻留路径同域）；未注册（冷启期 odoc 早于宿主挂回调）保持入队走主循环。
+    if (eui_open_file_has_callback()) {
+        eui_open_file_dispatch_pending();
+    }
     return YES;
 }
 
@@ -329,6 +336,10 @@ static NSMenu* g_menu = nil;
         if (path.length > 0) {
             eui_open_file_push_pending(path.UTF8String);
         }
+    }
+    // 同 openFile:：无界挂起下等不到下一拍 pollOpenFiles，注册过即同步派发
+    if (eui_open_file_has_callback()) {
+        eui_open_file_dispatch_pending();
     }
 }
 @end

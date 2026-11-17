@@ -107,6 +107,13 @@ void eui_platform_set_open_file_callback(EuiOpenFileCallback callback, void* use
     eui_open_file_unlock();
 }
 
+int eui_open_file_has_callback(void) {
+    eui_open_file_lock();
+    const int has = g_callback != NULL;
+    eui_open_file_unlock();
+    return has;
+}
+
 int eui_open_file_dispatch_pending(void) {
     eui_open_file_lock();
     EuiOpenFileCallback callback = g_callback;

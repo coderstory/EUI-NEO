@@ -68,6 +68,15 @@ int eui_platform_consume_pending_open_file(char* out_path, int max_len);
  */
 int eui_open_file_dispatch_pending(void);
 
+/*
+ * 1 when a callback is registered (dispatch would hand paths to the host),
+ * 0 otherwise (dispatch would DROP them). Native event sources call this
+ * before dispatching from an early context (e.g. the launch-time Apple Event
+ * arriving before the host registered its handler) so early paths fall back
+ * to the main-loop poll instead of being dropped.
+ */
+int eui_open_file_has_callback(void);
+
 #ifdef __cplusplus
 }
 #endif
