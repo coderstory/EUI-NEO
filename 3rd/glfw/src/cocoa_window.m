@@ -1543,7 +1543,10 @@ void _glfwWaitEventsCocoa(void)
                                         untilDate:[NSDate distantFuture]
                                            inMode:NSDefaultRunLoopMode
                                           dequeue:YES];
-    [NSApp sendEvent:event];
+    // odoc 经 delegate 派发发生在本 wait 内部，可无 NSEvent 唤醒（bug281）：
+    // 与 _glfwWaitEventsTimeoutCocoa 同款 nil 守卫
+    if (event)
+        [NSApp sendEvent:event];
 
     _glfwPollEventsCocoa();
 

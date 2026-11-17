@@ -442,6 +442,32 @@ static GLFWbool initializeTIS(void)
     [NSApp stop:nil];
 }
 
+/* ---------------------------------------------------------------------------
+ * kAEOpenDocuments 承接（DevDesk bug281，2026-11-17 darwin 27 实证）：AppKit 对
+ * odoc 只走 NSApplicationDelegate 默认路径，NSAppleEventManager 用户 handler 被
+ * 静默旁路。转发进 EUI open_file_bridge 待打开队列（符号链接期解析自 eui_neo），
+ * 主循环 pollOpenFiles 消费。托盘桥替换 delegate 后由 tray_bridge 同名方法承接。
+ * ------------------------------------------------------------------------- */
+extern void eui_open_file_push_pending(const char* path);
+
+- (BOOL)application:(NSApplication *)sender openFile:(NSString *)filename
+{
+    (void)sender;
+    if (filename.length > 0)
+        eui_open_file_push_pending(filename.UTF8String);
+    return YES;
+}
+
+- (void)application:(NSApplication *)sender openFiles:(NSArray<NSString *> *)filenames
+{
+    (void)sender;
+    for (NSString *path in filenames)
+    {
+        if (path.length > 0)
+            eui_open_file_push_pending(path.UTF8String);
+    }
+}
+
 - (void)applicationDidHide:(NSNotification *)notification
 {
     for (int i = 0;  i < _glfw.monitorCount;  i++)

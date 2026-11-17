@@ -1,5 +1,7 @@
 #include "core/platform/tray_bridge.h"
 
+#include "core/platform/open_file_bridge.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -303,6 +305,31 @@ static NSMenu* g_menu = nil;
     // = 前置聚焦，macOS 标准行为），无需这里再拦。
     g_show_requested = 1;
     return YES;
+}
+
+/* ---------------------------------------------------------------------------
+ * kAEOpenDocuments「打开文件」承接（DevDesk bug281，2026-11-17 darwin 27 实证）：
+ * AppKit 对 odoc 只走 NSApplicationDelegate 默认路径（application:openFile: /
+ * openFiles:），open_file_bridge.c 装的 NSAppleEventManager 用户 handler 被静默
+ * 旁路（探针实证：同进程 quit/oapp 的用户 handler 与默认路径均活，唯 odoc 两头
+ * 全死）。托盘 delegate 在 :419 替换 GLFW delegate 后由这里承接，转发进
+ * open_file_bridge 待打开队列，主循环 pollOpenFiles 消费。
+ * ------------------------------------------------------------------------- */
+- (BOOL)application:(NSApplication*)sender openFile:(NSString*)filename {
+    (void)sender;
+    if (filename.length > 0) {
+        eui_open_file_push_pending(filename.UTF8String);
+    }
+    return YES;
+}
+
+- (void)application:(NSApplication*)sender openFiles:(NSArray<NSString*>*)filenames {
+    (void)sender;
+    for (NSString* path in filenames) {
+        if (path.length > 0) {
+            eui_open_file_push_pending(path.UTF8String);
+        }
+    }
 }
 @end
 
