@@ -175,14 +175,12 @@ inline int accentStateFor(WindowEffect effect) {
     case WindowEffect::Acrylic:
     case WindowEffect::Mica:
     case WindowEffect::MicaAlt:
-        // bug288（2026-11-17 老板令两轮校准）：磨砂 =「半透加窗体上，直接叠加
-        // 磨砂」——ACCENT_ENABLE_BLURBEHIND(3) 即「透明窗体（state 2 语义）+ 背后
-        // 模糊」的叠加态（半透的透明 + 磨砂的糊）。第一轮试 ACRYLICBLURBEHIND(4)
-        // 观感打回（亚克力带 tint/亮度自适应≠原设计），第二轮试纯 TRANSPARENT-
-        // GRADIENT(2) 玻璃感太透（无磨砂层）打回——本轮回到回归语义。
-        return 3;
     case WindowEffect::Transparent:
-        return 2; // ACCENT_ENABLE_TRANSPARENTGRADIENT：半透（透见无模糊）
+        // bug288（2026-11-17 老板令）：磨砂档撤回 ACRYLICBLURBEHIND 路线（装机
+        // 观感打回），「磨砂的效果，直接叠加半透的效果」——磨砂族与半透在 accent
+        // 路线同走 TRANSPARENTGRADIENT(2)（透见无模糊），磨砂质感由 GL 内容层
+        // （磨砂档 clearColor α=0.15 的纱）叠加承载。
+        return 2; // ACCENT_ENABLE_TRANSPARENTGRADIENT：透见（无 DWM 模糊）
     default:
         return 0; // ACCENT_DISABLED：实色（off）
     }

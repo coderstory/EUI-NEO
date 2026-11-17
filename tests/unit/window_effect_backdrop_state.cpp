@@ -55,17 +55,13 @@ int main() {
     }
 
     // ---- bug266：24H2 accent 路线的档位→ACCENT 参数映射 ----
-    // bug288（2026-11-17 老板令三轮校准）：磨砂 = 半透叠加磨砂——BLURBEHIND(3)
-    // =「透明窗体 + 背后模糊」叠加态；Transparent → TRANSPARENTGRADIENT(2)；None
-    // → DISABLED(0)。tint/flags 磨砂与半透同值（0x01/0）。
-    for (const VE effect : {VE::Acrylic, VE::Mica, VE::MicaAlt}) {
-        assert(core::platform::accentStateFor(effect) == 3);
+    // bug288（2026-11-17 老板令）：磨砂撤回 ACRYLICBLURBEHIND，「磨砂直接叠加
+    // 半透」——磨砂族与 Transparent 同走 TRANSPARENTGRADIENT(2)、tint/flags 全同。
+    for (const VE effect : {VE::Acrylic, VE::Mica, VE::MicaAlt, VE::Transparent}) {
+        assert(core::platform::accentStateFor(effect) == 2);
         assert(core::platform::accentFlagsFor(effect) == 0);
         assert(core::platform::accentGradientColorFor(effect) == 0x01000000u);
     }
-    assert(core::platform::accentStateFor(VE::Transparent) == 2);
-    assert(core::platform::accentFlagsFor(VE::Transparent) == 0);
-    assert(core::platform::accentGradientColorFor(VE::Transparent) == 0x01000000u);
     assert(core::platform::accentStateFor(VE::None) == 0);
     assert(core::platform::accentFlagsFor(VE::None) == 0);
     // tint alpha 字节必须 ≥1（GradientColor alpha=0 在 24H2 有黑底已知问题）
