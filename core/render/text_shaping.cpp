@@ -7,6 +7,7 @@
 #endif
 #include <windows.h>
 #elif defined(__APPLE__)
+#include <CoreText/CoreText.h>
 #include <mach-o/dyld.h>
 #elif defined(__linux__)
 #include <unistd.h>
@@ -21,6 +22,7 @@
 #include FT_MODULE_H
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -565,6 +567,220 @@ std::string fontStackCacheKey(const std::string& fontPath, float fontSize, int f
     return fontPath + "#w" + std::to_string(fontWeight) + "#" + std::to_string(static_cast<int>(std::round(fontSize * 64.0f)));
 }
 
+// —— need:266（DevDesk 记事本字体下拉）系统字体族枚举 + 白名单外 family 名解析 ——
+// 平台实现放本 TU（本文件既有「渲染 TU 内平台 #ifdef」惯例，不新增平台拆分 TU；
+// macOS 用 CoreText 纯 C API，无需 ObjC）。平台返回不做排序去重，统一在
+// systemFontFamiliesImpl 收口。本通路不做 weight 变体（枚举名一律解析到
+// regular/默认面），weight 分叉仍由 resolveFontPathForFamilyImpl 平台尾部的
+// default-UI 链处理。
+#if defined(_WIN32)
+
+std::string wideToUtf8(const wchar_t* wide) {
+    if (wide == nullptr || wide[0] == L'\0') {
+        return {};
+    }
+    const int byteLength = WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+    if (byteLength <= 0) {
+        return {};
+    }
+    std::string utf8(static_cast<size_t>(byteLength) - 1, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8.data(), byteLength, nullptr, nullptr);
+    return utf8;
+}
+
+std::string asciiToLower(const std::string& text) {
+    std::string lowered = text;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return lowered;
+}
+
+BOOL CALLBACK enumFontFamilyExCallback(const LOGFONTW* logFont, const TEXTMETRICW* /*textMetrics*/,
+                                       DWORD /*fontType*/, LPARAM lParam) {
+    auto* families = reinterpret_cast<std::vector<std::string>*>(static_cast<void*>(lParam));
+    if (logFont != nullptr) {
+        families->push_back(wideToUtf8(logFont->lfFaceName));
+    }
+    return TRUE;
+}
+
+std::vector<std::string> systemFontFamiliesPlatform() {
+    std::vector<std::string> families;
+    HDC deviceContext = GetDC(nullptr);
+    if (deviceContext == nullptr) {
+        return families;
+    }
+    LOGFONTW pattern = {};
+    pattern.lfCharSet = DEFAULT_CHARSET;
+    EnumFontFamiliesExW(deviceContext, &pattern, enumFontFamilyExCallback,
+                        reinterpret_cast<LPARAM>(&families), 0);
+    ReleaseDC(nullptr, deviceContext);
+    return families;
+}
+
+// HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts 注册表：值名
+// 「<族名> (TrueType)」或「<族名> & <族名> (TrueType)」（族组合）→ 值数据是
+// 字体文件名（相对 %WINDIR%\Fonts）或绝对路径。匹配顺序：族名精确命中 / 族组合
+// 首族命中优先返回；全程未中才取「族名+空格+样式」前缀条目（覆盖仅注册样式面
+// 的族），避免 "Arial Bold" 这类样式条目抢在 "Arial" 本面之前。
+std::string resolveFontPathForFamilyNamePlatform(const std::string& fontFamily) {
+    HKEY fontsKey = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                      L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts", 0, KEY_READ,
+                      &fontsKey) != ERROR_SUCCESS) {
+        return {};
+    }
+
+    const std::string loweredFamily = asciiToLower(fontFamily);
+    const std::string compositePrefix = loweredFamily + " & ";
+    const std::string stylePrefix = loweredFamily + " ";
+    std::string styleMatch;
+    wchar_t valueName[16384];  // 注册表值名长度上限（含 NUL），不再放大
+    wchar_t fileReference[MAX_PATH];
+    for (DWORD index = 0;; ++index) {
+        DWORD valueNameLength = static_cast<DWORD>(sizeof(valueName) / sizeof(valueName[0]));
+        DWORD fileReferenceLength = sizeof(fileReference);
+        DWORD valueType = 0;
+        const LSTATUS status =
+            RegEnumValueW(fontsKey, index, valueName, &valueNameLength, nullptr, &valueType,
+                          reinterpret_cast<LPBYTE>(fileReference), &fileReferenceLength);
+        if (status != ERROR_SUCCESS) {
+            break;  // ERROR_NO_MORE_ITEMS / 单条读失败：终止枚举
+        }
+        if (valueType != REG_SZ || fileReferenceLength == 0) {
+            continue;
+        }
+        // 值名剥「 (xxx)」类型尾巴（" (TrueType)" / " (OpenType)" / 斜体变体）再比对。
+        std::string entryName = wideToUtf8(valueName);
+        const size_t styleSuffix = entryName.rfind(" (");
+        if (styleSuffix != std::string::npos) {
+            entryName.resize(styleSuffix);
+        }
+        const std::string loweredEntry = asciiToLower(entryName);
+        const bool exactOrComposite =
+            loweredEntry == loweredFamily || loweredEntry.rfind(compositePrefix, 0) == 0;
+        const bool styleEntry = loweredEntry.rfind(stylePrefix, 0) == 0;
+        if (!exactOrComposite && !styleEntry) {
+            continue;
+        }
+        // 值数据是裸文件名 → 拼 %WINDIR%\Fonts；个别条目自带绝对路径 → 原样。
+        std::string candidate = wideToUtf8(fileReference);
+        if (candidate.find('\\') == std::string::npos) {
+            wchar_t windowsDirectory[MAX_PATH];
+            const UINT directoryLength = GetWindowsDirectoryW(windowsDirectory, MAX_PATH);
+            if (directoryLength == 0 || directoryLength >= MAX_PATH) {
+                continue;
+            }
+            candidate = wideToUtf8(windowsDirectory) + "\\Fonts\\" + candidate;
+        }
+        const std::string existing = existingPath(candidate);
+        if (existing.empty()) {
+            continue;
+        }
+        if (exactOrComposite) {
+            RegCloseKey(fontsKey);
+            return existing;
+        }
+        if (styleMatch.empty()) {
+            styleMatch = existing;
+        }
+    }
+    RegCloseKey(fontsKey);
+    return styleMatch;
+}
+
+#elif defined(__APPLE__)
+
+std::vector<std::string> systemFontFamiliesPlatform() {
+    std::vector<std::string> families;
+    const CFArrayRef familyNames = CTFontManagerCopyAvailableFontFamilyNames();
+    if (familyNames == nullptr) {
+        return families;
+    }
+    const CFIndex count = CFArrayGetCount(familyNames);
+    families.reserve(static_cast<size_t>(count));
+    for (CFIndex index = 0; index < count; ++index) {
+        const auto name = static_cast<CFStringRef>(CFArrayGetValueAtIndex(familyNames, index));
+        if (name == nullptr) {
+            continue;
+        }
+        char buffer[512];
+        if (!CFStringGetCString(name, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+            continue;  // 512 字节装不下的族名（极罕见）跳过，不影响其余枚举
+        }
+        families.emplace_back(buffer);
+    }
+    CFRelease(familyNames);
+    return families;
+}
+
+std::string resolveFontPathForFamilyNamePlatform(const std::string& fontFamily) {
+    // CTFontDescriptorCreateWithNameAndSize 对未知名字会静默替换成系统兜底字体
+    // （直接取 URL 会把不存在的族也「解析成功」），必须回读族名属性比对后才采信。
+    const CFStringRef familyRef =
+        CFStringCreateWithCString(nullptr, fontFamily.c_str(), kCFStringEncodingUTF8);
+    if (familyRef == nullptr) {
+        return {};
+    }
+    std::string resolvedPath;
+    const CTFontDescriptorRef descriptor = CTFontDescriptorCreateWithNameAndSize(familyRef, 0.0);
+    if (descriptor != nullptr) {
+        const CTFontRef font = CTFontCreateWithFontDescriptor(descriptor, 0.0, nullptr);
+        if (font != nullptr) {
+            const auto resolvedFamily =
+                static_cast<CFStringRef>(CTFontCopyAttribute(font, kCTFontFamilyNameAttribute));
+            if (resolvedFamily != nullptr) {
+                if (CFStringCompare(resolvedFamily, familyRef, kCFCompareCaseInsensitive) ==
+                    kCFCompareEqualTo) {
+                    const auto fontUrl =
+                        static_cast<CFURLRef>(CTFontCopyAttribute(font, kCTFontURLAttribute));
+                    if (fontUrl != nullptr) {
+                        UInt8 pathBuffer[4096];
+                        if (CFURLGetFileSystemRepresentation(fontUrl, true, pathBuffer,
+                                                             sizeof(pathBuffer))) {
+                            resolvedPath = reinterpret_cast<const char*>(pathBuffer);
+                        }
+                        CFRelease(fontUrl);
+                    }
+                }
+                CFRelease(resolvedFamily);
+            }
+            CFRelease(font);
+        }
+        CFRelease(descriptor);
+    }
+    CFRelease(familyRef);
+    return existingPath(resolvedPath);
+}
+
+#else
+
+std::vector<std::string> systemFontFamiliesPlatform() {
+    return {};  // 其余平台：无枚举能力，空表不崩不报错
+}
+
+std::string resolveFontPathForFamilyNamePlatform(const std::string& fontFamily) {
+    (void)fontFamily;
+    return {};
+}
+
+#endif
+
+std::vector<std::string> systemFontFamiliesImpl() {
+    std::vector<std::string> families = systemFontFamiliesPlatform();
+    std::sort(families.begin(), families.end());
+    families.erase(std::unique(families.begin(), families.end()), families.end());
+    return families;
+}
+
+std::string resolveFontPathForFamilyName(const std::string& fontFamily) {
+    if (fontFamily.empty()) {
+        return {};
+    }
+    return resolveFontPathForFamilyNamePlatform(fontFamily);
+}
+
 // Impl::resolveFontPath 的本体（fontFamily 语义表驱动）。放在匿名命名空间里
 // 直接复用上面的解析基础设施；对外经由 text_detail::resolveFontPathForFamily。
 std::string resolveFontPathForFamilyImpl(const std::string& fontFamily, int fontWeight) {
@@ -604,6 +820,11 @@ std::string resolveFontPathForFamilyImpl(const std::string& fontFamily, int font
     if (fontFamily == "SimHei") {
         return "C:/Windows/Fonts/simhei.ttf";
     }
+    // need:266：白名单未命中的真实系统字体族按名解析（systemFontFamilies 枚举名
+    // 回传入口）；未命中才落下方 default-UI 兜底。
+    if (const std::string path = resolveFontPathForFamilyName(fontFamily); !path.empty()) {
+        return path;
+    }
     // need:132：default-family 出口前置 weight 感知 override 检查——随包字体成为
     // 主面；override 未设时返回空，落下方系统 weight 解析，与 patch 前一致。
     if (const std::string path = resolveDefaultUiFontPathForWeight(fontWeight); !path.empty()) {
@@ -628,6 +849,10 @@ std::string resolveFontPathForFamilyImpl(const std::string& fontFamily, int font
         }
         return resolveDefaultUiFontPath();
     }
+    // need:266：白名单未命中的真实系统字体族按名解析；未命中才落 default-UI 兜底。
+    if (const std::string path = resolveFontPathForFamilyName(fontFamily); !path.empty()) {
+        return path;
+    }
     // need:132：mac 出口与 Windows 同构，前置 weight 感知 override 检查。
     if (const std::string path = resolveDefaultUiFontPathForWeight(fontWeight); !path.empty()) {
         return path;
@@ -649,6 +874,10 @@ std::string resolveFontPathForFamilyImpl(const std::string& fontFamily, int font
             return path;
         }
         return resolveDefaultUiFontPath();
+    }
+    // need:266：其余平台按名解析恒空（无枚举能力），命中与否都落 default-UI 兜底。
+    if (const std::string path = resolveFontPathForFamilyName(fontFamily); !path.empty()) {
+        return path;
     }
     return resolveDefaultUiFontPath();
 #endif
@@ -1012,6 +1241,10 @@ std::vector<TextPrimitive::ShapedGlyph> shapeTextWithFontStack(FontInfoHolder& h
 
 std::string resolveFontPathForFamily(const std::string& fontFamily, int fontWeight) {
     return resolveFontPathForFamilyImpl(fontFamily, fontWeight);
+}
+
+std::vector<std::string> systemFontFamilies() {
+    return systemFontFamiliesImpl();
 }
 
 } // namespace text_detail

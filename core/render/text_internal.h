@@ -125,6 +125,9 @@ std::string resolveSystemUiFontPathForWeightImpl(int fontWeight);
 // Impl::resolveFontPath 的本体（fontFamily 语义表驱动）。
 std::string resolveFontPathForFamily(const std::string& fontFamily, int fontWeight);
 
+// need:266：系统已装字体族名枚举（去重、升序）；无枚举能力的平台返回空 vector。
+std::vector<std::string> systemFontFamilies();
+
 std::string& defaultUiFontFileOverride();
 std::string& defaultIconFontFileOverride();
 std::string& defaultMonospaceFontFileOverride();
