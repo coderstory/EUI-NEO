@@ -119,7 +119,11 @@ public:
                         .lineHeight(labelLineHeight)
                         .color(active ? style_.selectedText : style_.text)
                         .horizontalAlign(core::HorizontalAlign::Center)
-                        .verticalAlign(core::VerticalAlign::Top)
+                        // ink 居中（bug283/bug278②）：Top 对齐下 CJK 墨迹随字体
+                        // ascent 下沉（紧盒 lineHeight=fontSize 时更明显）；Center 走
+                        // text_layout.cpp 的 ink 上下界取中（EUI 文本居中惯例），标签
+                        // 墨迹在段内视觉居中。
+                        .verticalAlign(core::VerticalAlign::Center)
                         .transition(transition_)
                         .animate(core::AnimProperty::TextColor)
                         .build();
