@@ -198,6 +198,7 @@ void openWindow(const DslWindowConfig& config, DslWindowCompose composeFn) {
     request.transparentFramebuffer = config.transparentFramebufferValue;
     request.followClearColorOverride = !config.ignoreClearColorOverrideValue;
     request.windowEffectOverride = config.windowEffectOverrideValue;
+    request.titlebarExtendContent = config.titlebarExtendContentValue;
     request.onWindowCreated = config.windowCreatedHandler;
     request.onWindowDestroyed = config.windowDestroyedHandler;
     request.closeRequestedHandler = config.closeRequestedHandler;

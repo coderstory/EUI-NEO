@@ -269,6 +269,9 @@ struct DslWindowConfig {
     bool ignoreClearColorOverrideValue = false;
     // nullopt = 跟随全局档位；显式值 = 本窗口固定档位（见 windowEffect()）
     std::optional<core::platform::WindowEffect> windowEffectOverrideValue;
+    // nullopt = 跟随全局标题栏外观；显式值 = 本窗口内容是否延伸进标题栏
+    //（见 titlebarExtendContent()）
+    std::optional<bool> titlebarExtendContentValue;
     std::function<void(core::window::Handle)> windowCreatedHandler;
     std::function<void(core::window::Handle)> windowDestroyedHandler;
     // 子窗口关闭裁决回调（need272）：关闭请求（点 X / Alt+F4 /
@@ -358,6 +361,19 @@ struct DslWindowConfig {
      */
     DslWindowConfig& windowEffect(core::platform::WindowEffect value) {
         windowEffectOverrideValue = value;
+        return *this;
+    }
+    /**
+     * @brief 本窗口是否把内容延伸进标题栏（FSCV），不跟随全局设置。
+     *
+     * 默认（不调用）= 跟随全局 TitleBarAppearance（宿主主窗自绘壳会把
+     * extendContentIntoTitleBar 设为全局真，glfw_app_main 建子窗/运行时联动
+     * 都会继承它）。独立普通窗（如记事本窗）需要原生标题栏条（标题文字 +
+     * 交通灯在条内、GL 内容从条下开始）应传 false——否则全局自绘壳态会把
+     * 子窗铺成满窗内容、交通灯叠进客户区（bug282）。
+     */
+    DslWindowConfig& titlebarExtendContent(bool value) {
+        titlebarExtendContentValue = value;
         return *this;
     }
     /** @brief 子窗口创建成功回调（Handle 可用于 setWindowPos / 穿透切换等） */

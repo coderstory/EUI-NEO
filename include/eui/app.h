@@ -58,6 +58,10 @@ struct DslWindowRequest {
     //（既有行为）；显式档位（如桌宠 sprite 窗的 None——透明像素直出桌面，
     // 不叠系统 backdrop 材质）优先于全局广播
     std::optional<core::platform::WindowEffect> windowEffectOverride;
+    // 子窗口标题栏外观覆盖（bug282）：nullopt = 跟随全局 TitleBarAppearance
+    //（既有行为，含宿主主窗自绘壳的 extendContentIntoTitleBar）；显式 false =
+    // 独立普通窗保住原生标题栏条（内容不延伸进标题栏，标题文字/交通灯归位条内）
+    std::optional<bool> titlebarExtendContent;
     // 子窗口创建成功后回调（core::window::Handle，可用来做运行时
     // setWindowPos / setWindowMousePassthrough 等）
     std::function<void(core::window::Handle)> onWindowCreated;

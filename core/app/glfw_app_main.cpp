@@ -354,8 +354,16 @@ void* nativeWindowHandle(GLFWwindow* window) {
 #endif
 }
 
-void applyTitleBarAppearanceToWindow(GLFWwindow* window) {
+void applyTitleBarAppearanceToWindow(
+    GLFWwindow* window,
+    const std::optional<bool>& titlebarExtendContentOverride = std::nullopt) {
     core::platform::TitleBarAppearance appearance = app::currentTitleBarAppearance();
+    // 逐窗覆盖（DslWindowConfig::titlebarExtendContent，bug282）：独立普通窗
+    // 用它跳出宿主自绘壳的全局 extendContentIntoTitleBar，保住原生标题栏条。
+    // 须在 customColor 推导之前改：延伸与否不影响「标题栏底=窗口背景色」推导。
+    if (titlebarExtendContentOverride.has_value()) {
+        appearance.extendContentIntoTitleBar = *titlebarExtendContentOverride;
+    }
 #if defined(__APPLE__)
     // macOS：标题栏底的来源是**窗口背景色**（平台层用 setBackgroundColor +
     // titlebarAppearsTransparent 让标题栏透出它），宿主没显式给 customColor 时
@@ -493,7 +501,7 @@ std::unique_ptr<ManagedWindow> createManagedWindow(const app::DslWindowRequest& 
 
     managed->state.paintRequested = true;
     // 新子窗口跟随当前标题栏外观（运行时联动，Phase A）
-    applyTitleBarAppearanceToWindow(childWindow);
+    applyTitleBarAppearanceToWindow(childWindow, request.titlebarExtendContent);
     // 子窗口应用应用图标（bug259-B）：主窗在 app::initialize 里 applyWindowIcon，
     // 子窗此前缺失 → 查看器等子窗标题栏是系统默认图标。同一 iconPath 解析源
     //（DslAppConfig::iconPath，exe 目录 / assets 解析），幂等安全。
@@ -963,7 +971,8 @@ int eui_app_run() {
             appliedTitleBar = app::currentTitleBarAppearance();
             applyTitleBarAppearanceToWindow(window);
             childWindows.updateAll([](ManagedWindow& managed) {
-                applyTitleBarAppearanceToWindow(managed.window);
+                applyTitleBarAppearanceToWindow(
+                    managed.window, managed.content.request().titlebarExtendContent);
             });
         }
 
@@ -987,7 +996,8 @@ int eui_app_run() {
             // 宿主切窗口效果档只改 clearColor 的 alpha，TitleBarAppearance 的值一字未变。
             applyTitleBarAppearanceToWindow(window);
             childWindows.updateAll([](ManagedWindow& managed) {
-                applyTitleBarAppearanceToWindow(managed.window);
+                applyTitleBarAppearanceToWindow(
+                    managed.window, managed.content.request().titlebarExtendContent);
             });
 #endif
         }
