@@ -300,41 +300,50 @@ struct StyledMenuRect {
     float height = 0.0f;
 };
 
-// 期望位（左上角坐标；锚点语义见 showStyledMenu——win 托盘传「光标」本身
-// 即左上锚，其余平台传「光标y - 窗高」即左下锚）+ 菜单尺寸 + 工作区 →
-// 钳制后的位置：护左（越左缘抬回）/ 护右（越右缘贴右）/ 护顶（越上缘贴顶）。
+// 期望位（左上角坐标；锚点语义见 showStyledMenu——win 托盘传「光标-inset」
+// 即面板左上锚，其余平台传「光标y - 窗高」即窗左下锚）+ 菜单窗尺寸 + 工
+// 作区 → 钳制后的位置：护左（越左缘抬回）/ 护右（越右缘贴右）/ 护顶（越
+// 上缘贴顶）。
 // flipUpOnBottomOverflow=false（默认，mac 左下角锚档）：**不护底**（菜单底
 // 边贴光标、允许伸进任务栏带——护底/向上翻转会把菜单抬离光标，正是 bug135
 // 「往右上角迁移」症状的直接成因）。=true（win 左上锚档）：**底缘翻转**——
 // 期望底越工作区底缘 → 底贴底缘（对齐 win32 TrackPopupMenu 任务栏场景的
 // 系统上翻观感），随后护顶兜底（工作区比菜单矮时保顶可见优先）。
+// panelInset（bug135 AK 2026-11-18）：窗内**可见面板**四周的内缩量（物理
+// 像素 = style.margin×windowScale，阴影留白）。>0 时钳制目标从整窗换成面板
+// ——面板贴工作区缘，窗矩形（阴影留白）允许越缘：贴任务栏/贴屏缘的原生观
+// 感是可见菜单框硬贴缘，阴影被裁；0（默认）= 按整窗钳制，旧语义逐位不变
+// （既有调用方/单测全部不传该参）。真机红机制：compose 把面板从窗原点内缩
+// margin，若锚定/钳制按窗矩形算，面板会浮在光标右上方 inset px（135%DPI
+// ≈16px，阴影填缝）——窗级量测绿、肉眼仍「偏右上」。
 // 工作区尺寸无效（w/h<=0，无头/查询失败）时原样返回。
 // 纯函数（无平台/主题依赖），单测锁任务栏带 / 屏幕中部 / 近右缘 / 翻转档
-// 场景（tests/unit/styled_menu_clamp_position.cpp）。
+// / 面板内缩档场景（tests/unit/styled_menu_clamp_position.cpp）。
 inline StyledMenuRect styledMenuClampPosition(float desiredX, float desiredY,
                                               float width, float height,
                                               float areaX, float areaY,
                                               float areaWidth, float areaHeight,
-                                              bool flipUpOnBottomOverflow = false) {
+                                              bool flipUpOnBottomOverflow = false,
+                                              float panelInset = 0.0f) {
     StyledMenuRect rect{desiredX, desiredY, width, height};
     if (areaWidth <= 0.0f || areaHeight <= 0.0f) {
         return rect;
     }
     const float right = areaX + areaWidth;
-    if (rect.x + width > right) {
-        rect.x = std::max(areaX, right - width);
+    if (rect.x + width - panelInset > right) {
+        rect.x = std::max(areaX - panelInset, right - width + panelInset);
     }
-    if (rect.x < areaX) {
-        rect.x = areaX;
+    if (rect.x + panelInset < areaX) {
+        rect.x = areaX - panelInset;
     }
     if (flipUpOnBottomOverflow) {
         const float bottom = areaY + areaHeight;
-        if (rect.y + height > bottom) {
-            rect.y = std::max(areaY, bottom - height);
+        if (rect.y + height - panelInset > bottom) {
+            rect.y = std::max(areaY - panelInset, bottom - height + panelInset);
         }
     }
-    if (rect.y < areaY) {
-        rect.y = areaY;
+    if (rect.y + panelInset < areaY) {
+        rect.y = areaY - panelInset;
     }
     return rect;
 }
@@ -499,24 +508,31 @@ inline bool showStyledMenu(const std::string& id,
     // 位置锚定 + 钳制（bug 135，锚点语义按平台分支——本组件已有 _WIN32
     // 布线先例，DevDesk 业务层零平台宏）：
     // - Windows（2026-11-05 老板终裁）：「光标左上锚（原生式）」= win32
-    //   TrackPopupMenu 默认 TPM_LEFTALIGN|TPM_TOPALIGN 观感——菜单**左上角**
-    //   = 光标，向右下展开；下缘不够向上展开（底贴工作区底缘）、右缘不够
-    //   向左展开（与系统翻转规则一一对应）。⚠ 历史冲突：906e198 曾把原生
-    //   路径改「光标上方居中」（CENTERALIGN|BOTTOMALIGN），理由正是「左上
-    //   锚 + 任务栏上翻 → 菜单弹在光标右上、观感偏右上」；本次按终裁回退
-    //   左上锚（原生路径 tray.h 与本文件同步），若真机复现「偏右上」需再
-    //   拍板（池 bug135 note 已记）。
+    //   TrackPopupMenu 默认 TPM_LEFTALIGN|TPM_TOPALIGN 观感——**可见面板**
+    //   左上角 = 光标，向右下展开；下缘不够向上展开（面板底贴工作区底缘）、
+    //   右缘不够向左展开（与系统翻转规则一一对应）。
+    //   ⚠ 锚定面=面板不是窗（bug135 AK 2026-11-18 真机红）：面板在窗内四
+    //   周内缩 style.margin（compose panelX=panelY=margin），旧版按窗矩形
+    //   锚定/钳制 → 面板浮在光标右上方 margin×scale px（135%DPI≈16px），
+    //   X 批窗级量测绿（menuL-cursorX=0）而老板真机仍报「偏右上」——差值
+    //   即此。修=期望位与钳制都按「光标-inset / 面板贴缘」折算，窗矩形的
+    //   阴影留白允许越任务栏带/屏缘（原生菜单阴影同样越缘被裁）。
+    //   历史冲突（906e198 居中锚 ↔ 左上锚）已排除语义分歧：本轮真机红是
+    //   margin 内缩未补偿，锚点语义维持 11-05 终裁左上锚不动。
     // - 其他平台（macOS 托盘）：维持 2026-11-04 拍板「左下角=光标」（菜单
     //   从光标向右上展开），钳制护左/右/顶、不护底——护底/上翻会把菜单
-    //   抬离光标（「往右上角迁移」症状成因），mac 行为零变化。
+    //   抬离光标（「往右上角迁移」症状成因），mac 行为零变化（含锚定面：
+    //   仍按整窗、不补 margin——mac 侧无真机红不主动改口径）。
 #if defined(_WIN32)
-    const float desiredX = screenX;
-    const float desiredY = screenY;
+    const float panelInsetPx = style.margin * windowScale;
+    const float desiredX = screenX - panelInsetPx;
+    const float desiredY = screenY - panelInsetPx;
     constexpr bool kFlipUpOnBottomOverflow = true;
 #else
     const float desiredX = screenX;
     const float desiredY = screenY - windowHeight;
     constexpr bool kFlipUpOnBottomOverflow = false;
+    constexpr float panelInsetPx = 0.0f;
 #endif
     float clampedX = desiredX;
     float clampedY = desiredY;
@@ -533,7 +549,7 @@ inline bool showStyledMenu(const std::string& id,
                 desiredX, desiredY, windowWidth, windowHeight,
                 static_cast<float>(chosen->x), static_cast<float>(chosen->y),
                 static_cast<float>(chosen->width), static_cast<float>(chosen->height),
-                kFlipUpOnBottomOverflow);
+                kFlipUpOnBottomOverflow, panelInsetPx);
             clampedX = rect.x;
             clampedY = rect.y;
         }

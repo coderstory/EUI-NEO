@@ -8,7 +8,8 @@
 //     **不护底**（护底把菜单抬离光标 = 旧「往右上角迁移」症状成因）。
 //   覆盖三处缺陷的纯函数面：
 //   1. styledMenuClampPosition：不护底档（默认参，mac）+ 底缘翻转档（win）
-//      的护左/护右/护顶语义；
+//      的护左/护右/护顶语义 + 面板内缩档 panelInset（bug135 AK 2026-11-18
+//      真机红：钳制目标=窗内可见面板贴缘、阴影留白越缘；0=旧整窗语义）；
 //   2. styledMenuSelectWorkArea 容纳性选择：包含光标点直接命中；光标在任
 //      务栏带（工作区外、+80px 容差档）也命中正确显示器；仍无命中取**最近**
 //      工作区（点到矩形距离），不再取列表首个（旧实现取首个 = 多屏选错显
@@ -149,6 +150,52 @@ int main() {
             areaX, areaY, areaWidth, areaHeight, true);
         check(near(rect.x, 800.0f) && near(rect.y, 500.0f),
               "win flip mid-screen: pass-through");
+    }
+
+    // ---- 5c. win 面板内缩档（panelInset>0，bug135 AK 2026-11-18 真机红）：
+    //      窗内可见面板四周内缩 inset，钳制目标=面板贴工作区缘（窗矩形/
+    //      阴影留白允许越缘）。真机红场景（X 批 n-tray.txt 实测坐标）：光标
+    //      (1460,1048) 任务栏带、窗 331x141、inset 16 → 面板底精确贴任务栏
+    //      上沿 1015（旧版按窗钳制时窗底=1015、面板浮高 16px=「偏右上」差值）
+    {
+        const float inset = 16.0f;
+        // 期望位先做锚定补偿（desired = 光标 - inset，同 showStyledMenu Win 分支）
+        const StyledMenuRect rect = styledMenuClampPosition(
+            1460.0f - inset, 1048.0f - inset, 331.0f, 141.0f,
+            areaX, areaY, areaWidth, areaHeight, true, inset);
+        check(near(rect.y + rect.height - inset, areaHeight),
+              "win taskbar + inset: panel bottom flush with work-area bottom");
+        check(near(rect.x + inset, 1460.0f),
+              "win taskbar + inset: panel left at cursor x");
+        check(near(rect.x, 1460.0f - inset),
+              "win taskbar + inset: window origin = cursor - inset (x pass-through)");
+    }
+    // 近右缘 + inset：面板右缘贴工作区右缘（窗右缘越出屏 inset px 属预期）
+    {
+        const StyledMenuRect rect = styledMenuClampPosition(
+            1900.0f - 16.0f, 400.0f, 244.0f, 187.0f,
+            areaX, areaY, areaWidth, areaHeight, true, 16.0f);
+        check(near(rect.x + 244.0f - 16.0f, areaWidth),
+              "inset near right edge: panel right clamped, window overhangs");
+    }
+    // 越左缘 + inset：面板左缘贴工作区左缘（窗左缘越出屏左 inset px）
+    {
+        const StyledMenuRect rect = styledMenuClampPosition(
+            -30.0f, 400.0f, 244.0f, 187.0f,
+            areaX, areaY, areaWidth, areaHeight, false, 16.0f);
+        check(near(rect.x + 16.0f, areaX),
+              "inset near left edge: panel left clamped to area left");
+    }
+    // inset=0 与不传参逐位一致（默认参回退=旧语义，既有调用方零波及）
+    {
+        const StyledMenuRect a = styledMenuClampPosition(
+            1200.0f, 1048.0f, 244.0f, 187.0f,
+            areaX, areaY, areaWidth, areaHeight, true);
+        const StyledMenuRect b = styledMenuClampPosition(
+            1200.0f, 1048.0f, 244.0f, 187.0f,
+            areaX, areaY, areaWidth, areaHeight, true, 0.0f);
+        check(near(a.x, b.x) && near(a.y, b.y),
+              "inset 0: identical to legacy clamping (default param)");
     }
 
     // ---- 6. 无效工作区（w/h<=0，无头/查询失败）：原样返回（降级语义不变）----
