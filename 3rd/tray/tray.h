@@ -362,7 +362,14 @@ static int tray_init(struct tray *tray) {
   nid.cbSize = sizeof(NOTIFYICONDATA);
   nid.hWnd = hwnd;
   nid.uID = 0;
-  nid.uFlags = NIF_ICON | NIF_MESSAGE;
+  /* debt#329：NIF_TIP 缺失 = 托盘图标无 tooltip 文本锚——历批「托盘定位
+     失败」的结构根因（UIA/枚举拿不到可检索文本）。tip 固定写应用名。
+     shortcut: fork 当前仅 DevDesk 一应用接入；出现第二个接入应用时升级为
+     struct tray 字段由装配方传入。uFlags/szTip 落在静态 nid 上，后续
+     NIM_MODIFY（tray_update）自动沿用，无需重复设置。 */
+  nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+  lstrcpyn(nid.szTip, TEXT("DevDesk"),
+           (int)(sizeof(nid.szTip) / sizeof(nid.szTip[0])));
   nid.uCallbackMessage = WM_TRAY_CALLBACK_MESSAGE;
   Shell_NotifyIcon(NIM_ADD, &nid);
 
