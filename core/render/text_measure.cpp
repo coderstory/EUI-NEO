@@ -2,6 +2,7 @@
 // TU 分工见 core/render/text_internal.h 头注。逐字平移自拆分前的 text.cpp。
 
 #include "core/render/text_internal.h"
+#include "core/render/text_kinsoku.h"
 
 #include <algorithm>
 #include <cmath>
@@ -214,12 +215,23 @@ Vec2 TextPrimitive::Impl::measureTextSize(const TextStyle& style) {
                 [&](std::size_t index) { return metrics.caretX[index + 1] - metrics.caretX[index]; });
             lineWidth = metrics.caretX[keep] + ellipsisWidth;
         } else {
+            // need324 CJK 行首禁则：与 rebuildLayout 同判定同钳制（上方注释的
+            // 「测量宽度与渲染宽度逐位一致」契约）。本迭代放置第 index-1 个字形，
+            // 其起始字节 = byteIndices[index-1]——即断行后下一行的行首字符。
+            int linePullCount = 0;
             for (size_t index = 1; index < metrics.caretX.size(); ++index) {
                 const float advance = metrics.caretX[index] - metrics.caretX[index - 1];
                 if (maxWidth > 0.0f && lineWidth > 0.0f && lineWidth + advance > maxWidth) {
-                    measuredWidth = std::max(measuredWidth, lineWidth);
-                    lineWidth = 0.0f;
-                    ++lineCount;
+                    const unsigned int nextCp = text_detail::decodeUtf8At(
+                        paragraph, static_cast<std::size_t>(metrics.byteIndices[index - 1]));
+                    if (linePullCount < 2 && text_detail::isProhibitedLineStart(nextCp)) {
+                        ++linePullCount;
+                    } else {
+                        measuredWidth = std::max(measuredWidth, lineWidth);
+                        lineWidth = 0.0f;
+                        ++lineCount;
+                        linePullCount = 0;
+                    }
                 }
                 lineWidth += advance;
             }

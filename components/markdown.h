@@ -3,6 +3,7 @@
 #include "components/theme.h"
 #include "core/dsl.h"
 #include "core/render/text.h"
+#include "core/render/text_kinsoku.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1954,6 +1955,9 @@ private:
         float cursorX = 0.0f;
         float cursorY = 0.0f;
         bool hasLineItem = false;
+        // need324 CJK 行首禁则：本行已拉回的禁则 segment 数，钳制 ≤2 次防极端
+        // 溢出；换行/换段（\n）即复位。口径同 text_layout 拉回法。
+        int linePullCount = 0;
 
         auto rawSegmentWidth = [&](const detail::MarkdownRun& run, const std::string& text) {
             if (text == "\n") {
@@ -1976,14 +1980,23 @@ private:
                 cursorX = 0.0f;
                 cursorY += lineHeight;
                 hasLineItem = false;
+                linePullCount = 0;
                 return;
             }
             const bool chip = runIsChip(run);
             const float segmentWidth = estimateInlineSegmentWidth(run, text, width, fontSize, heading, style);
             if (hasLineItem && width > 0.0f && cursorX + gap + segmentWidth > width) {
-                cursorX = 0.0f;
-                cursorY += lineHeight;
-                hasLineItem = false;
+                // need324：即将起行 segment 首码点 ∈ 禁则集 → 拉回本行行尾
+                // （允许超 width；同 text_layout 拉回法与 ≤2 钳制口径）。
+                if (linePullCount < 2 &&
+                    core::text_detail::isProhibitedLineStart(core::text_detail::decodeUtf8At(text, 0))) {
+                    ++linePullCount;
+                } else {
+                    cursorX = 0.0f;
+                    cursorY += lineHeight;
+                    hasLineItem = false;
+                    linePullCount = 0;
+                }
             }
             if (hasLineItem) {
                 cursorX += gap;

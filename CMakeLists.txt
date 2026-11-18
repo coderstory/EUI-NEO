@@ -910,6 +910,7 @@ if(EUI_BUILD_TEST_FIXTURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/switch_label_centering.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/system_font_families.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/text_ellipsis.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/text_kinsoku.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/title_bar_appearance.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/toast_action.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/tray_menu.cpp"

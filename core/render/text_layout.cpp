@@ -2,6 +2,7 @@
 // TU 分工见 core/render/text_internal.h 头注。逐字平移自拆分前的 text.cpp。
 
 #include "core/render/text_internal.h"
+#include "core/render/text_kinsoku.h"
 
 #include <algorithm>
 #include <cmath>
@@ -26,6 +27,9 @@ void TextPrimitive::Impl::rebuildLayout() {
     const bool ellipsisActive = style_.overflow == TextOverflow::Ellipsis && !style_.wrap && maxWidth > 0.0f;
 
     size_t paragraphStart = 0;
+    // need324 CJK 行首禁则：本行已拉回的禁则字符数。钳制 ≤2 次防极端溢出
+    // （「。。。。」连续禁则，超出放行换行）；换行/换段即复位。
+    int linePullCount = 0;
     while (paragraphStart <= style_.text.size()) {
         const size_t newline = style_.text.find('\n', paragraphStart);
         const size_t paragraphEnd = newline == std::string::npos ? style_.text.size() : newline;
@@ -59,10 +63,18 @@ void TextPrimitive::Impl::rebuildLayout() {
             const ShapedGlyph& glyph = shaped[index];
             const float advance = glyph.advance;
             if (style_.wrap && maxWidth > 0.0f && cursorX > 0.0f && cursorX + advance > maxWidth) {
-                measuredSize_.x = std::max(measuredSize_.x, currentLine.width);
-                lines_.push_back(currentLine);
-                currentLine = {};
-                cursorX = 0.0f;
+                // need324：即将起行字形 ∈ 禁则集 → 拉回本行行尾（允许超 maxWidth
+                // ≤1 个标点宽）。判定须与 measureTextSize 逐位一致，否则卡高与
+                // 渲染行数漂移。
+                if (linePullCount < 2 && text_detail::isProhibitedLineStart(glyph.codepoint)) {
+                    ++linePullCount;
+                } else {
+                    measuredSize_.x = std::max(measuredSize_.x, currentLine.width);
+                    lines_.push_back(currentLine);
+                    currentLine = {};
+                    cursorX = 0.0f;
+                    linePullCount = 0;
+                }
             }
 
             appendShapedGlyphToLine(currentLine, glyph, cursorX, static_cast<int>(paragraphStart));
@@ -80,6 +92,7 @@ void TextPrimitive::Impl::rebuildLayout() {
         lines_.push_back(currentLine);
         currentLine = {};
         cursorX = 0.0f;
+        linePullCount = 0;
         paragraphStart = newline + 1;
     }
 
