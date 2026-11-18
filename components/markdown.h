@@ -988,8 +988,16 @@ public:
                                    quoteInset + listInset, cp, cpBegin, cpEnd);
                 i = groupEnd - 1;
             } else {
+                // 内联块族（rectsForInlineBlock→rectsForInlineRuns 的 segment 域）
+                // 的查询区间是块局部显示域（块首=0），非文档系：单块缝
+                // hitRectsForDisplayRange 块基址=0 两域重合；文档缝此处 cp=块基址，
+                // 必须平移后再入——不平移则区间整体右漂基址个码点（need345 往返
+                // 零漂移红：cp=6 块间 '\n' 泄漏进基址 7 的段落局部域，矩形落在局部
+                // 第 7 字、反查回 13）。Code/Html/Table 族内部以 cp 为锚自对齐，免。
+                const std::size_t localBegin = cpBegin > cp ? cpBegin - cp : 0;
+                const std::size_t localEnd = cpEnd > cp ? cpEnd - cp : 0;
                 rectsForInlineBlock(rects, b, contentWidth, style,
-                                    quoteInset + listInset, cp, cpBegin, cpEnd);
+                                    quoteInset + listInset, cp, localBegin, localEnd);
             }
             // 本块矩形 y 抬到文档系（块局部 y + 块顶 yAcc）
             for (std::size_t r = base; r < rects.size(); ++r) {
@@ -1384,8 +1392,13 @@ private:
             // 盒 + 内容起点 markerWidth+8）——矩形按该盒补齐，否则 marker 之后的
             // 命中/选区在 rect 域整体左漂 prefixCps 码点。
             const std::size_t prefixCps = countCodepoints(prefix);
-            const std::size_t mBegin = std::max(cpBegin, cp);
-            const std::size_t mEnd = std::min(cpEnd, cp + prefixCps);
+            // marker 查询域 = 块局部显示域（cpBegin/cpEnd 自块首 0 起算）：单块缝
+            // 块基址=0 时 std::max(cpBegin, cp) 退化等价；文档缝（need345）块基址
+            // =cp>0，旧式把基址当域内偏移 → marker 矩形永不发射。矩形保持 marker
+            // 整盒（右对齐字形盒；多码点 prefix 的逐码点往返由
+            // resolveCpInInlineBlock 半宽分桶吸收，单码点 prefix 精确）。
+            const std::size_t mBegin = cpBegin;
+            const std::size_t mEnd = std::min(cpEnd, prefixCps);
             if (mEnd > mBegin) {
                 rects.push_back(MarkdownHitRect{xOff, yOff, markerWidth,
                                                 style.bodyLineHeight});
