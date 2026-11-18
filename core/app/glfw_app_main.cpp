@@ -958,6 +958,11 @@ int eui_app_run() {
             windowState.consumeFrameRequest();
             windowState.resetTiming(glfwGetTime());
             glfwWaitEventsTimeout(0.25);
+            // 最小化驻留期宿主帧泵（DevDesk bug307②）：与下方托盘分支同款——
+            // 主窗不 compose，宿主 ticker（挂 dslAppConfig 求值）停摆会让第二
+            // 实例送达的 .md 在「最小化到任务栏」态积压到下次还原主窗
+            //（bug270 只补了托盘分支）。0.25s 上限是本分支既有节奏，泵挂同一拍。
+            (void)app::dslAppConfig();
             continue;
         }
 
@@ -1029,7 +1034,13 @@ int eui_app_run() {
             windowState.paintRequested = true;
             app::detail::requestFullPaint();
             windowState.consumeFrameRequest();
-            glfwWaitEvents();
+            glfwWaitEventsTimeout(0.10);
+            // 不可渲染驻留期宿主帧泵（DevDesk bug307②）：窗口被外部工具隐藏/
+            // 异常零尺寸时本分支原为无限期 glfwWaitEvents——宿主 ticker 停摆，
+            // 第二实例送达的 .md 积压不分发（DevDesk bug206 人工隐藏态实测复
+            // 现）。0.10s 上限与托盘分支同款，醒着即恢复 drain/送达链路；最小
+            // 化途中经此分支为瞬态，不改变其行为语义。
+            (void)app::dslAppConfig();
             mainWindowRuntime.markUnavailableFrame(glfwGetTime());
             continue;
         }

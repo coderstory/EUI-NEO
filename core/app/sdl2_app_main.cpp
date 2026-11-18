@@ -800,6 +800,11 @@ int eui_app_run() {
             if (SDL_WaitEventTimeout(&event, 100)) {
                 processMainEvent(window, state, event, true);
             }
+            // 托盘稳态宿主帧泵（DevDesk bug270/307②）：4f771d4 加在循环后段的
+            // 同款泵对本稳态不可达（此处 continue 先行，后段仅同迭代刚藏入时经
+            // 过）——稳态托盘 ticker 从未推进，schedule/release 的 ticker 订阅在
+            // 藏托盘期间停摆。补在活分支：100ms 节拍与 glfw 托盘分支对齐。
+            (void)app::dslAppConfig();
             state.resetTiming(core::window::timeSeconds());
             continue;
         }
@@ -876,6 +881,10 @@ int eui_app_run() {
         if (drawableWidth <= 0 || drawableHeight <= 0) {
             renderBackend->releaseRenderCache();
             app::detail::requestFullPaint();
+            // 不可渲染驻留期宿主帧泵（DevDesk bug307②，与 glfw 后端
+            // framebuffer ≤0 分支同款）：主窗最小化/异常零尺寸不 compose 时
+            // ticker 仍推进——第二实例送达链路与 schedule 定时不在驻留态饿死。
+            (void)app::dslAppConfig();
             mainWindowRuntime.markUnavailableFrame(core::window::timeSeconds());
             continue;
         }
