@@ -931,30 +931,77 @@ public:
                 break;
             }
         }
-        // 同行相邻矩形连续化（bug259-G 二轮复核）：CJK 经 splitMarkdownTextForLayout
-        // 单码点成段、词间空白丢段，同一 span 的相邻段矩形之间会留 layout 间隙
-        // （4px/空格）→ 高亮视觉碎裂。同行（y/h 一致）且水平相邻（缝隙 ≤ 8px，
-        // 即 layout gap + 浮点余量；正常 intra-span 缝隙恒为 4px）的矩形合并：
-        // 前段右缘扩展到后段左缘，只吞字间空白，不吞下一字墨迹（后段左缘即其
-        // 首字墨迹左界）；跨行 / 跨块（y 不同）不合并。
-        constexpr float kMergeGapPx = 8.0f;
-        std::vector<MarkdownHitRect> merged;
-        merged.reserve(rects.size());
-        for (const MarkdownHitRect& r : rects) {
-            if (!merged.empty()) {
-                MarkdownHitRect& prev = merged.back();
-                if (std::fabs(prev.y - r.y) <= 0.5f &&
-                    std::fabs(prev.h - r.h) <= 0.5f &&
-                    r.x + r.w > prev.x &&
-                    r.x - (prev.x + prev.w) <= kMergeGapPx) {
-                    const float right = std::max(prev.x + prev.w, r.x + r.w);
-                    prev.w = std::max(1.0f, right - prev.x);
-                    continue;
+        mergeAdjacentRectsOnSameLine(rects);
+        return rects;
+    }
+
+    // ── 整篇文档系选区矩形（need345 notepad 预览）───────────────────────
+    // hitRectsForDisplayRange 的整篇叠层口径：块内枚举零漂移（同一组 per-block
+    // 助手 + 同一条合并），y 自文档内容顶累计——displayCpForPoint 的 locals
+    // 纵向排布同式（estimateBlockHeight/estimateTableHeight + blockGap，块间
+    // gap 与 build() column gap 一致；尾块后多计一个 gap 只落在文档末空白区，
+    // 不影响块内矩形定位）。整篇单元素渲染（notepad F-13 预览）的调用方无逐块
+    // 几何表，选区/高亮按文档 y 直接叠层。
+    static std::vector<MarkdownHitRect> hitRectsForDisplayRangeDoc(
+        const std::string& markdown, float width, const MarkdownStyle& style,
+        std::size_t cpBegin, std::size_t cpEnd) {
+        std::vector<MarkdownHitRect> rects;
+        if (width <= 0.0f || cpBegin >= cpEnd) {
+            return rects;
+        }
+        const std::shared_ptr<const detail::MarkdownDocument> document =
+            detail::cachedMarkdownDocument(markdown);
+        const std::vector<detail::MarkdownBlock>& blocks = document->blocks;
+        std::size_t cp = 0;
+        float yAcc = 0.0f;  // 块顶文档 y（每块 = 块高 + blockGap）
+        for (std::size_t i = 0; i < blocks.size(); ++i) {
+            if (i > 0) {
+                ++cp;  // 块间 '\n'
+            }
+            const detail::MarkdownBlock& b = blocks[i];
+            std::size_t groupEnd = i + 1;  // TableRow 行组尾（非行组 = i+1）
+            if (b.kind == detail::MarkdownBlockKind::TableRow) {
+                while (groupEnd < blocks.size() &&
+                       blocks[groupEnd].kind == detail::MarkdownBlockKind::TableRow) {
+                    ++groupEnd;
                 }
             }
-            merged.push_back(r);
+            const float blockH =
+                b.kind == detail::MarkdownBlockKind::TableRow
+                    ? estimateTableHeight(blocks, i, groupEnd, width, style)
+                    : estimateBlockHeight(b, width, style);
+            const float quoteInset = static_cast<float>(std::max(0, b.quoteDepth)) * 8.0f;
+            const float listInset = static_cast<float>(std::max(0, b.listDepth - 1)) * style.listIndent;
+            const float contentWidth = std::max(0.0f, width - quoteInset - listInset);
+            const std::size_t base = rects.size();
+            if (b.kind == detail::MarkdownBlockKind::Divider) {
+                // 无显示文本，不发射矩形，但占排版位（displayCpForPoint 同式）
+                yAcc += blockH + style.blockGap;
+                continue;
+            }
+            if (b.kind == detail::MarkdownBlockKind::Code ||
+                b.kind == detail::MarkdownBlockKind::Html) {
+                rectsForPlainTextBlock(rects, b, contentWidth, style,
+                                       quoteInset + listInset, cp, cpBegin, cpEnd);
+            } else if (b.kind == detail::MarkdownBlockKind::TableRow) {
+                cp = rectsForTable(rects, blocks, i, groupEnd, contentWidth, style,
+                                   quoteInset + listInset, cp, cpBegin, cpEnd);
+                i = groupEnd - 1;
+            } else {
+                rectsForInlineBlock(rects, b, contentWidth, style,
+                                    quoteInset + listInset, cp, cpBegin, cpEnd);
+            }
+            // 本块矩形 y 抬到文档系（块局部 y + 块顶 yAcc）
+            for (std::size_t r = base; r < rects.size(); ++r) {
+                rects[r].y += yAcc;
+            }
+            yAcc += blockH + style.blockGap;
+            if (cp > cpEnd) {
+                break;
+            }
         }
-        return merged;
+        mergeAdjacentRectsOnSameLine(rects);
+        return rects;
     }
 
     // ── 点→显示码点反查（need264 文本拖选）──────────────────────────────
@@ -1125,6 +1172,35 @@ private:
     }
 
     // ── 页内搜索缝内部件（与上方 public 静态 API 配对）─────────────────
+
+    // 同行相邻矩形连续化（bug259-G 二轮复核）：CJK 经 splitMarkdownTextForLayout
+    // 单码点成段、词间空白丢段，同一 span 的相邻段矩形之间会留 layout 间隙
+    // （4px/空格）→ 高亮视觉碎裂。同行（y/h 一致）且水平相邻（缝隙 ≤ 8px，
+    // 即 layout gap + 浮点余量；正常 intra-span 缝隙恒为 4px）的矩形合并：
+    // 前段右缘扩展到后段左缘，只吞字间空白，不吞下一字墨迹（后段左缘即其
+    // 首字墨迹左界）；跨行 / 跨块（y 不同）不合并。块局部（hitRectsForDisplay
+    // Range）与文档系（hitRectsForDisplayRangeDoc）两口共用 = 合并行为零漂移
+    //（need345 抽出，原内联逻辑原样平移）。
+    static void mergeAdjacentRectsOnSameLine(std::vector<MarkdownHitRect>& rects) {
+        constexpr float kMergeGapPx = 8.0f;
+        std::vector<MarkdownHitRect> merged;
+        merged.reserve(rects.size());
+        for (const MarkdownHitRect& r : rects) {
+            if (!merged.empty()) {
+                MarkdownHitRect& prev = merged.back();
+                if (std::fabs(prev.y - r.y) <= 0.5f &&
+                    std::fabs(prev.h - r.h) <= 0.5f &&
+                    r.x + r.w > prev.x &&
+                    r.x - (prev.x + prev.w) <= kMergeGapPx) {
+                    const float right = std::max(prev.x + prev.w, r.x + r.w);
+                    prev.w = std::max(1.0f, right - prev.x);
+                    continue;
+                }
+            }
+            merged.push_back(r);
+        }
+        rects = std::move(merged);
+    }
 
     static std::size_t countCodepoints(const std::string& text) {
         std::size_t n = 0;
