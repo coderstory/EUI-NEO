@@ -212,7 +212,8 @@ public:
                     .text(text_)
                     .fontSize(font)
                     .lineHeight(font)
-                    .fontWeight(500)
+                    // need312：need219 两档制——按钮文案无强调语义 → 明细档 400（与 components/button.h 未设字重=400 一致）
+                    .fontWeight(400)
                     .color(text)
                     .horizontalAlign(core::HorizontalAlign::Center)
                     .verticalAlign(core::VerticalAlign::Center)
