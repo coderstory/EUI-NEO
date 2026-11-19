@@ -139,6 +139,20 @@ public:
         const std::function<bool(const core::KeyEvent&)> onKeyEvent = onKeyEvent_;
         const std::function<void(const core::PointerEvent&, const core::Rect&)> onContextMenu = onContextMenu_;
         const float textLineHeight = fontSize * 1.2f;
+        // need378：caret 垂直度量改字体行度量（FreeType ascent/descent）推导，
+        // 底部对齐行内文本底（ascent + |descent|；越界钳行盒）。旧值
+        // fontSize*1.18 自行盒顶起排，CJK 字体自然行高 >1.2em 时 caret 底
+        // 悬在文本底之上 → 视觉「光标偏上」。度量取不到（无头/字体缺失）
+        // 回退旧口径。
+        const core::TextPrimitive::FontLineMetrics lineMetrics =
+            core::TextPrimitive::measureFontLineMetrics(fontFamily_, fontSize);
+        float caretHeight = fontSize * 1.18f;
+        float caretYOffset = 0.0f;
+        if (lineMetrics.ascent > 0.0f || lineMetrics.descent < 0.0f) {
+            const float naturalHeight = lineMetrics.ascent - lineMetrics.descent;
+            caretHeight = std::min(naturalHeight, textLineHeight);
+            caretYOffset = naturalHeight - caretHeight;
+        }
         const float textY = multiline_ ? inset : std::max(0.0f, (height_ - textLineHeight) * 0.5f);
         const float textHeight = multiline_ ? std::max(0.0f, height_ - inset * 2.0f) : textLineHeight;
         const float width = width_ - scrollbarGutter;
@@ -209,7 +223,7 @@ public:
                     .shadow(focused ? style_.shadow : core::Shadow{})
                     .transition(transition_)
                     .focusable()
-                    .imeRect(caretX, layout.cursorY, 1.5f, textLineHeight)
+                    .imeRect(caretX, layout.cursorY + caretYOffset, 1.5f, caretHeight)  // need378：与 caret 同几何（IME 候选窗贴光标）
                     .onPress([&state, controlWidth, inset, layout, documentIndex](const core::PointerEvent& event, const core::Rect& bounds) {
                         state.lastBounds = bounds;
                         state.cursor = InputModel::clampUtf8Boundary(state.text, documentIndex(layout.cursorFromPointer(event.x, event.y, bounds, controlWidth, inset)));
@@ -504,8 +518,10 @@ public:
 
                         if (focused) {
                             ui_.rect(id_ + ".cursor")
-                                .position(caretX - inset, layout.cursorY - textY)
-                                .size(1.5f, fontSize * 1.18f)
+                                // need378：底部对齐行内文本底（caretYOffset 见
+                                // build() 头部度量推导），高度随字体自然行高
+                                .position(caretX - inset, layout.cursorY - textY + caretYOffset)
+                                .size(1.5f, caretHeight)
                                 .color(style_.cursor)
                                 .radius(1.0f)
                                 .build();
