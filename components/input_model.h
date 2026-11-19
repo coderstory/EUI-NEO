@@ -608,6 +608,12 @@ struct InputModel {
         if (state.cachedSoftWrap != state.softWrap) {
             // 换行开关翻转改变行切分：行号/行起点语义变化，行级 runs 缓存整体作废。
             state.cachedLineRuns.clear();
+        } else if (multiline && state.layoutCacheValid && state.cachedMultiline &&
+                   std::fabs(state.cachedViewportWidth - viewportWidth) >= 0.001f) {
+            // need383：换行宽度变化同样重切行（行号/行起点漂移）——行级 runs
+            // 缓存键只有 (行号, textRevision, styleRevision)，不随宽度失效会
+            // 撞旧行内容；softWrap 翻转分支同语义。
+            state.cachedLineRuns.clear();
         }
         if (multiline) {
             if (reuseParagraphs) {

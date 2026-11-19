@@ -471,7 +471,12 @@ public:
                                 }
                                 const std::string lineText = display.text.substr(static_cast<std::size_t>(line.start),
                                                                                  static_cast<std::size_t>(std::max(0, line.end - line.start)));
-                                std::string lineKey = textDirtyKey + "|" + std::to_string(index);
+                                // need383：换行宽度编进行键——resize 触发行重切分时
+                                // 行文本已变而 textRevision 未变，keyed 行文本不带
+                                // 宽度指纹会复用旧宽度下的缓存行内容（换行不跟手）。
+                                // 1/8px 粒度防浮点抖动。
+                                std::string lineKey = textDirtyKey + "|" + std::to_string(index) +
+                                    "|w" + std::to_string(static_cast<int>(std::lround(textWidth * 8.0f)));
                                 std::vector<core::TextRun> localRuns;
                                 if (lineStyles_) {
                                     // 全文档坐标 runs → 行内坐标；runs 变化必须编进
