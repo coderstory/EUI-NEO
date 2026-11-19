@@ -963,6 +963,22 @@ int eui_app_run() {
             // 实例送达的 .md 在「最小化到任务栏」态积压到下次还原主窗
             //（bug270 只补了托盘分支）。0.25s 上限是本分支既有节奏，泵挂同一拍。
             (void)app::dslAppConfig();
+            // DevDesk bug373：子窗事务同样推进（与托盘分支同款）——drain 已能
+            // 在最小化态投递开窗请求，但本分支原不消费 windowRequests、也不
+            // update 子窗 → 新子窗（双击文件开编辑器）在主窗还原前根本不创建，
+            // 或创建后停滞。子窗自身非最小化照常渲染（updateManagedWindow
+            // 自带 iconified 早退），成本口径与托盘分支一致。
+            {
+                const bool childUpdateRequested = windowState.consumeUpdateRequest();
+                const float childDelta = windowState.consumeFrameDelta(glfwGetTime());
+                childWindows.updateAll([&](ManagedWindow& managed) {
+                    updateManagedWindow(managed, childDelta, childUpdateRequested);
+                });
+                createRequestedWindows(childWindows, window, *renderBackend, app::consumeWindowRequests());
+                pruneClosedWindows(childWindows);
+                windowState.modalChildWindow = findModalChildWindow(childWindows);
+                windowState.resetTiming(glfwGetTime());
+            }
             continue;
         }
 
