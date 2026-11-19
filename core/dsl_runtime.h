@@ -186,6 +186,13 @@ private:
 
     void updateImeCursorRect(core::window::Handle window, float dpiScale);
 
+    // bug363/379：requestFocus 聚焦无指针帧时的按需 transform 解析（实现见
+    // runtime_input.h，updateImeCursorRect 消费）。
+    bool resolveFocusedElementRenderTransform(float dpiScale);
+    bool resolveElementRenderTransform(const Element& element,
+                                       float dpiScale,
+                                       const RenderTransform& inheritedTransform);
+
     void updateInteraction(const Element& element,
                            const PointerEvent& event,
                            float dpiScale,

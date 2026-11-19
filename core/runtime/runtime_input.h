@@ -344,7 +344,14 @@ inline void Runtime::updateImeCursorRect(core::window::Handle window, float dpiS
         return;
     }
 
-    if (!focusedElementRenderTransformValid_) {
+    // bug363/379：聚焦可经 requestFocus（compose 帧末取件）到达，之后用户直接
+    // 打字——没有指针事件帧，updateElementTree 不跑，focusedElementRenderTransformValid_
+    // 保持假。旧实现在此直接放弃 → setImeCursorRect 永不发出 → Win32 IME 落
+    // 输入上下文默认位（编辑器=窗体左上）。改为按需沿树累计解析聚焦元素的
+    // RenderTransform（与 updateElementTree 同一 instances_.renderTransform 口径），
+    // 锚定链不再依赖指针帧。
+    if (!focusedElementRenderTransformValid_ &&
+        !resolveFocusedElementRenderTransform(dpiScale)) {
         imeCursorRectValid_ = false;
         return;
     }
@@ -384,6 +391,45 @@ inline void Runtime::updateImeCursorRect(core::window::Handle window, float dpiS
         pixelRect.y,
         pixelRect.width,
         pixelRect.height);
+}
+
+// bug363/379：requestFocus 路径的聚焦没有指针事件帧，updateElementTree 的
+// 聚焦元素 transform 采样（runtime_update.h 帧内同一处）不会跑——IME 锚定
+// 需要它，此处按需补一次：从根沿 orderedChildren 累计 instances_.renderTransform，
+// 命中 focusedId_ 即写入 focusedElementRenderTransform_（与 updateElementTree
+// 行为一致，只是触发时机多一个）。只在 transform 失效且聚焦元素带 imeRect 时
+// 走到这里，每帧成本一次树的线性走查。
+inline bool Runtime::resolveFocusedElementRenderTransform(float dpiScale) {
+    if (focusedId_.empty()) {
+        return false;
+    }
+    const RenderTransform identity;
+    const std::vector<const Element*>& roots = ui_.orderedRoots();
+    for (const Element* root : roots) {
+        if (resolveElementRenderTransform(*root, dpiScale, identity)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+inline bool Runtime::resolveElementRenderTransform(
+    const Element& element,
+    float dpiScale,
+    const RenderTransform& inheritedTransform) {
+    const RenderTransform renderTransform =
+        instances_.renderTransform(element, dpiScale, inheritedTransform);
+    if (element.id == focusedId_) {
+        focusedElementRenderTransform_ = renderTransform;
+        focusedElementRenderTransformValid_ = true;
+        return true;
+    }
+    for (const Element* child : element.orderedChildren) {
+        if (resolveElementRenderTransform(*child, dpiScale, renderTransform)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 inline void Runtime::updateInteraction(
