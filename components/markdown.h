@@ -1142,9 +1142,23 @@ public:
     MarkdownBuilder& theme(const theme::ThemeColorTokens& tokens) { style_ = MarkdownStyle(tokens); return *this; }
     MarkdownBuilder& zIndex(int value) { zIndex_ = value; return *this; }
 
+    // ── 视口裁剪（DevDesk 池 bug382）──────────────────────────────────────
+    // 预览滚动/调窗/全局帧泵会每帧重建整个文档元素树（数千行文本元素），
+    // 长文档预览严重卡顿。opt-in 裁剪：设置后窗口外（上下各留 overscan 余量）
+    // 的块只建包装元素（显式高 + margin 不变，几何与全量渲染逐像素一致），
+    // 跳过其 content（文本/背景/子元素）生成。判定用渲染路径自身的显式高度
+    // 推进列流游标，无独立几何表 → 不存在「裁剪后错位」漂移面。
+    // 未设置（默认）时 culling()=false，全部 content 照常生成，行为不变。
+    MarkdownBuilder& visibleRange(float top, float bottom) {
+        cullTop_ = top;
+        cullBottom_ = bottom;
+        return *this;
+    }
+
     void build() {
         const std::shared_ptr<const detail::MarkdownDocument> document = parsedDocument();
         const std::vector<detail::MarkdownBlock>& blocks = document->blocks;
+        flowCursorY_ = 0.0f;  // bug382 裁剪游标：build() 帧内生命周期
         auto root = ui_.column(id_)
             .width(width_)
             .height(height_)
@@ -1159,6 +1173,9 @@ public:
         }
         root.content([&] {
                 for (std::size_t index = 0; index < blocks.size(); ++index) {
+                    if (index > 0) {
+                        flowCursorY_ += style_.blockGap;  // 列 gap 计入游标
+                    }
                     if (blocks[index].kind == detail::MarkdownBlockKind::TableRow) {
                         std::size_t end = index + 1;
                         while (end < blocks.size() && blocks[end].kind == detail::MarkdownBlockKind::TableRow) {
@@ -1175,6 +1192,19 @@ public:
     }
 
 private:
+    // ── 视口裁剪内部件（bug382）── 判定与游标推进均用渲染路径已算出的
+    // 显式高度；包装元素（显式高 + margin）不裁，裁的只有 content。
+    bool culling() const { return cullBottom_ > cullTop_; }
+    bool contentVisibleAt(float y, float h) const {
+        if (!culling()) {
+            return true;
+        }
+        // 上下各留 ~1.5 屏余量：滚动/调窗跨帧不闪白（模块侧同口径「上1下2屏」）。
+        constexpr float kOverscanPx = 1200.0f;
+        return y + h > cullTop_ - kOverscanPx && y < cullBottom_ + kOverscanPx;
+    }
+    void advanceFlow(float flowHeight) { flowCursorY_ += flowHeight; }
+
     std::shared_ptr<const detail::MarkdownDocument> parsedDocument() const {
         return detail::cachedMarkdownDocument(markdown_);
     }
@@ -2285,6 +2315,7 @@ private:
         const float contentWidth = std::max(0.0f, width_ - quoteInset - listInset);
 
         if (block.kind == detail::MarkdownBlockKind::Divider) {
+            advanceFlow(9.0f);  // 1px 线 + 上下 margin 4+4（与 estimateBlockHeight 同口径）
             ui_.rect(partId)
                 .width(contentWidth)
                 .height(1.0f)
@@ -2331,11 +2362,14 @@ private:
                                                        style_.bodySize,
                                                        style_.bodyLineHeight,
                                                        false));
+        const bool contentVisible = contentVisibleAt(flowCursorY_, height);
+        advanceFlow(height);
         ui_.stack(partId)
             .width(contentWidth)
             .height(height)
             .margin(quoteInset + listInset, 0.0f, 0.0f, 0.0f)
             .content([&] {
+                if (!contentVisible) return;  // bug382：窗口外块只留包装几何
                 ui_.text(partId + ".mark")
                     .size(markerWidth, style_.bodyLineHeight)
                     .text(detail::markdownListPrefix(block))
@@ -2368,11 +2402,14 @@ private:
             const float textWidth = std::max(0.0f, panelWidth - style_.quotePadding * 2.0f);
             const float textHeight = inlineRunsHeight(block.runs, textWidth, fontSize, lineHeight, heading);
             const float height = textHeight + style_.quotePadding * 2.0f;
+            const bool contentVisible = contentVisibleAt(flowCursorY_, height);
+            advanceFlow(height);
             ui_.stack(partId)
                 .width(contentWidth)
                 .height(height)
                 .margin(quoteInset + listInset, 0.0f, 0.0f, 0.0f)
                 .content([&] {
+                    if (!contentVisible) return;  // bug382：窗口外块只留包装几何
                     ui_.rect(partId + ".bar")
                         .size(barWidth, height)
                         .color(style_.accent)
@@ -2392,11 +2429,14 @@ private:
         }
 
         const float blockHeight = inlineRunsHeight(block.runs, contentWidth, fontSize, lineHeight, heading);
+        const bool contentVisible = contentVisibleAt(flowCursorY_, blockHeight);
+        advanceFlow(blockHeight);
         ui_.stack(partId)
             .width(contentWidth)
             .height(blockHeight)
             .margin(quoteInset + listInset, 0.0f, 0.0f, 0.0f)
             .content([&] {
+                if (!contentVisible) return;  // bug382：窗口外块只留包装几何
                 renderInlineRuns(partId + ".text", block.runs, contentWidth, blockHeight, fontSize, lineHeight, heading);
             })
             .build();
@@ -2532,11 +2572,14 @@ private:
         const float textWidth = std::max(0.0f, contentWidth - style_.codePadding * 2.0f);
         const float textHeight = detail::estimateMarkdownTextHeight(text, textWidth, style_.codeSize, style_.codeSize + 6.0f);
         const float blockHeight = textHeight + style_.codePadding * 2.0f;
+        const bool contentVisible = contentVisibleAt(flowCursorY_, blockHeight);
+        advanceFlow(blockHeight);
         ui_.stack(partId)
             .width(contentWidth)
             .height(blockHeight)
             .margin(quoteInset + listInset, 0.0f, 0.0f, 0.0f)
             .content([&] {
+                if (!contentVisible) return;  // bug382：窗口外块只留包装几何
                 ui_.rect(partId + ".bg")
                     .size(contentWidth, blockHeight)
                     .color(style_.codeBackground)
@@ -2567,11 +2610,14 @@ private:
         const float textWidth = std::max(0.0f, contentWidth - style_.codePadding * 2.0f);
         const float textHeight = detail::estimateMarkdownTextHeight(text, textWidth, style_.codeSize, style_.codeSize + 6.0f);
         const float blockHeight = textHeight + style_.codePadding * 2.0f;
+        const bool contentVisible = contentVisibleAt(flowCursorY_, blockHeight);
+        advanceFlow(blockHeight);
         ui_.stack(partId)
             .width(contentWidth)
             .height(blockHeight)
             .margin(quoteInset + listInset, 0.0f, 0.0f, 0.0f)
             .content([&] {
+                if (!contentVisible) return;  // bug382：窗口外块只留包装几何
                 ui_.rect(partId + ".bg")
                     .size(contentWidth, blockHeight)
                     .color(style_.quoteBackground)
@@ -2604,10 +2650,16 @@ private:
         const float listInset = static_cast<float>(std::max(0, first.listDepth - 1)) * style_.listIndent;
         const float contentWidth = std::max(0.0f, width_ - quoteInset - listInset);
         float tableHeight = 0.0f;
-
+        std::vector<float> rowHeights;
+        rowHeights.reserve(end - begin);
         for (std::size_t row = begin; row < end; ++row) {
-            tableHeight += tableRowHeight(tableId + ".row." + std::to_string(row - begin), blocks[row], contentWidth);
+            const float rh = tableRowHeight(tableId + ".row." + std::to_string(row - begin), blocks[row], contentWidth);
+            rowHeights.push_back(rh);
+            tableHeight += rh;
         }
+        advanceFlow(tableHeight);
+        // bug382：整表在窗口外时行级 content 全跳（表 column 高=Σ行高，显式不变）。
+        const float tableTop = flowCursorY_ - tableHeight;
 
         ui_.column(tableId)
             .width(contentWidth)
@@ -2615,8 +2667,12 @@ private:
             .margin(quoteInset + listInset, 0.0f, 0.0f, 0.0f)
             .gap(0.0f)
             .content([&] {
+                float rowY = tableTop;
                 for (std::size_t row = begin; row < end; ++row) {
-                    renderTableRow(tableId + ".row." + std::to_string(row - begin), blocks[row], contentWidth);
+                    const std::size_t slot = row - begin;
+                    renderTableRow(tableId + ".row." + std::to_string(slot), blocks[row], contentWidth,
+                                   contentVisibleAt(rowY, rowHeights[slot]));
+                    rowY += rowHeights[slot];
                 }
             })
             .build();
@@ -2649,7 +2705,8 @@ private:
 
     void renderTableRow(const std::string& partId,
                         const detail::MarkdownBlock& block,
-                        float contentWidth) {
+                        float contentWidth,
+                        bool contentVisible) {
         const std::size_t cellCount = std::max<std::size_t>(1, block.cells.size());
         const float cellWidth = contentWidth / static_cast<float>(cellCount);
         const float rowHeight = tableRowHeight(partId, block, contentWidth);
@@ -2661,6 +2718,7 @@ private:
             .width(contentWidth)
             .height(rowHeight)
             .content([&] {
+                if (!contentVisible) return;  // bug382：窗口外行只留包装几何
                 for (std::size_t cell = 0; cell < cellCount; ++cell) {
                     const std::string cellId = partId + ".cell." + std::to_string(cell);
                     ui_.stack(cellId)
@@ -2722,6 +2780,10 @@ private:
     bool hasX_ = false;
     bool hasY_ = false;
     int zIndex_ = 0;
+    // bug382 视口裁剪态：cullBottom_ <= cullTop_ = 关闭（默认）。
+    float cullTop_ = 0.0f;
+    float cullBottom_ = -1.0f;
+    float flowCursorY_ = 0.0f;
 };
 
 inline MarkdownBuilder markdown(core::dsl::Ui& ui, const std::string& id) {
