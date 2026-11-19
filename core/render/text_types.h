@@ -38,6 +38,9 @@ struct TextRun {
     int byteStart = 0;          // 含
     int byteEnd = 0;            // 不含；须 non-empty、按 start 升序、互不重叠（normalizeTextRuns 保证）
     Color color{1.0f, 1.0f, 1.0f, 1.0f};   // v1 唯一样式维度
+    /// need377：faux-bold 渲染位（双击绘制偏移副本，不改 advance/layout——
+    /// 度量与光标几何不受影响，编辑器查找命中层专用；语法层默认 false）。
+    bool bold = false;
 };
 
 constexpr bool operator==(const TextRun& left, const TextRun& right) {
@@ -46,7 +49,8 @@ constexpr bool operator==(const TextRun& left, const TextRun& right) {
            left.color.r == right.color.r &&
            left.color.g == right.color.g &&
            left.color.b == right.color.b &&
-           left.color.a == right.color.a;
+           left.color.a == right.color.a &&
+           left.bold == right.bold;
 }
 
 /// 归一化调用方给的 runs：clamp 到 [0, text.size()] 的 UTF-8 边界（向下取整到

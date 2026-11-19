@@ -1027,7 +1027,7 @@ struct InputModel {
             const int start = std::max(run.byteStart, lineStart);
             const int end = std::min(run.byteEnd, lineEnd);
             if (start < end) {
-                local.push_back({start - lineStart, end - lineStart, run.color});
+                local.push_back({start - lineStart, end - lineStart, run.color, run.bold});
             }
         }
         return core::normalizeTextRuns(lineText, std::move(local));
@@ -1052,6 +1052,7 @@ struct InputModel {
             fold(bits);
             std::memcpy(&bits, &run.color.a, sizeof(bits));
             fold(bits);
+            fold(run.bold ? 1ull : 0ull);  // need377：bold 位入指纹（keyed 行重着色）
         }
         return hash;
     }

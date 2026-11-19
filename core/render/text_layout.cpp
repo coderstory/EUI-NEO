@@ -106,9 +106,9 @@ void TextPrimitive::Impl::rebuildLayout() {
 void TextPrimitive::Impl::rebuildVertices() {
     vertices_.clear();
     const float lineHeight = style_.lineHeight > 0.0f ? style_.lineHeight : style_.fontSize * 1.2f;
-    // runs 已归一化（升序、不重叠）；命中返回 run 色，未命中返回 nullptr（用 style_.color）。
+    // runs 已归一化（升序、不重叠）；命中返回 run，未命中返回 nullptr（用 style_.color）。
     const std::vector<TextRun>& runs = style_.runs;
-    const auto runColorAt = [&runs](int byteStart) -> const Color* {
+    const auto runAt = [&runs](int byteStart) -> const TextRun* {
         if (runs.empty()) {
             return nullptr;
         }
@@ -118,7 +118,7 @@ void TextPrimitive::Impl::rebuildVertices() {
             return nullptr;
         }
         const TextRun& run = *(it - 1);
-        return byteStart < run.byteEnd ? &run.color : nullptr;
+        return byteStart < run.byteEnd ? &run : nullptr;
     };
     const auto close = [](float left, float right) {
         return std::fabs(left - right) <= 0.0001f;
@@ -169,8 +169,13 @@ void TextPrimitive::Impl::rebuildVertices() {
             const float x1 = x0 + glyph.width;
             const float y1 = y0 + glyph.height;
             const float colored = glyph.colored ? 1.0f : 0.0f;
-            const Color* runColor = runColorAt(laidOut.byteStart);
-            const Color& glyphColor = runColor != nullptr ? *runColor : style_.color;
+            const TextRun* run = runAt(laidOut.byteStart);
+            const Color& glyphColor = run != nullptr ? run->color : style_.color;
+            // need377 faux-bold：bold run 的字形双绘（第二份横向亚像素偏移）。
+            // 偏移不改 advance/行宽 → 度量、换行、光标几何零影响；彩色字形
+            //（emoji）不加粗。偏移 ≈ 0.045em，钳下限防小字号过虚。
+            const bool glyphBold = run != nullptr && run->bold && !glyph.colored;
+            const float boldOffset = std::max(0.35f, style_.fontSize * 0.045f);
             Vec2 p0{x0, y0};
             Vec2 p1{x1, y0};
             Vec2 p2{x1, y1};
@@ -230,14 +235,22 @@ void TextPrimitive::Impl::rebuildVertices() {
 
             // 顶点格式 9 float：x, y, u, v, colored, r, g, b, a（per-vertex color）。
             // 空 runs 时 glyphColor == style_.color，与旧 uniform 路径输出等价。
-            vertices_.insert(vertices_.end(), {
-                p0.x, p0.y, glyph.u0, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
-                p1.x, p1.y, glyph.u1, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
-                p2.x, p2.y, glyph.u1, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
-                p0.x, p0.y, glyph.u0, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
-                p2.x, p2.y, glyph.u1, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
-                p3.x, p3.y, glyph.u0, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a
-            });
+            const auto emitQuad = [&](const Vec2& q0, const Vec2& q1,
+                                      const Vec2& q2, const Vec2& q3) {
+                vertices_.insert(vertices_.end(), {
+                    q0.x, q0.y, glyph.u0, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                    q1.x, q1.y, glyph.u1, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                    q2.x, q2.y, glyph.u1, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                    q0.x, q0.y, glyph.u0, glyph.v0, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                    q2.x, q2.y, glyph.u1, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a,
+                    q3.x, q3.y, glyph.u0, glyph.v1, colored, glyphColor.r, glyphColor.g, glyphColor.b, glyphColor.a
+                });
+            };
+            emitQuad(p0, p1, p2, p3);
+            if (glyphBold) {
+                emitQuad({p0.x + boldOffset, p0.y}, {p1.x + boldOffset, p1.y},
+                         {p2.x + boldOffset, p2.y}, {p3.x + boldOffset, p3.y});
+            }
         }
     }
     verticesDirty_ = false;

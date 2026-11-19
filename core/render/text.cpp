@@ -260,11 +260,15 @@ std::vector<TextRun> normalizeTextRuns(const std::string& text, std::vector<Text
             continue;
         }
         const Color& color = runs[static_cast<std::size_t>(runIndex)].color;
-        if (!result.empty() && result.back().byteEnd == byte && sameColor(result.back().color, color)) {
-            result.back().byteEnd = byte + 1;   // 相邻同色合并
+        const bool bold = runs[static_cast<std::size_t>(runIndex)].bold;
+        if (!result.empty() && result.back().byteEnd == byte &&
+            sameColor(result.back().color, color) && result.back().bold == bold) {
+            result.back().byteEnd = byte + 1;   // 相邻同样式合并
             continue;
         }
-        result.push_back(TextRun{byte, byte + 1, color});
+        TextRun run{byte, byte + 1, color};
+        run.bold = bold;
+        result.push_back(run);
     }
     return result;
 }
