@@ -419,16 +419,6 @@ void advantagesScene(eui::Ui& ui, float width, float height, float t, float opac
     const float introOut = smoothStep(30.813f, 31.254f, t);
     const float introMix = introIn * (1.0f - introOut);
     const float introY = -height * 0.34f + height * 0.68f * introIn + height * 0.92f * introOut;
-#if 0
-    label(ui, "adv.intro.hero", "来了解一下 EUI-NEO", 0.0f, introY, width, 130.0f,
-          std::min(width * 0.105f, 148.0f), opacity * introMix, kBlue,
-          eui::HorizontalAlign::Center, 0.0f, 0.0f, 80.0f * (1.0f - introIn),
-          -0.04f * (1.0f - introIn), 1000.0f, 0.92f + 0.08f * introIn);
-    label(ui, "adv.intro.hero.cn", "来了解一下 EUI-NEO", 0.0f, introY, width, 130.0f,
-          std::min(width * 0.105f, 148.0f), opacity * introMix, kBlue,
-          eui::HorizontalAlign::Center, 0.0f, 0.0f, 80.0f * (1.0f - introIn),
-          -0.04f * (1.0f - introIn), 1000.0f, 0.92f + 0.08f * introIn);
-#endif
     label(ui, "adv.intro.hero.final", "来了解一下 EUI-NEO", 0.0f, introY, width, 130.0f,
           std::min(width * 0.105f, 148.0f), opacity * introMix, kBlue,
           eui::HorizontalAlign::Center, 0.0f, 0.0f, 80.0f * (1.0f - introIn),

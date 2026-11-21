@@ -132,14 +132,6 @@ std::string stamp() {
     return buf;
 }
 
-std::string byteHex(int value) {
-    static constexpr char kDigits[] = "0123456789ABCDEF";
-    std::string out;
-    out.push_back(kDigits[(value >> 4) & 0x0F]);
-    out.push_back(kDigits[value & 0x0F]);
-    return out;
-}
-
 std::string trim(std::string value) {
     while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
         value.erase(value.begin());
@@ -203,15 +195,6 @@ std::string normalizeHex(const std::string& input, bool& ok, int& byteCount) {
         ++byteCount;
     }
     return result;
-}
-
-int countHexBytes(const std::string& value) {
-    if (value.empty()) return 0;
-    int count = 1;
-    for (char ch : value) {
-        if (ch == ' ') ++count;
-    }
-    return count;
 }
 
 // 将 HEX 字符串转为二进制数据

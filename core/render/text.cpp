@@ -742,10 +742,6 @@ void TextPrimitive::Impl::invalidateVertices() {
     verticesDirty_ = true;
 }
 
-unsigned int TextPrimitive::Impl::readCodepoint(const std::string& text, size_t& index) {
-    return text_detail::readUtf8Codepoint(text, index);
-}
-
 TextPrimitive::TextPrimitive()
     : impl_(std::make_unique<Impl>()) {}
 

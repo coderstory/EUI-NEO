@@ -237,7 +237,6 @@ struct TextPrimitive::Impl {
     void appendShapedGlyphToLine(Line& line, const ShapedGlyph& shaped, float& cursorX, int paragraphOffset);
     void appendEllipsisToLine(Line& line, float& cursorX, int paragraphOffset, int paragraphByteEnd);
 
-    static unsigned int readCodepoint(const std::string& text, size_t& index);
     static std::string resolveFontPath(const std::string& fontFamily, int fontWeight);
 
     Vec2 position_;
