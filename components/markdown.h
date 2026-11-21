@@ -843,10 +843,11 @@ inline std::shared_ptr<const MarkdownDocument> cachedMarkdownDocument(const std:
     // Total memory stays bounded by kCacheByteCapacity below.
     constexpr std::size_t kCacheCapacity = 64;
     // bug399 round9 / debt398 P1-B：条目口径对齐真实工作集。旧 256KB 单条上限使
-    // 53KB 夹具的展开体（blocks/runs/单元格逐项计费，实测数 MB）被判超限 → 不
+    // 53KB 夹具的展开体（blocks/runs/单元格逐项计费，实测 338KB）被判超限 → 不
     // 入缓存 → 每帧 miss 重 parse+重建（round7 log parse hit=0 miss=1/帧）。
-    // 单条抬到 8MB 容典型长文档展开体；总量 32MB 封顶（实际占用=条目真实字节，
-    // 上限只是准入闸，不预分配）。
+    // 现口径：单条上限 2MB（kEntryByteCapacity，超限不入缓存、直接返回），总量
+    // 上限 8MB（kCacheByteCapacity，超限按 lastUsed 逐出）；两者只是准入/逐出
+    // 闸，不预分配（实际占用 = 条目真实字节）。
     constexpr std::size_t kCacheByteCapacity = 8 * 1024 * 1024;
     constexpr std::size_t kEntryByteCapacity = 2 * 1024 * 1024;
     MarkdownDocumentCache& cache = sharedMarkdownDocumentCache();
@@ -1298,14 +1299,18 @@ private:
 
     // 同行相邻矩形连续化（bug259-G 二轮复核）：CJK 经 splitMarkdownTextForLayout
     // 单码点成段、词间空白丢段，同一 span 的相邻段矩形之间会留 layout 间隙
-    // （4px/空格）→ 高亮视觉碎裂。同行（y/h 一致）且水平相邻（缝隙 ≤ 8px，
-    // 即 layout gap + 浮点余量；正常 intra-span 缝隙恒为 4px）的矩形合并：
+    // → 高亮视觉碎裂。同行（y/h 一致）且水平相邻（缝隙 ≤ 2×kInlineSegmentGap +
+    // 0.5 浮点余量）的矩形合并：P0 后同 run 同行段已在布局级并成一段（段内缝隙
+    // 恒 0），矩形缝隙只出现在跨 run 处（恒 kInlineSegmentGap = 4px）。
     // 前段右缘扩展到后段左缘，只吞字间空白，不吞下一字墨迹（后段左缘即其
     // 首字墨迹左界）；跨行 / 跨块（y 不同）不合并。块局部（hitRectsForDisplay
     // Range）与文档系（hitRectsForDisplayRangeDoc）两口共用 = 合并行为零漂移
     //（need345 抽出，原内联逻辑原样平移）。
     static void mergeAdjacentRectsOnSameLine(std::vector<MarkdownHitRect>& rects) {
-        constexpr float kMergeGapPx = 8.0f;
+        // bug399 round10 P1-3：阈值含浮点余量。段内缝隙（同 run 同行）P0 后恒 0，
+        // 段间缝隙（跨 run/样式）恒 kInlineSegmentGap=4px；旧值恰 8.0 使浮点求和
+        // 8.000004 判超限 → 搜索/选区高亮每 2 字断条。
+        constexpr float kMergeGapPx = kInlineSegmentGap * 2.0f + 0.5f;
         std::vector<MarkdownHitRect> merged;
         merged.reserve(rects.size());
         for (const MarkdownHitRect& r : rects) {
@@ -1457,7 +1462,11 @@ private:
                                         firstNCodepoints(seg.text, localStart),
                                         family, runFontSize, weight)));
                 const float x1 = (localEnd >= segCps)
-                    ? seg.x + seg.width  // 段尾 = segment 右缘（chip 含右内衬，不再外扩）
+                    ? (chip ? seg.x + seg.width  // chip 段尾 = 右缘（含右内衬）
+                            : seg.x + std::min(  // 非 chip：声明宽含 (n-1)×gap，
+                                  seg.width,     // 取整段 measure 防行尾外扩
+                                  detail::measureMarkdownTextWidth(
+                                      seg.text, family, runFontSize, weight)))
                     : seg.x + chipInset +
                           std::min(seg.width,
                                    detail::measureMarkdownTextWidth(
@@ -2211,12 +2220,17 @@ private:
                 cursorX += gap;
             }
             // bug399 round6 / debt398：段合并（布局级）——同一视觉 run + 同一行 +
-            // 水平紧邻（上段右缘 == 本段左缘，gap=0）的相邻段合并为一个段。
+            // 水平紧邻（上段右缘 == 本段左缘）的相邻段合并为一个段。
             // CJK 单码点成段是排版语义，不必逐码点成段：合并后 segment 表体积降
             // 1-2 个量级（inline 缓存不再超字节上限反复逐出）、元素数与 shaping 次
-            // 数同降；advance 累加使宽度/位置逐位不变（选区/命中走本表不受影响）。
+            // 数同降；选区/命中走本表不受影响（渲染盒宽与游标推进共用同一累计值）。
             if (!chip && !segments.empty()) {
                 InlineSegment& last = segments.back();
+                // bug399 round10 / debt398 P0：宽度累计必须吸收本次段前 gap。判据保持
+                // 原语义（cursorX 在判据前已 +gap，故 last.x+last.width+gap 才是右缘对
+                // 齐），但旧式增量只 +segmentWidth 使合并段声明宽比布局分配窄 4px/次
+                // → 渲染期 CJK 两字一组、组间 8px 字距抖动，且第三次起判据失效只成
+                // 对合并；改为 +gap+segmentWidth 后宽度/游标同步推进，判据持续成立。
                 if (!last.chip && std::fabs(last.y - cursorY) < 0.5f &&
                     std::fabs(last.x + last.width + gap - cursorX) < 0.6f &&
                     last.run.kind == run.kind &&
@@ -2230,7 +2244,7 @@ private:
                     last.run.style.wiki == run.style.wiki &&
                     last.run.style.html == run.style.html) {
                     last.text += text;
-                    last.width += segmentWidth;
+                    last.width += gap + segmentWidth;  // 吸收本段前 gap（与游标推进同口径）
                 } else {
                     segments.push_back({std::move(run), std::move(text), cursorX, cursorY, segmentWidth, chip});
                 }
@@ -2634,8 +2648,9 @@ private:
                 // bug399 round6 / debt398：段合并降元素数——CJK 单码点成段是
                 // 布局语义（splitMarkdownTextForLayout），但元素构建无需逐码点：
                 // 同 run 样式 + 同行 + 水平紧邻（x == prev.x+prev.width）的段
-                // 合并成一个 text 元素，元素数降 1-2 个量级；字形位置/宽度不变
-                // （advance 累加），选区与命中走 layout 表不受影响。
+                // 合并成一个 text 元素；选区与命中走 layout 表不受影响。
+                // bug399 round10 P0 后布局级合并已吸收 gap 并把同 run 同行段并成
+                // 一段，本循环通常一进即出（保底：同 run 相邻形态仍能兜住）。
                 const auto sameVisualRun = [](const InlineSegment& a,
                                               const InlineSegment& b) {
                     return a.run.kind == b.run.kind &&
@@ -2669,7 +2684,7 @@ private:
                         const InlineSegment& next = segs[nextIndex];
                         if (next.chip || std::fabs(next.y - first.y) > 0.5f ||
                             !sameVisualRun(first, next) ||
-                            std::fabs(next.x - (first.x + mergedWidth) - kInlineSegmentGap) > 0.6f) {
+                            std::fabs(next.x - (first.x + mergedWidth)) > 0.6f) {
                             break;
                         }
                         mergedText += next.text;
