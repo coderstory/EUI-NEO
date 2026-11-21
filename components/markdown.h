@@ -227,11 +227,29 @@ inline std::vector<std::string> splitMarkdownTextForLayout(const std::string& te
     std::size_t begin = 0;
     while (begin < text.size()) {
         const unsigned char first = static_cast<unsigned char>(text[begin]);
-        if (std::isspace(first) != 0) {
-            if (text[begin] == '\n') {
-                parts.push_back("\n");
-            }
+        // bug399 round11 / debt398：词间空白不得丢弃（旧实现整段丢弃 → ASCII 词
+        // 段盒贴合、合并段文本与显示流失配 → 含空格行无高亮矩形）。'\n' 仍独立
+        // 成段（折行语义）；其余空白附着到前一词段（宽度测量含空白），行首
+        // （无前段 / 前段为 '\n'）空白独立成段——段文本串接恒等于显示流，
+        // 反查/选区的码点域逐字节对齐。
+        if (first == '\n') {
+            parts.push_back("\n");
             ++begin;
+            continue;
+        }
+        if (std::isspace(first) != 0) {
+            std::size_t end = begin;
+            while (end < text.size() && text[end] != '\n' &&
+                   std::isspace(static_cast<unsigned char>(text[end])) != 0) {
+                ++end;
+            }
+            const std::string whitespace = text.substr(begin, end - begin);
+            if (!parts.empty() && parts.back() != "\n") {
+                parts.back() += whitespace;
+            } else {
+                parts.push_back(whitespace);
+            }
+            begin = end;
             continue;
         }
 
@@ -1398,38 +1416,33 @@ private:
             cachedInlineLayout(runs, textWidth, fontSize, lineHeight, heading,
                                core::HorizontalAlign::Left, style);
         const std::vector<InlineSegment>& segments = layout->segments;
-        // 码点域对齐（bug259-G 第二刀）：matches 的码点域 = displayText 串接流
-        // （含空白）；而 layout 的 segment 经 splitMarkdownTextForLayout 生成，
-        // 空白全部丢弃、'\n' 折行也不成段——旧实现按「segment 码点连减」映射，
-        // 每遇一个被丢空白漂 +1 码点（逐词右移 / 溢出词尾 / 矩形断裂露缝）。
-        // 现改为在显示流上按序消费 segment：跳过空白后逐段对齐，seg.x/前缀
-        // measure 与渲染同源（渲染 x = seg.x + 段内 glyph advance，同一 measure
-        // 函数），矩形边缘零漂移。
+        // 码点域对齐（bug259-G 第二刀 / bug399 round11）：matches 的码点域 =
+        // displayText 串接流；layout 的 segment 由 splitMarkdownTextForLayout
+        // 对同一文本做【严格切分】生成（词间空白随词段保留、'\n' 独立成段），
+        // 故段文本串接 ≡ 显示流：逐段直接对齐即可。seg.x/前缀 measure 与渲染
+        // 同源（渲染 x = seg.x + 段内 glyph advance，同一 measure 函数），矩形
+        // 边缘零漂移；失配段宁漏勿滥不出矩形。
         std::string stream;
         for (const detail::MarkdownRun& run : runs) {
             stream += detail::displayText(run);
         }
         std::size_t byte = 0;  // 流内字节游标
         std::size_t pos = 0;   // 流内码点游标（= matches 域）
-        auto cpStep = [](const std::string& s, std::size_t i) {
-            const unsigned char c = static_cast<unsigned char>(s[i]);
-            const std::size_t step =
-                c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1;
-            return std::min(step, s.size() - i);
-        };
         for (const InlineSegment& seg : segments) {
-            if (seg.text.empty() || seg.text == "\n") {
+            if (seg.text.empty()) {
                 continue;
             }
-            // 跳过被 layout 丢弃的空白（含 '\n'：折行不成段）
-            while (byte < stream.size()) {
-                const unsigned char c = static_cast<unsigned char>(stream[byte]);
-                if (std::isspace(c) == 0) {
-                    break;
+            if (seg.text == "\n") {
+                // 折行标记占显示流 1 码点/1 字节：消费但不产矩形。
+                if (byte < stream.size() && stream[byte] == '\n') {
+                    ++pos;
+                    ++byte;
                 }
-                ++pos;
-                byte += cpStep(stream, byte);
+                continue;
             }
+            // bug399 round11：段文本现为显示流的严格切分（空白随词段保留），
+            // 不再跳过任何空白——逐段直接对齐（旧式跳过空白会吃掉段内自带的
+            // 行首空白，导致后续段整体错位 → 该行全无矩形）。
             const std::size_t segBegin = pos;
             const std::size_t segCps = countCodepoints(seg.text);
             // 防御：segment 文本应与流严格对齐（同一 runs 派生）；失配（异常
@@ -1813,29 +1826,24 @@ private:
         }
         std::size_t byte = 0;  // 流内字节游标（走法与 rectsForInlineRuns 逐行同款）
         std::size_t pos = 0;   // 流内码点游标（= 显示文本域）
-        auto cpStep = [](const std::string& s, std::size_t i) {
-            const unsigned char c = static_cast<unsigned char>(s[i]);
-            const std::size_t step =
-                c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1;
-            return std::min(step, s.size() - i);
-        };
         const InlineSegment* best = nullptr;
         std::size_t bestBegin = 0;
         std::size_t lastEnd = 0;  // 全段最大 segBegin+segCps（下方越界 → 块末）
         float bestDist = std::numeric_limits<float>::max();
         for (const InlineSegment& seg : segments) {
-            if (seg.text.empty() || seg.text == "\n") {
+            if (seg.text.empty()) {
                 continue;
             }
-            // 跳过被 layout 丢弃的空白（含 '\n' 折行）
-            while (byte < stream.size()) {
-                const unsigned char c = static_cast<unsigned char>(stream[byte]);
-                if (std::isspace(c) == 0) {
-                    break;
+            if (seg.text == "\n") {
+                // 折行标记占显示流 1 码点/1 字节：消费但不作候选段。
+                if (byte < stream.size() && stream[byte] == '\n') {
+                    ++pos;
+                    ++byte;
                 }
-                ++pos;
-                byte += cpStep(stream, byte);
+                continue;
             }
+            // bug399 round11：段文本 = 显示流严格切分（空白随词段保留），
+            // 逐段直接对齐；旧式跳过空白会吃掉段内行首空白 → 后续段错位。
             const std::size_t segBegin = pos;
             const std::size_t segCps = countCodepoints(seg.text);
             const bool aligned =
@@ -2203,7 +2211,22 @@ private:
             }
             const bool chip = runIsChip(run);
             const float segmentWidth = estimateInlineSegmentWidth(run, text, width, fontSize, heading, style);
-            if (hasLineItem && width > 0.0f && cursorX + gap + segmentWidth > width) {
+            // bug399 round11 / debt398：段前 gap 仅在「无空白分隔」时补。段文本
+            // 现已含词间空白（宽度测量含空白），再补 4px 会把空格变双倍间距；
+            // 段内相邻空白（行首缩进等）同理不再补。CJK 无空白相邻段仍补 gap
+            // （round10 Q 断言「段盒宽含 gap」语义不变）。
+            const auto hasSpaceAt = [](const std::string& s, bool front) {
+                if (s.empty()) {
+                    return false;
+                }
+                const char ch = front ? s.front() : s.back();
+                return std::isspace(static_cast<unsigned char>(ch)) != 0;
+            };
+            const bool prevEndsWithSpace =
+                hasLineItem && !segments.empty() && hasSpaceAt(segments.back().text, false);
+            const float preGap =
+                (hasLineItem && !hasSpaceAt(text, true) && !prevEndsWithSpace) ? gap : 0.0f;
+            if (hasLineItem && width > 0.0f && cursorX + preGap + segmentWidth > width) {
                 // need324：即将起行 segment 首码点 ∈ 禁则集 → 拉回本行行尾
                 // （允许超 width；同 text_layout 拉回法与 ≤2 钳制口径）。
                 if (linePullCount < 2 &&
@@ -2217,7 +2240,7 @@ private:
                 }
             }
             if (hasLineItem) {
-                cursorX += gap;
+                cursorX += preGap;
             }
             // bug399 round6 / debt398：段合并（布局级）——同一视觉 run + 同一行 +
             // 水平紧邻（上段右缘 == 本段左缘）的相邻段合并为一个段。
@@ -2232,7 +2255,7 @@ private:
                 // → 渲染期 CJK 两字一组、组间 8px 字距抖动，且第三次起判据失效只成
                 // 对合并；改为 +gap+segmentWidth 后宽度/游标同步推进，判据持续成立。
                 if (!last.chip && std::fabs(last.y - cursorY) < 0.5f &&
-                    std::fabs(last.x + last.width + gap - cursorX) < 0.6f &&
+                    std::fabs(last.x + last.width + preGap - cursorX) < 0.6f &&
                     last.run.kind == run.kind &&
                     last.run.style.emphasis == run.style.emphasis &&
                     last.run.style.strong == run.style.strong &&
@@ -2244,7 +2267,7 @@ private:
                     last.run.style.wiki == run.style.wiki &&
                     last.run.style.html == run.style.html) {
                     last.text += text;
-                    last.width += gap + segmentWidth;  // 吸收本段前 gap（与游标推进同口径）
+                    last.width += preGap + segmentWidth;  // 与游标推进同口径（含空白时 preGap=0）
                 } else {
                     segments.push_back({std::move(run), std::move(text), cursorX, cursorY, segmentWidth, chip});
                 }
