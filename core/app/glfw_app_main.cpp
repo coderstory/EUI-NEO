@@ -706,6 +706,9 @@ int eui_app_run() {
     windowRequest.maxWidth = app::maximumWindowWidth();
     windowRequest.maxHeight = app::maximumWindowHeight();
     windowRequest.resizable = app::windowResizable();
+    // need376：测试驱动宿主设 focusOnShow(false)，show 时不夺取前台焦点
+    //（全量测试 13 个场景串行跑，否则每个都打断用户正在打的字）。
+    windowRequest.focusOnShow = app::windowFocusOnShow();
     windowRequest.highDpi = app::windowHighDpi();
     windowRequest.decorated = app::windowDecorated();
     windowRequest.transparent = app::windowTransparent();

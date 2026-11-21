@@ -100,6 +100,8 @@ int minimumWindowHeight();
 int maximumWindowWidth();
 int maximumWindowHeight();
 bool windowResizable();
+/** @brief 主窗 show 时是否夺取前台焦点（need376；DslAppConfig::focusOnShow）。 */
+bool windowFocusOnShow();
 bool windowHighDpi();
 bool windowDecorated();
 bool windowTransparent();

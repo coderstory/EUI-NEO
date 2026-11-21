@@ -289,6 +289,11 @@ bool windowResizable() {
     return dslAppConfig().resizableValue;
 }
 
+// need376：主窗 show 时是否夺取前台焦点（测试驱动宿主设 false，不打断用户打字）。
+bool windowFocusOnShow() {
+    return dslAppConfig().focusOnShowValue;
+}
+
 bool windowHighDpi() {
     return dslAppConfig().highDpiValue;
 }
