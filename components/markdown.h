@@ -2120,7 +2120,33 @@ private:
             if (hasLineItem) {
                 cursorX += gap;
             }
-            segments.push_back({std::move(run), std::move(text), cursorX, cursorY, segmentWidth, chip});
+            // bug399 round6 / debt398：段合并（布局级）——同一视觉 run + 同一行 +
+            // 水平紧邻（上段右缘 == 本段左缘，gap=0）的相邻段合并为一个段。
+            // CJK 单码点成段是排版语义，不必逐码点成段：合并后 segment 表体积降
+            // 1-2 个量级（inline 缓存不再超字节上限反复逐出）、元素数与 shaping 次
+            // 数同降；advance 累加使宽度/位置逐位不变（选区/命中走本表不受影响）。
+            if (!chip && !segments.empty()) {
+                InlineSegment& last = segments.back();
+                if (!last.chip && std::fabs(last.y - cursorY) < 0.5f &&
+                    std::fabs(last.x + last.width - cursorX) < 0.6f &&
+                    last.run.kind == run.kind &&
+                    last.run.style.emphasis == run.style.emphasis &&
+                    last.run.style.strong == run.style.strong &&
+                    last.run.style.deleted == run.style.deleted &&
+                    last.run.style.underline == run.style.underline &&
+                    last.run.style.link == run.style.link &&
+                    last.run.style.image == run.style.image &&
+                    last.run.style.math == run.style.math &&
+                    last.run.style.wiki == run.style.wiki &&
+                    last.run.style.html == run.style.html) {
+                    last.text += text;
+                    last.width += segmentWidth;
+                } else {
+                    segments.push_back({std::move(run), std::move(text), cursorX, cursorY, segmentWidth, chip});
+                }
+            } else {
+                segments.push_back({std::move(run), std::move(text), cursorX, cursorY, segmentWidth, chip});
+            }
             cursorX += segmentWidth;
             hasLineItem = true;
         };
@@ -2483,8 +2509,65 @@ private:
             .position(x, y)
             .size(width, height)
             .content([&] {
-                for (std::size_t index = 0; index < layout->segments.size(); ++index) {
-                    renderInlineSegment(partId + ".seg." + std::to_string(index), layout->segments[index], fontSize, lineHeight, heading);
+                // bug399 round6 / debt398：段合并降元素数——CJK 单码点成段是
+                // 布局语义（splitMarkdownTextForLayout），但元素构建无需逐码点：
+                // 同 run 样式 + 同行 + 水平紧邻（x == prev.x+prev.width）的段
+                // 合并成一个 text 元素，元素数降 1-2 个量级；字形位置/宽度不变
+                // （advance 累加），选区与命中走 layout 表不受影响。
+                const auto sameVisualRun = [](const InlineSegment& a,
+                                              const InlineSegment& b) {
+                    return a.run.kind == b.run.kind &&
+                           a.run.style.emphasis == b.run.style.emphasis &&
+                           a.run.style.strong == b.run.style.strong &&
+                           a.run.style.deleted == b.run.style.deleted &&
+                           a.run.style.underline == b.run.style.underline &&
+                           a.run.style.link == b.run.style.link &&
+                           a.run.style.image == b.run.style.image &&
+                           a.run.style.math == b.run.style.math &&
+                           a.run.style.wiki == b.run.style.wiki &&
+                           a.run.style.html == b.run.style.html;
+                };
+                const auto& segs = layout->segments;
+
+
+                std::size_t outIndex = 0;
+                std::size_t segIndex = 0;
+                while (segIndex < segs.size()) {
+                    const InlineSegment& first = segs[segIndex];
+                    if (first.chip) {
+                        renderInlineSegment(partId + ".seg." + std::to_string(outIndex++),
+                                            first, fontSize, lineHeight, heading);
+                        ++segIndex;
+                        continue;
+                    }
+                    std::string mergedText = first.text;
+                    float mergedWidth = first.width;
+                    std::size_t nextIndex = segIndex + 1;
+                    while (nextIndex < segs.size()) {
+                        const InlineSegment& next = segs[nextIndex];
+                        if (next.chip || std::fabs(next.y - first.y) > 0.5f ||
+                            !sameVisualRun(first, next) ||
+                            std::fabs(next.x - (first.x + mergedWidth)) > 0.6f) {
+                            break;
+                        }
+                        mergedText += next.text;
+                        mergedWidth += next.width;
+                        ++nextIndex;
+                    }
+                    if (nextIndex == segIndex + 1) {
+                        renderInlineSegment(partId + ".seg." + std::to_string(outIndex++),
+                                            first, fontSize, lineHeight, heading);
+                    } else {
+                        InlineSegment combined = first;
+                        combined.text = std::move(mergedText);
+                        combined.width = mergedWidth;
+                        renderInlineSegment(partId + ".seg." + std::to_string(outIndex++),
+                                            combined, fontSize, lineHeight, heading);
+                    }
+                    segIndex = nextIndex;
+
+
+
                 }
             })
             .build();
