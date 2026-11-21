@@ -49,6 +49,15 @@ public:
         return *this;
     }
     ScrollViewBuilder& contentKey(std::string value) { contentKey_ = std::move(value); return *this; }
+    // bug399：滚动偏移变化时请求重排（opt-in，转发 root 的同名 DSL 方法 dsl.h）。
+    // 裁剪/虚拟化型内容（visibleRange 视口裁剪、virtualmasonry 式只建可见块）必须
+    // 开启：滚轮只改运行时偏移、不自然触发重排，不开时裁剪范围冻结在末次
+    // compose 的滚动值，滚出内容侧内建 overscan 后新暴露区只剩空包装 = 白板。
+    // 默认 false —— 既有 46 个 scrollView 调用方（整篇常驻内容）行为不变。
+    ScrollViewBuilder& composeOnScrollOffsetChange(bool value = true) {
+        composeOnScrollOffsetChange_ = value;
+        return *this;
+    }
     ScrollViewBuilder& transition(const core::Transition& value) { transition_ = value; return *this; }
     ScrollViewBuilder& transition(float duration, core::Ease ease = core::Ease::OutCubic) {
         transition_ = core::Transition::make(duration, ease);
@@ -108,6 +117,7 @@ public:
             .zIndex(zIndex_)
             .clip()
             .scrollState(id_, currentOffset, maxOffset, scrollStep)
+            .composeOnScrollOffsetChange(composeOnScrollOffsetChange_)
             .onScrollOffsetChanged(onChange);
         if (hasX_) {
             root.x(x_);
@@ -224,6 +234,7 @@ private:
     float scrollbarWidth_ = -1.0f;
     float scrollbarGap_ = -1.0f;
     bool scrollbarOverlay_ = false;  // UAT6 K 批覆盖式悬浮滚动条
+    bool composeOnScrollOffsetChange_ = false;  // bug399 裁剪型内容滚动触发重排（opt-in）
     float x_ = 0.0f;
     float y_ = 0.0f;
     bool hasX_ = false;
