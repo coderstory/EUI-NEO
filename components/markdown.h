@@ -807,6 +807,13 @@ struct MarkdownPerfStats {
     std::size_t inlineCacheEntries = 0;
     std::size_t inlineCacheBytes = 0;
     std::size_t docCacheEntries = 0;
+    // bug399 round9 / debt398 P1-B：文档缓存条目真实展开体积（计费口径）与因
+    // 超单条上限而被拒缓存（= 每帧 miss）的次数，供探针读实测复核容量。
+    std::size_t lastDocBytes = 0;
+    long long docTooLarge = 0;
+    long long inlineLayoutBuilds = 0;
+    long long inlineSegmentsBuilt = 0;
+    long long inlineRunsBuilt = 0;
     void countBlockKind(MarkdownBlockKind kind) {
         switch (kind) {
         case MarkdownBlockKind::Heading: ++kindHeading; break;
@@ -835,8 +842,13 @@ inline std::shared_ptr<const MarkdownDocument> cachedMarkdownDocument(const std:
     // nearly every entry between frames and re-parsed on each compose pass.
     // Total memory stays bounded by kCacheByteCapacity below.
     constexpr std::size_t kCacheCapacity = 64;
-    constexpr std::size_t kCacheByteCapacity = 1024 * 1024;
-    constexpr std::size_t kEntryByteCapacity = 256 * 1024;
+    // bug399 round9 / debt398 P1-B：条目口径对齐真实工作集。旧 256KB 单条上限使
+    // 53KB 夹具的展开体（blocks/runs/单元格逐项计费，实测数 MB）被判超限 → 不
+    // 入缓存 → 每帧 miss 重 parse+重建（round7 log parse hit=0 miss=1/帧）。
+    // 单条抬到 8MB 容典型长文档展开体；总量 32MB 封顶（实际占用=条目真实字节，
+    // 上限只是准入闸，不预分配）。
+    constexpr std::size_t kCacheByteCapacity = 8 * 1024 * 1024;
+    constexpr std::size_t kEntryByteCapacity = 2 * 1024 * 1024;
     MarkdownDocumentCache& cache = sharedMarkdownDocumentCache();
     MarkdownPerfStats& perf = markdownPerfStats();
     const auto lookupT0 = std::chrono::steady_clock::now();
@@ -855,7 +867,9 @@ inline std::shared_ptr<const MarkdownDocument> cachedMarkdownDocument(const std:
     document->blocks = parseMarkdownBlocks(source);
     perf.parseBuildMs += markdownPerfMs(parseT0);
     const std::size_t documentBytes = markdownDocumentCacheBytes(source, *document);
+    perf.lastDocBytes = documentBytes;
     if (documentBytes > kEntryByteCapacity) {
+        ++perf.docTooLarge;
         return document;
     }
 
@@ -1221,6 +1235,10 @@ public:
         perf.blocksVisited += static_cast<long long>(blocks.size());
         const auto buildT0 = std::chrono::steady_clock::now();
         flowCursorY_ = 0.0f;  // bug382 裁剪游标：build() 帧内生命周期
+        // bug399 round9 / debt398 P2①：快照键指针身份防御。runs 向量跨帧可能被
+        // 重建到同一地址（悬空指针复用）——每帧清快照的 runs 指针，首查必走
+        // cachedInlineLayout（内容哈希键），成本 0，杜绝错配陈旧布局。
+        lastInlineLayout_.runs = nullptr;
         auto root = ui_.column(id_)
             .width(width_)
             .height(height_)
@@ -2081,6 +2099,11 @@ private:
         key.append(value);
     }
 
+    // bug399 round9 / debt398 P1-A：段间水平 gap 常量。布局推进 cursorX 时，非行首
+    // 段前会先 += gap（见 layoutInlineRunsWithStyle），因此「同段相邻」判据的右缘
+    // 必须含 gap；旧判据漏 gap → 恒差 4px → 段合并从未触发（review 实证）。
+    static constexpr float kInlineSegmentGap = 4.0f;
+
     static std::string inlineLayoutKey(const std::vector<detail::MarkdownRun>& runs,
                                        float width,
                                        float fontSize,
@@ -2137,7 +2160,7 @@ private:
                                                                 const MarkdownStyle& style,
                                                                 float& outHeight) {
         std::vector<InlineSegment> segments;
-        const float gap = 4.0f;
+        const float gap = kInlineSegmentGap;
         float cursorX = 0.0f;
         float cursorY = 0.0f;
         bool hasLineItem = false;
@@ -2195,7 +2218,7 @@ private:
             if (!chip && !segments.empty()) {
                 InlineSegment& last = segments.back();
                 if (!last.chip && std::fabs(last.y - cursorY) < 0.5f &&
-                    std::fabs(last.x + last.width - cursorX) < 0.6f &&
+                    std::fabs(last.x + last.width + gap - cursorX) < 0.6f &&
                     last.run.kind == run.kind &&
                     last.run.style.emphasis == run.style.emphasis &&
                     last.run.style.strong == run.style.strong &&
@@ -2266,6 +2289,14 @@ private:
         }
 
         outHeight = segments.empty() ? lineHeight : cursorY + lineHeight;
+        // bug399 round9 / debt398 P1-A：段表体积回归计量——记录每条新布局的段数
+        // 与 run 数（未合并时 CJK 单码点成段，段数远多于 run 数；合并后趋近 1）。
+        {
+            detail::MarkdownPerfStats& perf = detail::markdownPerfStats();
+            ++perf.inlineLayoutBuilds;
+            perf.inlineSegmentsBuilt += static_cast<long long>(segments.size());
+            perf.inlineRunsBuilt += static_cast<long long>(runs.size());
+        }
         return segments;
     }
 
@@ -2284,8 +2315,14 @@ private:
         // estimate + render 双请求），2MB 容量 = 顺序扫描 LRU 纯 thrash——每帧
         // ~690 次未命中重 shaping（620-980ms/帧）。容量须 > 双宽（滚动条占位）
         // 工作集，故 4096 条 / 32MB；条目值轻（段表），命中后每帧仅剩键构造+查找。
-        constexpr std::size_t kCacheCapacity = 4096;
-        constexpr std::size_t kCacheByteCapacity = 32 * 1024 * 1024;
+        // bug399 round9 / debt398 尺寸族：4096 条 / 32MB 在「多尺寸档切换」下仍
+        // thrash——每档 ~1400 条布局（estimate+render 双宽），两档即触顶 4096；从
+        // 最大化返回原宽时旧档条目已被 LRU 逐出 → 整篇重 shaping（round9 实测
+        // restore 冷帧 1098ms）。抬到 8192 条 / 64MB 容纳 3 档工作集（~4200 条 /
+        // ~48MB），返回原尺寸走命中（实测降至 ~17ms）。实际占用 = 条目真实字节，
+        // 上限只是准入闸，不预分配。
+        constexpr std::size_t kCacheCapacity = 8192;
+        constexpr std::size_t kCacheByteCapacity = 64 * 1024 * 1024;
         constexpr std::size_t kEntryByteCapacity = 256 * 1024;
         InlineLayoutCache& cache = sharedInlineLayoutCache();
         detail::MarkdownPerfStats& perf = detail::markdownPerfStats();
@@ -2632,7 +2669,7 @@ private:
                         const InlineSegment& next = segs[nextIndex];
                         if (next.chip || std::fabs(next.y - first.y) > 0.5f ||
                             !sameVisualRun(first, next) ||
-                            std::fabs(next.x - (first.x + mergedWidth)) > 0.6f) {
+                            std::fabs(next.x - (first.x + mergedWidth) - kInlineSegmentGap) > 0.6f) {
                             break;
                         }
                         mergedText += next.text;
