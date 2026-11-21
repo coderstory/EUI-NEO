@@ -38,6 +38,20 @@ inline constexpr float scrollInertiaMaxDeltaSeconds() {
     return 1.0f / 30.0f;
 }
 
+/// bug399 round8：composeOnScrollOffsetChange 的重排触发步长（像素）。
+/// 滚动视觉位移由渲染期 transform（scrollTransformForElement）逐帧生效，重排只
+/// 负责刷新裁剪型内容的 visibleRange，故可按位移节流：滚动位移累计跨过该步长才
+/// 请求一次重排。取值依据：
+///  - markdown 裁剪内建 ±1200px overscan（components/markdown.h:1198-1205）——
+///    节流后裁剪范围最多落后一个步长，远小于余量，新暴露区仍在已建内容内；
+///  - virtualmasonry 裁剪余量 = 1 个视口高（components/virtualmasonry.h:106-108，
+///    480 最小窗档 ≈ 400px+），256 亦小于它；
+///  - 单次滚轮位移量级 ~600px（impulse 满速 7200 / 摩擦 12），256 步长使一格滚轮
+///   由「每帧一次重排」降为 ~2 次，同时 < 视口高，肉眼不可见滞后。
+inline constexpr float scrollComposeOffsetStep() {
+    return 256.0f;
+}
+
 inline bool scrollMotionActive(float velocity) {
     return std::fabs(velocity) > scrollInertiaStopVelocity();
 }

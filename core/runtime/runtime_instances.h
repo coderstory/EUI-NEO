@@ -152,6 +152,9 @@ struct LayoutInstance {
 
 struct ScrollStateInstance {
     float offset = 0.0f;
+    // bug399 round8：上次触发滚动重排时的 offset（composeOnScrollOffsetChange
+    // 按位移步长节流的基准，见 runtime_update.h setScrollOffset）。
+    float lastComposeScrollOffset = 0.0f;
     float configuredOffset = 0.0f;
     float maxOffset = 0.0f;
     float step = 48.0f;

@@ -490,7 +490,16 @@ inline void Runtime::setScrollOffset(const std::string& stateId, float offset) {
             owner->onScrollOffsetChanged(instance.offset);
         }
         if (owner->composeOnScrollOffsetChange && !owner->disabled) {
-            composeRequested_ = true;
+            // bug399 round8：按位移步长节流。滚动位移是渲染期 transform，逐帧生效；
+            // 重排只刷新裁剪型内容的 visibleRange（有 overscan 兜底，见
+            // scrollComposeOffsetStep 注释）。逐 setScrollOffset（滚轮每格 + 惯性
+            // 每帧 tick）都重排会把主线程压成 60Hz×31ms 过饱和 → 视觉步进/延迟
+            // 累积。仅当累计位移跨过步长才请求一次重排，脏矩形/onChange 不受影响。
+            if (std::fabs(instance.offset - instance.lastComposeScrollOffset) >=
+                scrollComposeOffsetStep()) {
+                instance.lastComposeScrollOffset = instance.offset;
+                composeRequested_ = true;
+            }
         }
     }
 }
