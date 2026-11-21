@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -780,6 +781,55 @@ inline std::size_t markdownDocumentCacheBytes(const std::string& source, const M
     return bytes;
 }
 
+// ── 性能仪表（bug399 round7 / debt398）── 一次加够，跨 TU 共享（inline 函数内 static）。
+// 只读计数，零行为改动；探针读 delta 定位 compose 耗时构成。
+struct MarkdownPerfStats {
+    long long parseHits = 0;
+    long long parseMisses = 0;
+    double parseLookupMs = 0.0;
+    double parseBuildMs = 0.0;
+    long long inlineHits = 0;
+    long long inlineMisses = 0;
+    double inlineKeyMs = 0.0;
+    double inlineLookupMs = 0.0;
+    double inlineLayoutMs = 0.0;
+    long long buildCalls = 0;
+    double buildMs = 0.0;
+    long long blocksVisited = 0;
+    long long blocksCulled = 0;
+    long long kindHeading = 0;
+    long long kindParagraph = 0;
+    long long kindListItem = 0;
+    long long kindCode = 0;
+    long long kindHtml = 0;
+    long long kindDivider = 0;
+    long long kindTableRow = 0;
+    std::size_t inlineCacheEntries = 0;
+    std::size_t inlineCacheBytes = 0;
+    std::size_t docCacheEntries = 0;
+    void countBlockKind(MarkdownBlockKind kind) {
+        switch (kind) {
+        case MarkdownBlockKind::Heading: ++kindHeading; break;
+        case MarkdownBlockKind::Paragraph: ++kindParagraph; break;
+        case MarkdownBlockKind::ListItem: ++kindListItem; break;
+        case MarkdownBlockKind::Code: ++kindCode; break;
+        case MarkdownBlockKind::Html: ++kindHtml; break;
+        case MarkdownBlockKind::Divider: ++kindDivider; break;
+        case MarkdownBlockKind::TableRow: ++kindTableRow; break;
+        default: break;
+        }
+    }
+};
+
+inline MarkdownPerfStats& markdownPerfStats() {
+    static MarkdownPerfStats stats;
+    return stats;
+}
+
+inline double markdownPerfMs(std::chrono::steady_clock::time_point t0) {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
 inline std::shared_ptr<const MarkdownDocument> cachedMarkdownDocument(const std::string& source) {
     // 64 = one screenful of typical blocks; with 8 a long document evicted
     // nearly every entry between frames and re-parsed on each compose pass.
@@ -788,14 +838,22 @@ inline std::shared_ptr<const MarkdownDocument> cachedMarkdownDocument(const std:
     constexpr std::size_t kCacheByteCapacity = 1024 * 1024;
     constexpr std::size_t kEntryByteCapacity = 256 * 1024;
     MarkdownDocumentCache& cache = sharedMarkdownDocumentCache();
+    MarkdownPerfStats& perf = markdownPerfStats();
+    const auto lookupT0 = std::chrono::steady_clock::now();
     const auto existing = cache.entries.find(source);
+    perf.parseLookupMs += markdownPerfMs(lookupT0);
+    perf.docCacheEntries = cache.entries.size();
     if (existing != cache.entries.end()) {
+        ++perf.parseHits;
         existing->second.lastUsed = ++cache.accessTick;
         return existing->second.document;
     }
+    ++perf.parseMisses;
 
     auto document = std::make_shared<MarkdownDocument>();
+    const auto parseT0 = std::chrono::steady_clock::now();
     document->blocks = parseMarkdownBlocks(source);
+    perf.parseBuildMs += markdownPerfMs(parseT0);
     const std::size_t documentBytes = markdownDocumentCacheBytes(source, *document);
     if (documentBytes > kEntryByteCapacity) {
         return document;
@@ -1158,6 +1216,10 @@ public:
     void build() {
         const std::shared_ptr<const detail::MarkdownDocument> document = parsedDocument();
         const std::vector<detail::MarkdownBlock>& blocks = document->blocks;
+        detail::MarkdownPerfStats& perf = detail::markdownPerfStats();
+        ++perf.buildCalls;
+        perf.blocksVisited += static_cast<long long>(blocks.size());
+        const auto buildT0 = std::chrono::steady_clock::now();
         flowCursorY_ = 0.0f;  // bug382 裁剪游标：build() 帧内生命周期
         auto root = ui_.column(id_)
             .width(width_)
@@ -1189,6 +1251,7 @@ public:
                 }
             })
             .build();
+        perf.buildMs += detail::markdownPerfMs(buildT0);
     }
 
 private:
@@ -1201,7 +1264,11 @@ private:
         }
         // 上下各留 ~1.5 屏余量：滚动/调窗跨帧不闪白（模块侧同口径「上1下2屏」）。
         constexpr float kOverscanPx = 1200.0f;
-        return y + h > cullTop_ - kOverscanPx && y < cullBottom_ + kOverscanPx;
+        const bool visible = y + h > cullTop_ - kOverscanPx && y < cullBottom_ + kOverscanPx;
+        if (!visible) {
+            ++detail::markdownPerfStats().blocksCulled;
+        }
+        return visible;
     }
     void advanceFlow(float flowHeight) { flowCursorY_ += flowHeight; }
 
@@ -2213,21 +2280,36 @@ private:
         // 量化 + 滚动条占位双宽）≈ 400+ 活跃条目，256 容量会在宽度乒乓时 LRU 对半
         // 互踩 → resize 每帧全量重 shaping。条目本身轻（段落 segment 表），翻倍
         // 换回稳态零重测。
-        constexpr std::size_t kCacheCapacity = 1024;
-        constexpr std::size_t kCacheByteCapacity = 2 * 1024 * 1024;
+        // bug399 round7 实测：53KB/399 块文档的内联布局工作集约 950 条/8MB（每帧
+        // estimate + render 双请求），2MB 容量 = 顺序扫描 LRU 纯 thrash——每帧
+        // ~690 次未命中重 shaping（620-980ms/帧）。容量须 > 双宽（滚动条占位）
+        // 工作集，故 4096 条 / 32MB；条目值轻（段表），命中后每帧仅剩键构造+查找。
+        constexpr std::size_t kCacheCapacity = 4096;
+        constexpr std::size_t kCacheByteCapacity = 32 * 1024 * 1024;
         constexpr std::size_t kEntryByteCapacity = 256 * 1024;
         InlineLayoutCache& cache = sharedInlineLayoutCache();
+        detail::MarkdownPerfStats& perf = detail::markdownPerfStats();
+        const auto keyT0 = std::chrono::steady_clock::now();
         const std::string key = inlineLayoutKey(runs, width, fontSize, lineHeight, heading, align, style);
+        perf.inlineKeyMs += detail::markdownPerfMs(keyT0);
+        const auto lookupT0 = std::chrono::steady_clock::now();
         const auto existing = cache.entries.find(key);
+        perf.inlineLookupMs += detail::markdownPerfMs(lookupT0);
+        perf.inlineCacheEntries = cache.entries.size();
+        perf.inlineCacheBytes = cache.bytes;
         if (existing != cache.entries.end()) {
+            ++perf.inlineHits;
             existing->second.lastUsed = ++cache.accessTick;
             return existing->second.layout;
         }
+        ++perf.inlineMisses;
 
         auto layout = std::make_shared<InlineLayoutEntry>();
         layout->measuredHeight = lineHeight;
+        const auto layoutT0 = std::chrono::steady_clock::now();
         layout->segments = layoutInlineRunsWithStyle(runs, width, fontSize, lineHeight, heading, style, layout->measuredHeight);
         alignInlineSegments(layout->segments, width, align);
+        perf.inlineLayoutMs += detail::markdownPerfMs(layoutT0);
         const std::size_t layoutBytes = inlineLayoutCacheBytes(*layout, key.size());
         if (layoutBytes > kEntryByteCapacity) {
             return layout;
@@ -2247,6 +2329,8 @@ private:
 
         const auto inserted = cache.entries.emplace(key, InlineLayoutCacheEntry{layout, ++cache.accessTick, layoutBytes});
         cache.bytes += layoutBytes;
+        perf.inlineCacheEntries = cache.entries.size();
+        perf.inlineCacheBytes = cache.bytes;
         return inserted.first->second.layout;
     }
 
@@ -2335,6 +2419,7 @@ private:
     }
 
     void renderBlock(const detail::MarkdownBlock& block, std::size_t index) {
+        detail::markdownPerfStats().countBlockKind(block.kind);
         const std::string partId = id_ + ".block." + std::to_string(index);
         const float quoteInset = static_cast<float>(std::max(0, block.quoteDepth)) * 8.0f;
         const float listInset = static_cast<float>(std::max(0, block.listDepth - 1)) * style_.listIndent;
@@ -2490,7 +2575,7 @@ private:
                             float lineHeight,
                             bool heading,
                             core::HorizontalAlign align = core::HorizontalAlign::Left) {
-        return cachedInlineLayout(runs, width, fontSize, lineHeight, heading, align, style_)->measuredHeight;
+        return inlineLayoutFor(runs, width, fontSize, lineHeight, heading, align)->measuredHeight;
     }
 
     void renderInlineRuns(const std::string& partId,
@@ -2503,8 +2588,8 @@ private:
                            float x = 0.0f,
                            float y = 0.0f,
                            core::HorizontalAlign align = core::HorizontalAlign::Left) {
-        const std::shared_ptr<const InlineLayoutEntry> layout = cachedInlineLayout(
-            runs, width, fontSize, lineHeight, heading, align, style_);
+        const std::shared_ptr<const InlineLayoutEntry> layout =
+            inlineLayoutFor(runs, width, fontSize, lineHeight, heading, align);
         ui_.stack(partId)
             .position(x, y)
             .size(width, height)
@@ -2866,6 +2951,42 @@ private:
     // bug382 视口裁剪态：cullBottom_ <= cullTop_ = 关闭（默认）。
     float cullTop_ = 0.0f;
     float cullBottom_ = -1.0f;
+    // bug399 round7：同块 estimate（inlineRunsHeight）与 render（renderInlineRuns）
+    // 紧邻调用同一布局键——快照复用，免每帧第二次键构造 + 查找（53KB 实测 ~3.5ms/帧）。
+    struct InlineLayoutSnapshot {
+        const std::vector<detail::MarkdownRun>* runs = nullptr;
+        float width = 0.0f;
+        float fontSize = 0.0f;
+        float lineHeight = 0.0f;
+        bool heading = false;
+        core::HorizontalAlign align = core::HorizontalAlign::Left;
+        std::shared_ptr<const InlineLayoutEntry> layout;
+    };
+    InlineLayoutSnapshot lastInlineLayout_;
+
+    std::shared_ptr<const InlineLayoutEntry> inlineLayoutFor(
+        const std::vector<detail::MarkdownRun>& runs,
+        float width,
+        float fontSize,
+        float lineHeight,
+        bool heading,
+        core::HorizontalAlign align) {
+        InlineLayoutSnapshot& snap = lastInlineLayout_;
+        if (snap.runs == &runs && snap.width == width && snap.fontSize == fontSize &&
+            snap.lineHeight == lineHeight && snap.heading == heading && snap.align == align &&
+            snap.layout) {
+            return snap.layout;
+        }
+        snap.runs = &runs;
+        snap.width = width;
+        snap.fontSize = fontSize;
+        snap.lineHeight = lineHeight;
+        snap.heading = heading;
+        snap.align = align;
+        snap.layout = cachedInlineLayout(runs, width, fontSize, lineHeight, heading, align, style_);
+        return snap.layout;
+    }
+
     float flowCursorY_ = 0.0f;
 };
 
