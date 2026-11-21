@@ -1316,18 +1316,21 @@ private:
     // ── 页内搜索缝内部件（与上方 public 静态 API 配对）─────────────────
 
     // 同行相邻矩形连续化（bug259-G 二轮复核）：CJK 经 splitMarkdownTextForLayout
-    // 单码点成段、词间空白丢段，同一 span 的相邻段矩形之间会留 layout 间隙
+    // 单码点成段、词间空白随词段保留，同一 span 的相邻段矩形之间会留 layout 间隙
     // → 高亮视觉碎裂。同行（y/h 一致）且水平相邻（缝隙 ≤ 2×kInlineSegmentGap +
     // 0.5 浮点余量）的矩形合并：P0 后同 run 同行段已在布局级并成一段（段内缝隙
-    // 恒 0），矩形缝隙只出现在跨 run 处（恒 kInlineSegmentGap = 4px）。
+    // 恒 0）；跨 run 缝隙由布局 preGap 决定——段文本自带空白分隔时 preGap=0，
+    // 无空白紧邻才补 kInlineSegmentGap（4px），故跨 run 缝隙上界即 4px，阈值取
+    // 2×gap+0.5 同时覆盖合并段宽度累计口径的浮点残差。
     // 前段右缘扩展到后段左缘，只吞字间空白，不吞下一字墨迹（后段左缘即其
     // 首字墨迹左界）；跨行 / 跨块（y 不同）不合并。块局部（hitRectsForDisplay
     // Range）与文档系（hitRectsForDisplayRangeDoc）两口共用 = 合并行为零漂移
     //（need345 抽出，原内联逻辑原样平移）。
     static void mergeAdjacentRectsOnSameLine(std::vector<MarkdownHitRect>& rects) {
         // bug399 round10 P1-3：阈值含浮点余量。段内缝隙（同 run 同行）P0 后恒 0，
-        // 段间缝隙（跨 run/样式）恒 kInlineSegmentGap=4px；旧值恰 8.0 使浮点求和
-        // 8.000004 判超限 → 搜索/选区高亮每 2 字断条。
+        // 段间缝隙（跨 run/样式）≤ kInlineSegmentGap=4px（preGap 语义：有空白分隔
+        // 时 0，无空白紧邻才补）；旧值恰 8.0 使浮点求和 8.000004 判超限 → 搜索/
+        // 选区高亮每 2 字断条。
         constexpr float kMergeGapPx = kInlineSegmentGap * 2.0f + 0.5f;
         std::vector<MarkdownHitRect> merged;
         merged.reserve(rects.size());
@@ -1429,11 +1432,20 @@ private:
         std::size_t byte = 0;  // 流内字节游标
         std::size_t pos = 0;   // 流内码点游标（= matches 域）
         for (const InlineSegment& seg : segments) {
+            // bug399 round12 P1-1：硬换行（`<br>` / 双空格 → 显示流 "\n"）在布局
+            // 里不入段表（pushFittingSegment 遇 "\n" 只推进游标后 return），故流内
+            // 换行字节必须在逐段对齐【前】主动消费；否则其后全部段 aligned=false，
+            // 硬换行以下整段高亮/选区矩形全丢。换行本身无字形，不产矩形。
+            while (byte < stream.size() && stream[byte] == '\n') {
+                ++pos;
+                ++byte;
+            }
             if (seg.text.empty()) {
                 continue;
             }
             if (seg.text == "\n") {
-                // 折行标记占显示流 1 码点/1 字节：消费但不产矩形。
+                // 防御分支（布局当前不产换行段）：万一未来 layout 为 "\n" push 标记
+                // 段，仍按 1 码点/1 字节消费且不出矩形。
                 if (byte < stream.size() && stream[byte] == '\n') {
                     ++pos;
                     ++byte;
@@ -1831,11 +1843,18 @@ private:
         std::size_t lastEnd = 0;  // 全段最大 segBegin+segCps（下方越界 → 块末）
         float bestDist = std::numeric_limits<float>::max();
         for (const InlineSegment& seg : segments) {
+            // bug399 round12 P1-1：同 rectsForInlineRuns——布局不为硬换行建段，
+            // 流内 "\n" 字节须在逐段对齐前主动消费；漏消费会使换行后所有段失配，
+            // lastEnd 停在换行前 → 换行下方点击/选区 cp 错位。
+            while (byte < stream.size() && stream[byte] == '\n') {
+                ++pos;
+                ++byte;
+            }
             if (seg.text.empty()) {
                 continue;
             }
             if (seg.text == "\n") {
-                // 折行标记占显示流 1 码点/1 字节：消费但不作候选段。
+                // 防御分支（布局当前不产换行段）：同 rect 路径口径。
                 if (byte < stream.size() && stream[byte] == '\n') {
                     ++pos;
                     ++byte;

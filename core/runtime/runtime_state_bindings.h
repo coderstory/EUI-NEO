@@ -45,7 +45,7 @@ inline constexpr float scrollInertiaMaxDeltaSeconds() {
 ///  - markdown 裁剪内建千余 px 量级的 overscan（components/markdown.h 内裁剪余量常量）——
 ///    节流后裁剪范围最多落后一个步长，远小于余量，新暴露区仍在已建内容内；
 ///  - virtualmasonry 的裁剪余量 = 1 个视口高（最小窗档 480 高时约 400px 以上），
-///    480 最小窗档 ≈ 400px+），256 亦小于它；
+///    256 亦小于它；
 ///  - 单格滚轮位移 = 48px（滚动步长基值），256 步长使一次重排跨约 5.3 格滚轮
 ///    （远低于修前「每帧一次重排」），同时 < 视口高，肉眼不可见滞后。
 inline constexpr float scrollComposeOffsetStep() {
