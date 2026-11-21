@@ -27,6 +27,7 @@ struct DslAppConfig {
     int maxWindowWidthValue = 0;
     int maxWindowHeightValue = 0;
     bool resizableValue = true;
+    bool focusOnShowValue = true;  // 主窗 show 时是否夺取前台焦点（need376）
     bool highDpiValue = true;
     bool decoratedValue = true;
     bool transparentValue = false;
@@ -102,6 +103,14 @@ struct DslAppConfig {
         return *this;
     }
     DslAppConfig& resizable(bool value = true) { resizableValue = value; return *this; }
+    /**
+     * @brief 主窗显示时不抢前台焦点（GLFW_FOCUS_ON_SHOW=0）。
+     *
+     * 用途：测试驱动 / 截图工具这类「自己跑自己的、不该打断用户打字」的宿主
+     *（DevDesk need376：全量测试有 13 个 ui_driver 场景串行跑，每个都抢焦点就是
+     * 连续 13 次打断输入）。窗口照常可见、照常渲染，只是不夺取键盘焦点。
+     */
+    DslAppConfig& focusOnShow(bool value = true) { focusOnShowValue = value; return *this; }
     DslAppConfig& highDpi(bool value = true) { highDpiValue = value; return *this; }
     DslAppConfig& decorated(bool value = true) { decoratedValue = value; return *this; }
     /** @brief 请求带 alpha 的 framebuffer（自绘圆角窗口）。平台不支持时 framebufferTransparent 返回 false。 */
